@@ -1,7 +1,7 @@
 {
   "name": "church-presenter",
   "productName": "multiplayerSHOW",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Открытая программа для показа фото и видео на экранах в церкви",
   "main": "main.js",
   "scripts": {
@@ -10,7 +10,10 @@
     "release": "electron-builder --win --publish always"
   },
   "author": "multiplayerSHOW",
-  "repository": { "type": "git", "url": "https://github.com/tanako228/multiplayerSHOW.git" },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/tanako228/multiplayerSHOW.git"
+  },
   "license": "MIT",
   "devDependencies": {
     "electron": "^33.0.0",
@@ -25,7 +28,9 @@
     "productName": "multiplayerSHOW",
     "electronDist": "node_modules/electron/dist",
     "npmRebuild": false,
-    "directories": { "output": "dist" },
+    "directories": {
+      "output": "dist"
+    },
     "files": [
       "**/*",
       "!dist/**",
@@ -37,7 +42,9 @@
       "!npm",
       "!*.cmd"
     ],
-    "asarUnpack": ["node_modules/koffi/**"],
+    "asarUnpack": [
+      "node_modules/koffi/**"
+    ],
     "win": {
       "target": "nsis",
       "icon": "brand/icon.ico"
@@ -51,7 +58,12 @@
       "artifactName": "multiplayerSHOW-Setup-${version}.${ext}"
     },
     "publish": [
-      { "provider": "github", "owner": "tanako228", "repo": "multiplayerSHOW", "releaseType": "release" }
+      {
+        "provider": "github",
+        "owner": "tanako228",
+        "repo": "multiplayerSHOW",
+        "releaseType": "release"
+      }
     ]
   }
 }
