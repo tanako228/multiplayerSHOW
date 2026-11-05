@@ -693,12 +693,48 @@ const Scene = (() => {
 
   const FLEX = { left: 'flex-start', center: 'center', right: 'flex-end', justify: 'stretch' };
 
+  /* ----- Таймеры в текстовых полях тем -----
+     Поле с «Что выводить → Таймер» (bind 'timer', o.timer, вид o.tmFmt) или поле, выбранное в самом таймере
+     (t.out → c.meta.tm[id объекта] = id таймера, playlist.js contentOf). Ход таймеров приходит из stage.js:
+     stSend → Compose.progInfo → setTimers; цифры обновляются здесь каждые 250 мс во всех окнах. */
+  let TM = {}; // id → { mode: 'down'|'up', dur (с), run, base, at }
+  const p2 = (v) => String(v).padStart(2, '0');
+  function tmText(id, fmt) {
+    const t = TM[id];
+    if (!t) return fmt === 'hms' ? '00:00:00' : '00:00';
+    const now = Date.now();
+    const el = num(t.base, 0) + (t.run ? now - num(t.at, now) : 0);
+    const ms = t.mode === 'up' ? el : num(t.dur, 0) * 1000 - el;
+    if (ms < 0 && fmt !== 'over') return fmt === 'hms' ? '00:00:00' : '00:00'; // вышло — стоит на нуле
+    const neg = ms < 0;
+    let s = Math.abs(ms) / 1000;
+    s = t.mode === 'up' || neg ? Math.floor(s) : Math.ceil(s - 0.001);
+    const h = Math.floor(s / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    const out = fmt === 'hms' ? `${p2(h)}:${p2(m)}:${p2(s % 60)}` : fmt === 'ms' ? `${p2(Math.floor(s / 60))}:${p2(s % 60)}` : h ? `${h}:${p2(m)}:${p2(s % 60)}` : `${p2(m)}:${p2(s % 60)}`;
+    return (neg ? '−' : '') + out;
+  }
+  function tmPaint() {
+    document.querySelectorAll('.ob[data-tm]').forEach((el) => {
+      if (!el._tmText) return;
+      const v = tmText(el.dataset.tm, el.dataset.tmf);
+      if (el._tmText.textContent !== v) el._tmText.textContent = v;
+    });
+  }
+  function setTimers(m) { TM = m && typeof m === 'object' ? m : {}; tmPaint(); }
+  setInterval(tmPaint, 250);
+
   // B — слайд Библии (bibleBoxes): какие переводы в какие окна
   function buildTextObj(o, c, B, st) {
     let value = null;
-    let bib = B ? bibleInBox(o, B) : undefined;
+    // Таймер: своя привязка поля или поле, выбранное в таймере для этой презентации
+    const tmOver = c.meta && c.meta.tm ? c.meta.tm[o.id] : null;
+    const isTm = o.bind === 'timer' || !!tmOver;
+    const tmId = tmOver || o.timer || '';
+    let bib = B && !isTm ? bibleInBox(o, B) : undefined;
     if (bib === null) return null;
-    if (bib && bib.value != null) { value = bib.value; bib = undefined; }
+    if (isTm) value = tmText(tmId, o.tmFmt);
+    else if (bib && bib.value != null) { value = bib.value; bib = undefined; }
     else if (!bib && o.bind === 'content') { if (c.type === 'custom') return null; }
     else if (!bib) { value = bindValue(o, c); if (!String(value).trim()) return null; }
     const el = objBox(o, 't2' + (o.bind && o.bind !== 'static' ? ' dyn' : ''));
@@ -736,8 +772,9 @@ const Scene = (() => {
           tx.append(r);
         }
       }
-    } else if (o.bind === 'content') main.textContent = c.text != null ? c.text : '';
+    } else if (o.bind === 'content' && !isTm) main.textContent = c.text != null ? c.text : '';
     else main.textContent = value;
+    if (isTm) { el.dataset.tm = tmId; el.dataset.tmf = o.tmFmt || ''; el._tmText = main; }
 
     tx.style.fontFamily = family(o.font);
     tx.style.fontWeight = String(o.weight || 500);
@@ -1392,5 +1429,5 @@ const Scene = (() => {
     for (const el of stage.querySelectorAll(':scope > .slot, :scope > .layer, :scope > svg.ink')) viewOn(stage, el, Math.max(0, Number(ms) || 0));
   }
 
-  return { TRANS, animIn, animOut, setView, viewCss, show, clear, refit, build, fitText, setInk, shapeNode, liveStream, liveRelease, setLayers, applyVolume, layerPlay, pickTpl, textLabels, buildNext, useFonts, fontsList, family, LIVE, FONTS, FONT_NAMES };
+  return { TRANS, animIn, animOut, setTimers, setView, viewCss, show, clear, refit, build, fitText, setInk, shapeNode, liveStream, liveRelease, setLayers, applyVolume, layerPlay, pickTpl, textLabels, buildNext, useFonts, fontsList, family, LIVE, FONTS, FONT_NAMES };
 })();

@@ -916,6 +916,7 @@ const ED_KINDS = [
 function setTab(name) {
   if (name === 'screen') name = 'service'; // «Отдельных файлов» больше нет — всё в плейлистах и библиотеках
   if (name === 'screens') name = 'scenes'; // «Экраны» — теперь «Редактор → Редактор сцен»
+  if (tab === 'themes' && name !== 'themes' && typeof teSlideTidy === 'function') teSlideTidy(); // нетронутый вид слайда — снова «как в теме»
   tab = name;
   const onScreen = name === 'screen' || name === 'service';
   if (onScreen) screenPart = name;
@@ -2712,7 +2713,7 @@ const ACTIONS = [
   ]],
   ['Окна', [
     ['pool', 'Медиапул', ['F8'], () => togglePool()],
-    ['editor', 'Редактор слайдов и картинок', ['F7'], () => openEditorWindow()],
+    ['editor', 'Изменить выделенный слайд (редактор тем)', ['F7'], () => { const s = selectedSlides().pop(); if (!(s && openSlideLook(s.item, s.slide.id))) openThemeTab(); }],
     ['quick', 'Быстрый поиск медиафайлов', ['Ctrl+KeyS'], () => toggleQuick()],
     ['quickFind', 'Быстрый поиск: сразу строка поиска', ['Ctrl+KeyF'], () => openQuick(true)],
   ]],

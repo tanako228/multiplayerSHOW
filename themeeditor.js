@@ -21,9 +21,30 @@ const teOpt = (() => {
 })();
 const teSaveOpt = () => { try { localStorage.setItem('cp.themeEditor', JSON.stringify(teOpt)); } catch { /* без памяти — не страшно */ } };
 
+/* Режим слайда: правится не тема, а свой вид одного слайда (slide.look — шаблон темы только для него, slides.js).
+   teSlide = { item, sid, fresh?, els?, saved? }: fresh — вид только что снят с темы и ещё не менялся (тогда при уходе
+   его убираем — слайд остаётся «как в теме»), els — элементы своего слайда до переноса в объекты вида. */
+let teSlide = null;
+const TE_SLIDE_KINDS = ['text', 'bible', 'custom'];
+function teSlideRef() {
+  if (!teSlide || !lib) return null;
+  const item = lib.items[teSlide.item];
+  const slide = item && item.slides.find((s) => s.id === teSlide.sid);
+  return slide && TE_SLIDE_KINDS.includes(slide.k) ? { item, slide } : null;
+}
+// Слайд как «тема» из одного шаблона — так весь редактор работает с ним без переделок
+function teSlideTheme() {
+  const r = teSlideRef();
+  return r ? { id: '', name: r.item.name, style: {}, templates: r.slide.look ? [r.slide.look] : [], slide: r.slide, item: r.item } : null;
+}
+
 const teThemes = () => (lib ? lib.themes : []);
-const teTheme = () => Themes.find(teThemes(), teThemeId);
-const teTpl = () => { const t = teTheme(); return t ? (t.templates || []).find((x) => x.id === teTplId) || null : null; };
+const teTheme = () => (teSlide ? teSlideTheme() : Themes.find(teThemes(), teThemeId));
+const teTpl = () => {
+  const t = teTheme();
+  if (t && t.slide) return t.slide.look || null;
+  return t ? (t.templates || []).find((x) => x.id === teTplId) || null : null;
+};
 const teObjs = () => (teTpl() ? teTpl().objs : []);
 const teObj = (id) => teObjs().find((o) => o.id === id) || null;
 const teSelObjs = () => teSel.map(teObj).filter(Boolean);
@@ -50,6 +71,10 @@ const TE_META = { title: 'Велик наш Бог', ccli: 'CCLI 1234567 · Сл
 
 // Пример для холста и миниатюр: текст по назначению шаблона, выбранный внизу или свой
 function teContent(t, tpl, still) {
+  if (t && t.slide) { // режим слайда — настоящий текст слайда
+    const c = contentOf(t.item, t.slide);
+    return { ...c, tpl: tpl.id, style: { ...c.style, tpls: [tpl], tpl: tpl.id, still } };
+  }
   let s = teOpt.sample;
   if (s === 'own' && !teOpt.sampleText.trim()) s = '';
   const base = s === 'own' ? { type: 'text', text: teOpt.sampleText.split('|').map((x) => x.trim()).join('\n') }
@@ -69,12 +94,154 @@ const teFitMinis = (root) => requestAnimationFrame(() => root.querySelectorAll('
 
 // Открыть вкладку «Темы» (с нужной темой, если указана) — вместо отдельного окна
 function openThemeTab(id) {
-  if (id && Themes.find(teThemes(), id) && id !== teThemeId) { teThemeId = id; teTplId = ''; teSel = []; }
+  if (id && Themes.find(teThemes(), id)) {
+    if (teSlide) { teSlideLeave(); teSel = []; }
+    if (id !== teThemeId) { teThemeId = id; teTplId = ''; teSel = []; }
+  }
   setTab('themes');
+}
+
+/* ===== Режим слайда: свой вид одного слайда ===== */
+
+// Блок своего слайда (старые «элементы») → объект шаблона, чтобы его можно было править как всё остальное
+function teElToObj(e, st) {
+  const box = { x: e.x, y: e.y, w: e.w, h: e.h, rot: e.rot || 0, opacity: e.opacity != null ? e.opacity : 1, radius: e.radius || 0 };
+  if (e.kind === 'image') return Themes.obj('image', { ...box, name: 'Картинка', url: e.url || '', path: e.path || '', fit: e.fit === 'cover' ? 'cover' : 'contain' });
+  const size = Number(e.size) || 6;
+  return Themes.obj('text', {
+    ...box, name: String(e.text || 'Текст').split('\n')[0].slice(0, 24) || 'Текст', bind: 'static', text: e.text || '',
+    font: e.font || st.font || 'segoe', size, max: size, min: 1, fit: 'shrink', pad: 0, weight: Number(e.weight) || Number(st.weight) || 500,
+    italic: !!e.italic, align: e.align || 'center', valign: e.valign || 'middle',
+    tfill: { type: 'color', color: e.color || st.color || '#ffffff' }, tshadow: { on: !!st.shadow },
+    fill: e.bgColor ? { type: 'color', color: e.bgColor } : { type: 'none' },
+  });
+}
+
+// Вид слайда «как сейчас по теме»: копия шаблона, который выбрался бы для слайда (у темы без шаблонов — из её оформления)
+function teMakeLook(item, slide) {
+  const c = contentOf(item, { ...slide, look: undefined });
+  const t = Scene.pickTpl(c);
+  const base = t ? clone(t) : Themes.fromStyle(c.style || {});
+  let objs = (base.objs || []).map((o) => ({ ...clone(o), id: '' }));
+  // У своего слайда текст — в его блоках: «Текст слайда» темы ему не нужен, блоки становятся объектами
+  if (slide.k === 'custom') objs = objs.filter((o) => !(o.kind === 'text' && o.bind === 'content')).concat((slide.elements || []).map((e) => teElToObj(e, c.style || {})));
+  return Themes.tpl({ ...base, id: '', name: 'Свой вид слайда', use: 'any', guides: base.guides || [], objs });
+}
+
+// Есть ли у слайда вид; нет — снять с темы (пока не тронут — не сохраняется)
+function teSlideEnsure() {
+  const r = teSlideRef();
+  if (!r) return false;
+  if (!r.slide.look) {
+    const els = r.slide.elements;
+    r.slide.look = teMakeLook(r.item, r.slide);
+    if (r.slide.k === 'custom') r.slide.elements = [];
+    teSlide.fresh = JSON.stringify(r.slide.look);
+    teSlide.els = els;
+  } else if (teSlide.fresh && JSON.stringify(r.slide.look) !== teSlide.fresh) {
+    delete teSlide.fresh; // вид вернулся отменой/повтором — он сохранён, не убирать
+    delete teSlide.els;
+  }
+  return true;
+}
+// Нетронутый вид убрать: слайд снова «как в теме» и дальше меняется вместе с ней
+function teSlideTidy() {
+  const r = teSlideRef();
+  if (!r || !teSlide.fresh || !r.slide.look || JSON.stringify(r.slide.look) !== teSlide.fresh) return;
+  delete r.slide.look;
+  if (teSlide.els) r.slide.elements = teSlide.els;
+  delete teSlide.fresh;
+  delete teSlide.els;
+  if (teSlide.saved) saveLib();
+  if (typeof renderService === 'function') renderService();
+}
+function teSlideLeave() {
+  if (!teSlide) return;
+  teSlideTidy();
+  teSlide = null;
+}
+// Открыть слайд в редакторе тем («Изменить в редакторе»); sid нет — первый подходящий слайд презентации
+function openSlideLook(item, sid) {
+  const it = item && lib.items[item.id];
+  const slide = it && (it.slides.find((s) => s.id === sid) || (!sid && it.slides.find((s) => TE_SLIDE_KINDS.includes(s.k))));
+  if (!slide || !TE_SLIDE_KINDS.includes(slide.k)) return false;
+  if (!teSlide || teSlide.item !== it.id || teSlide.sid !== slide.id) {
+    teSlideLeave();
+    teSlide = { item: it.id, sid: slide.id };
+    teSel = [];
+  }
+  setTab('themes');
+  return true;
+}
+function teSlideGo(sid) {
+  const r = teSlideRef();
+  if (!r || sid === teSlide.sid) return;
+  const item = r.item;
+  teSlideLeave();
+  teSlide = { item: item.id, sid };
+  teSel = [];
+  teOpen();
+}
+function teSlideBack() {
+  teSlideLeave();
+  teSel = [];
+  teOpen();
+}
+// Слайд сейчас на экране — показать его заново с правками
+function teSlideOnAir() {
+  if (!teSlide || !plShown || plShown.sid !== teSlide.sid) return null;
+  const e = entryByKey(plShown.key, keyView(plShown.view));
+  return e && e.item.id === teSlide.item ? plShown : null;
+}
+// «Как в теме»: убрать свой вид; у своего слайда блоки — его содержимое, поэтому из темы берётся только фон
+function teSlideReset() {
+  const r = teSlideRef();
+  if (!r || !r.slide.look) return;
+  if (r.slide.k === 'custom') {
+    const c = contentOf(r.item, { ...r.slide, look: undefined });
+    const t = Scene.pickTpl(c);
+    const base = t || Themes.fromStyle(c.style || {});
+    teEdit(() => { r.slide.look.bg = clone(base.bg); r.slide.look.media = base.media ? clone(base.media) : null; }, { insp: true });
+    flashStatus('Фон слайда — как в теме · Ctrl+Z — вернуть');
+    return;
+  }
+  delete r.slide.look;
+  teSel = [];
+  teSave();
+  flushLib(); // сохранить без вида, пока редактор не снял новую копию с темы
+  teOpen();
+  flashStatus('Слайд снова как в теме · Ctrl+Z — вернуть');
+}
+
+// Вид слайда из любого шаблона любой темы
+function teSlideFromTpl(e) {
+  const r = teSlideRef();
+  if (!r) return;
+  const items = [];
+  for (const x of Themes.all(teThemes())) for (const tpl of Themes.templatesOf(x)) {
+    items.push({ label: `${x.name} · ${tpl.name}`, fn: () => teEdit(() => {
+      const look = r.slide.look;
+      if (r.slide.k === 'custom') { // у своего слайда свои блоки остаются, из шаблона — фон
+        look.bg = clone(tpl.bg);
+        look.media = tpl.media ? clone(tpl.media) : null;
+      } else {
+        const c = Themes.tpl({ ...clone(tpl), id: look.id, name: 'Свой вид слайда', use: 'any', objs: tpl.objs.map((o) => ({ ...clone(o), id: '' })) });
+        r.slide.look = c;
+      }
+      teSel = [];
+    }, { insp: true }) });
+  }
+  showMenu(e, items);
 }
 
 function teOpen() {
   if (!lib) return;
+  if (teSlide) {
+    if (teSlideEnsure()) { teSel = teSel.filter(teObj); teRenderAll(); return; }
+    teSlide = null;
+    teSel = [];
+    flashStatus('Этого слайда больше нет — открыты темы');
+  }
   let t = teTheme();
   if (!t) { t = teThemes()[0] || Themes.BUILTIN[0]; teThemeId = t.id; }
   if (!t.std) { Themes.ensure(t); teFreeze(t); } // старая тема → шаблон из её оформления (перенос); копия для экрана
@@ -107,6 +274,13 @@ function teFreeze(t) {
 const teDirty = (t) => !!(t && !t.std && lib.themesLive && lib.themesLive[t.id] && JSON.stringify(lib.themesLive[t.id]) !== JSON.stringify(t));
 
 function teApply() {
+  if (teSlide) { // свой вид слайда сохраняется сразу; на экран — по кнопке, если слайд сейчас показан
+    const on = teSlideOnAir();
+    if (!on) { flashStatus('Этого слайда сейчас нет на экране — правки уже сохранены в слайде'); return; }
+    showSlide(on.key, on.sid, on.view);
+    flashStatus('Слайд обновлён на экране');
+    return;
+  }
   const t = teTheme();
   if (!teDirty(t)) { flashStatus('Изменений нет — на экране уже эта тема'); return; }
   lib.themesLive[t.id] = clone(t);
@@ -121,6 +295,7 @@ function teApply() {
 }
 // Вернуть тему к применённому виду (выбросить черновик)
 function teRevert() {
+  if (teSlide) { teSlideReset(); return; }
   const t = teTheme();
   if (!teDirty(t)) return;
   const i = lib.themes.indexOf(t);
@@ -133,7 +308,13 @@ function teRevert() {
 
 let teSaveTimer = 0;
 function teSave() {
-  saveLib();
+  const r = teSlideRef();
+  if (r) { // режим слайда: правка — в презентацию (у песни текст слайда уходит и в песню)
+    teSlide.saved = true;
+    delete teSlide.fresh; // тронут — уже не убираем
+    delete teSlide.els;
+    touched(r.item);
+  } else saveLib();
   clearTimeout(teSaveTimer);
   // Экран не трогаем — правки увидят зрители только после «Применить тему»
   teSaveTimer = setTimeout(() => { renderService(); teSyncBar(); }, 600); // «Тема по умолчанию» могла смениться
@@ -158,10 +339,38 @@ function teThumbSoon() {
 
 /* ===== Слева: темы и шаблоны ===== */
 
+// Режим слайда: вместо тем — слайды этой презентации; щелчок — править другой слайд
+function teRenderSlides(box) {
+  const r = teSlideRef();
+  if (!r) return;
+  const head = teEl('div', 'te-slide-head');
+  const back = teEl('button', null, 'Все темы');
+  back.prepend(Icons.el('theme'));
+  back.title = 'Вернуться к редактору тем';
+  back.addEventListener('click', teSlideBack);
+  head.append(back, teEl('b', null, r.item.name));
+  head.title = 'Свой вид у каждого слайда: правки — только этому слайду, тема и другие слайды не меняются';
+  box.append(head);
+  const list = teEl('div', 'te-tpls');
+  r.item.slides.forEach((s, i) => {
+    const ok = TE_SLIDE_KINDS.includes(s.k);
+    const row = teEl('div', 'te-tpl' + (s.id === teSlide.sid ? ' sel' : '') + (ok ? '' : ' off'));
+    const n = teEl('span', 'nm', `${i + 1}. ${s.label || Slides.SLIDE_NAMES[s.k] || 'Слайд'}`);
+    n.append(teEl('small', null, s.id === teSlide.sid && teSlide.fresh ? 'как в теме' : s.look ? 'свой вид' : ok ? 'как в теме' : 'не текстовый слайд'));
+    row.append(ok || ['image', 'video'].includes(s.k) ? teMini(contentOf(r.item, s)) : teEl('div', 'te-mini'), n);
+    row.title = ok ? 'Щелчок — править этот слайд' : 'Картинку, видео и источник в редакторе тем не правят: у них нет текста темы';
+    if (ok) row.addEventListener('click', () => teSlideGo(s.id));
+    list.append(row);
+  });
+  box.append(list);
+  teFitMinis(box);
+}
+
 function teRenderList() {
   const box = $('teThemes');
   const top = box.scrollTop;
   box.replaceChildren();
+  if (teSlide) { teRenderSlides(box); box.scrollTop = top; return; }
   const card = (t) => {
     const c = teEl('div', 'te-theme' + (t.id === teThemeId ? ' sel' : ''));
     const h = teEl('div', 'th-head');
@@ -336,8 +545,8 @@ async function teImport() {
   flashStatus(`Добавлено тем: ${list.length}`);
 }
 
-$('teAddTheme').addEventListener('click', teNewTheme);
-$('teImport').addEventListener('click', teImport);
+$('teAddTheme').addEventListener('click', () => { teSlideLeave(); teNewTheme(); });
+$('teImport').addEventListener('click', () => { teSlideLeave(); teImport(); });
 $('teExport').addEventListener('click', () => { const t = teTheme(); if (t) teExport([t]); });
 
 /* ===== По центру: холст ===== */
@@ -1162,14 +1371,46 @@ function teTitle(parent, icon, text, extra = []) {
   parent.append(h);
 }
 
+// Режим слайда: подпись, текст и откуда взят вид
+function teInspSlide(fs, t, tpl) {
+  const U = teUi;
+  const s = t.slide;
+  const i = t.item.slides.indexOf(s);
+  teTitle(fs, 'slides', `Слайд ${i + 1} · ${t.item.name}`);
+  const b = U.sec(fs, 'Слайд', true);
+  U.row(b, 'Подпись', U.text(s, 'label', '', 'Куплет 1, Припев…'));
+  if (s.k === 'text') {
+    const ta = Object.assign(document.createElement('textarea'), { rows: 4, value: s.text || '' });
+    ta.addEventListener('input', () => teEdit(() => { s.text = ta.value; }, { list: false }));
+    ta.addEventListener('keydown', (e) => e.stopPropagation());
+    U.row(b, 'Текст слайда', ta);
+  }
+  if (s.k === 'bible') U.hint(b, `Стих: ${s.ref || ''}. Текст стиха берётся из Библии — здесь меняется только вид.`);
+  if (s.k === 'custom') U.hint(b, 'Текст и картинки этого слайда — объекты слева: выберите и правьте, «T» — добавить текст.');
+  U.row(b, 'Безопасная зона', U.range(tpl, 'safe', 5, { min: 0, max: 15, step: 0.5, unit: '%' }));
+  U.hint(b, 'Правки — только этому слайду: тема и другие слайды не меняются. Сохраняется сразу; если слайд на экране — «Обновить на экране».');
+  const bt = U.btns(b, [['Взять шаблон из темы…', (e) => teSlideFromTpl(e), s.k === 'custom' ? 'Фон из любого шаблона любой темы' : 'Вид слайда — копия любого шаблона любой темы', 'theme']]);
+  if (s.look && !teSlide.fresh) {
+    const x = teEl('button', null, s.k === 'custom' ? 'Фон как в теме' : 'Как в теме');
+    x.title = s.k === 'custom' ? 'Фон слайда — снова из темы' : 'Убрать свой вид: слайд снова оформлен темой';
+    x.prepend(Icons.el('undo'));
+    x.addEventListener('click', teSlideReset);
+    bt.append(x);
+  }
+}
+
 function teInspTemplate(fs, t, tpl) {
   const U = teUi;
-  teTitle(fs, 'slides', 'Шаблон · ' + tpl.name);
-  let b = U.sec(fs, 'Шаблон', true);
-  U.row(b, 'Название', U.text(tpl, 'name', '', 'Например, Песня с подложкой'));
-  U.row(b, 'Сам берётся для', U.sel(tpl, 'use', 'any', Object.entries(Themes.USES)));
-  U.row(b, 'Безопасная зона', U.range(tpl, 'safe', 5, { min: 0, max: 15, step: 0.5, unit: '%' }));
-  U.hint(b, 'Шаблон «Текст песни» берётся сам для песен, «Библия» — для стихов. Любой другой выбирается у слайда вручную: правая кнопка по слайду → «Шаблон темы…».');
+  let b;
+  if (t.slide) teInspSlide(fs, t, tpl);
+  else {
+    teTitle(fs, 'slides', 'Шаблон · ' + tpl.name);
+    b = U.sec(fs, 'Шаблон', true);
+    U.row(b, 'Название', U.text(tpl, 'name', '', 'Например, Песня с подложкой'));
+    U.row(b, 'Сам берётся для', U.sel(tpl, 'use', 'any', Object.entries(Themes.USES)));
+    U.row(b, 'Безопасная зона', U.range(tpl, 'safe', 5, { min: 0, max: 15, step: 0.5, unit: '%' }));
+    U.hint(b, 'Шаблон «Текст песни» берётся сам для песен, «Библия» — для стихов. Любой другой выбирается у слайда вручную: правая кнопка по слайду → «Шаблон темы…».');
+  }
 
   b = U.sec(fs, 'Фон', true, tpl.bg.type !== 'none');
   const bg = tpl.bg;
@@ -1217,12 +1458,13 @@ function teInspTemplate(fs, t, tpl) {
     ...(ng ? [['Убрать все', () => teEdit(() => { tpl.guides = []; }, { insp: true })]] : []),
   ]);
 
+  const outer = $('teInsp');
+  if (t.slide) { teInspFonts(outer); return; }
   b = U.sec(fs, 'Тема', false);
   U.row(b, 'Название темы', U.text(t, 'name', ''));
   U.btns(b, [['Копия темы', () => teCopyTheme(t), '', 'copy'], ['Экспорт', () => teExport([t]), 'Сохранить тему в файл', 'export']]);
 
   // Не правка самой темы: можно и у стандартной (поэтому вне fieldset)
-  const outer = $('teInsp');
   b = U.sec(outer, 'Тема по умолчанию', false);
   U.hint(b, 'Тема презентации или слайда важнее этой:');
   const opts = [['', 'без темы (из настроек)'], ...Themes.all(teThemes()).map((x) => [x.id, x.name])];
@@ -1488,7 +1730,20 @@ function teInspText(fs, o) {
     const ta = Object.assign(document.createElement('textarea'), { id: 'teTextVal', rows: 3, value: o.text || '' });
     ta.addEventListener('input', () => teEdit(() => { o.text = ta.value; }, { list: false }));
     b.append(ta);
-  } else U.hint(b, o.bind === 'content' ? 'Сюда встаёт текст слайда: строки песни или стих. Пример — выбор «Пример» под холстом.' : 'Данные берутся из программы. Если их нет (например, у песни не указан CCLI), поле просто не выводится.');
+  } else if (o.bind === 'timer') {
+    // Какой таймер выводить (те же, что в блоке «Таймеры» и на сцене — stage.js) и как писать время
+    const list = (typeof lib !== 'undefined' && lib && lib.timers) || [];
+    U.row(b, 'Таймер', U.sel(o, 'timer', '', [['', '— выберите —'], ...list.map((t) => [t.id, t.name])], true),
+      teIconBtn('add', 'Новый таймер (обратный отсчёт 5:00) — и сразу сюда', () => { const id = stNewTimer({ dur: 300 }); teEdit(() => { o.timer = id; }, { insp: true }); }));
+    U.row(b, 'Вид', U.sel(o, 'tmFmt', '', [['', 'Сам (05:00 или 1:05:00)'], ['ms', 'ММ:СС (65:00)'], ['hms', 'ЧЧ:ММ:СС'], ['over', 'Сам, после нуля — с минусом']]));
+    U.hint(b, 'Здесь идёт время выбранного таймера. Запускать, останавливать и настраивать его — в блоке «Таймеры» под предпросмотром. Таймер можно и сам вывести в поле любой презентации: в таймере «⋯ → Вывести в текстовое поле…».');
+  } else if (o.bind === 'content' && teSlideRef() && teSlideRef().slide.k === 'text') {
+    // Режим слайда: текст этого слайда правится прямо здесь (у песни — уходит и в её текст)
+    const s = teSlideRef().slide;
+    const ta = Object.assign(document.createElement('textarea'), { id: 'teTextVal', rows: 4, value: s.text || '' });
+    ta.addEventListener('input', () => teEdit(() => { s.text = ta.value; }, { list: false }));
+    b.append(ta);
+  } else U.hint(b, o.bind === 'content' && teSlide ? 'Сюда встаёт текст слайда.' : o.bind === 'content' ? 'Сюда встаёт текст слайда: строки песни или стих. Пример — выбор «Пример» под холстом.' : 'Данные берутся из программы. Если их нет (например, у песни не указан CCLI), поле просто не выводится.');
   const fb = teEl('button', 'te-fontbtn', teFontName(o.font));
   fb.style.fontFamily = Scene.family(o.font);
   fb.title = 'Шрифт: свои, основные и все шрифты Windows';
@@ -1619,7 +1874,24 @@ function teSyncBar() {
   const none = !teSel.length;
   document.querySelectorAll('#teAdd button').forEach((b) => { b.disabled = ro; });
   document.querySelectorAll('#teAlign button, #teOrder button').forEach((b) => { b.disabled = ro || none; });
-  $('teExport').disabled = !teTheme();
+  $('teExport').disabled = !teTheme() || !!teSlide;
+  $('teSample').disabled = !!teSlide; // в режиме слайда на холсте — его настоящий текст
+  if (teSlide) { // свой вид слайда: сохраняется сразу; «Обновить на экране» — если слайд сейчас показан
+    const on = !!teSlideOnAir();
+    const r = teSlideRef();
+    Icons.label($('teApply'), 'Обновить на экране');
+    $('teApply').title = on ? 'Показать правки на экране (Ctrl+Enter)' : 'Этого слайда сейчас нет на экране — правки уже в слайде';
+    $('teApply').disabled = !on;
+    $('teApply').classList.toggle('primary', on);
+    Icons.label($('teRevert'), r && r.slide.k === 'custom' ? 'Фон как в теме' : 'Как в теме');
+    $('teRevert').title = 'Убрать свой вид слайда: снова как в теме';
+    $('teRevert').disabled = !(r && r.slide.look && !teSlide.fresh);
+    return;
+  }
+  Icons.label($('teApply'), 'Применить тему');
+  $('teApply').title = 'Показать правки на экране и в слайдах (Ctrl+Enter)';
+  Icons.label($('teRevert'), 'Сбросить');
+  $('teRevert').title = 'Выбросить правки и вернуть тему к тому виду, что на экране';
   const dirty = teDirty(teTheme());
   $('teApply').disabled = !dirty;
   $('teRevert').disabled = !dirty;

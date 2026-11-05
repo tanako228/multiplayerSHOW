@@ -65,6 +65,7 @@ const Songs = (() => {
         const was = byIndex ? oldSlides[out.length] : old.get(label + '|' + n + '|' + pi);
         const s = { id: was ? was.id : Slides.newId(), k: 'text', label, text, part: label, occ: n, pi };
         if (was && was.theme) s.theme = was.theme;
+        if (was && was.look) s.look = was.look; // свой вид слайда (редактор тем)
         if (was && was.notes) s.notes = was.notes; // заметка к слайду и сценический макет (stage.js)
         if (was && was.stage) s.stage = was.stage;
         out.push(s);

@@ -264,6 +264,9 @@ function stTimerMenu(e, t) {
     { label: (t.mode === 'to' ? '● ' : '   ') + 'До времени (например, до 10:00)', fn: () => { t.mode = 'to'; if (!t.at) t.at = stNextHalfHour(); saveLib(); stReset(t.id); } },
     { label: 'Переименовать…', fn: async () => { const n = await askName('Название таймера', t.name); if (n) { t.name = n; saveLib(); stPanelRefresh(); } } },
     '-',
+    { label: 'Вывести в текстовое поле…', fn: () => tmOutPick(e, t) },
+    ...(t.out && t.out.length ? [{ label: 'Убрать из всех полей (' + t.out.length + ')', fn: () => tmOutSet(t, []) }] : []),
+    '-',
     { label: 'Удалить таймер', fn: () => {
       lib.timers = lib.timers.filter((x) => x !== t);
       delete stRun[t.id];
@@ -605,9 +608,19 @@ function tmRender() {
       dur.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter') apply(); if (e.key === 'Escape') { dur.value = stFmt((t.dur || 0) * 1000); dur.blur(); } });
       ctl.append(dur);
     }
-    ctl.append(stB('⋯', (ev) => stTimerMenu(ev, t), 'Время, вид, имя, удалить'));
+    ctl.append(stB('⋯', (ev) => stTimerMenu(ev, t), 'Время, вид, имя, вывод в поле, удалить'));
     row.append(nm, val, ctl);
     if (t.mode !== 'up') { const bar = stEl('div', 'tm-bar'); bar.append(stEl('i')); row.append(bar); }
+    // Куда выведен: плейлист › презентация › поле (× — убрать), «＋ в поле…» — выбрать ещё
+    const outs = stEl('div', 'tm-outs');
+    for (const o of t.out || []) {
+      const chip = stEl('span', 'tm-out', tmOutLabel(o));
+      chip.title = 'Таймер выводится в это текстовое поле';
+      chip.append(stB('×', () => tmOutSet(t, t.out.filter((x) => x !== o)), 'Убрать таймер из этого поля', 'tm-out-x'));
+      outs.append(chip);
+    }
+    outs.append(stB('＋ в поле…', (ev) => tmOutPick(ev, t), 'Вывести таймер в текстовое поле презентации: плейлист → презентация → поле', 'tm-out-add'));
+    row.append(outs);
     row.addEventListener('contextmenu', (ev) => { if (ev.target.closest('input, select')) return; ev.preventDefault(); stTimerMenu(ev, t); });
     box.append(row);
   }
@@ -635,6 +648,82 @@ function tmTick() {
 setInterval(tmTick, 250);
 if ($('tmAdd')) $('tmAdd').addEventListener('click', () => { if (settings.tmFold) { settings.tmFold = false; saveSettings(); } stNewTimer({ dur: 300 }); });
 if ($('tmFold')) $('tmFold').addEventListener('click', () => { settings.tmFold = !settings.tmFold; saveSettings(); tmRender(); });
+
+/* ----- Таймер → текстовое поле презентации -----
+   t.out = [{ list: 'pl:id' | 'lib:id', item, obj, name }]: в каком плейлисте (или библиотеке) выбрали, какая презентация,
+   какое текстовое поле её шаблона темы (id объекта, имя — для подписи). Поле показывает время таймера вместо своего текста
+   (playlist.js contentOf → meta.tm, scene.js). Одно поле — один таймер. Обратная сторона — «Что выводить → Таймер» в «Темах». */
+function tmFieldsOf(item) {
+  const out = new Map(); // id объекта → { name, bind }
+  for (const s of item.slides || []) {
+    if (s.k === 'audio') continue;
+    let c;
+    try { c = contentOf(item, s); } catch { continue; }
+    const tpl = Scene.pickTpl(c);
+    if (!tpl) continue;
+    for (const [o, name] of Scene.textLabels(tpl.objs || [])) if (o.id && !out.has(o.id)) out.set(o.id, { name, bind: o.bind });
+  }
+  return out;
+}
+function tmOutSet(t, list) {
+  t.out = list;
+  if (!t.out.length) delete t.out;
+  saveLib();
+  if (typeof refreshLive === 'function') refreshLive(); // слайд на экране — с новым полем
+  if (typeof renderService === 'function') renderService();
+  stSend();
+  stPanelRefresh();
+}
+// Шаги меню: плейлист (или библиотека) → презентация → текстовое поле
+function tmOutPick(e, t) {
+  const at = { clientX: e.clientX, clientY: e.clientY };
+  const lists = [...lib.playlists.map((p) => ['pl', p, p.entries.map((x) => x.item)]), ...lib.libraries.map((l) => ['lib', l, l.items])];
+  const head = (text) => ({ label: text, disabled: true, fn() {} });
+  if (!lists.length) { flashStatus('Сначала создайте плейлист или библиотеку'); return; }
+  showMenu(at, [
+    head(`«${t.name}» → куда вывести: плейлист`),
+    ...lists.flatMap(([k, v, ids], i) => [
+      ...(k === 'lib' && (i === 0 || lists[i - 1][0] !== 'lib') ? ['-', head('Библиотеки')] : []),
+      { label: v.name + (ids.length ? '' : ' (пусто)') + ' ›', disabled: !ids.length, fn: () => tmPickItem(at, t, k + ':' + v.id, v.name, ids) },
+    ]),
+  ]);
+}
+function tmPickItem(at, t, list, listName, ids) {
+  const items = [...new Set(ids)].map((id) => lib.items[id]).filter(Boolean);
+  showMenu(at, [
+    { label: `${listName} → презентация`, disabled: true, fn() {} },
+    ...items.map((it) => ({ label: it.name + ' ›', fn: () => tmPickField(at, t, list, it) })),
+  ]);
+}
+function tmPickField(at, t, list, item) {
+  const fields = tmFieldsOf(item);
+  if (!fields.size) { showNotice(`У темы презентации «${item.name}» нет текстовых полей. Сделайте шаблон с полем во вкладке «Темы» (Редактор → Темы) и назначьте эту тему презентации`, true); return; }
+  const mine = (id) => (t.out || []).some((o) => o.item === item.id && o.obj === id);
+  const other = (id) => (lib.timers || []).find((x) => x !== t && (x.out || []).some((o) => o.item === item.id && o.obj === id));
+  showMenu(at, [
+    { label: `${item.name} → текстовое поле`, disabled: true, fn() {} },
+    ...[...fields].map(([id, f]) => {
+      const o2 = other(id);
+      return {
+        label: (mine(id) ? '✓ ' : '   ') + f.name + (f.bind && f.bind !== 'static' && Themes.BINDS[f.bind] ? ` · сейчас: ${Themes.BINDS[f.bind].split(' (')[0].toLowerCase()}` : '') + (o2 ? ` · занято «${o2.name}»` : ''),
+        fn: () => {
+          if (mine(id)) { tmOutSet(t, t.out.filter((o) => !(o.item === item.id && o.obj === id))); flashStatus(`Таймер убран из поля «${f.name}»`); return; }
+          // Поле было у другого таймера — переходит к этому
+          for (const x of lib.timers || []) if (x !== t && x.out) { x.out = x.out.filter((o) => !(o.item === item.id && o.obj === id)); if (!x.out.length) delete x.out; }
+          tmOutSet(t, [...(t.out || []), { list, item: item.id, obj: id, name: f.name }]);
+          flashStatus(`«${t.name}» → «${item.name}», поле «${f.name}» · Ctrl+Z — вернуть`);
+        },
+      };
+    }),
+  ]);
+}
+// Подпись цели: «Служение › Объявления › Время»
+function tmOutLabel(o) {
+  const [k, id] = String(o.list || '').split(':');
+  const v = (k === 'pl' ? lib.playlists : lib.libraries).find((x) => x.id === id);
+  const it = lib.items[o.item];
+  return [v ? v.name : '', it ? it.name : 'презентация удалена', o.name || 'поле'].filter(Boolean).join(' › ');
+}
 
 /* ----- Ноды макросов ----- */
 

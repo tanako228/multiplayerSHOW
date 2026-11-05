@@ -175,6 +175,7 @@ const Compose = (() => {
     for (const k of ['cur', 'next', 'only']) ch[k] = JSON.stringify(P.info[k]) !== JSON.stringify(old[k]);
     for (const x of infos) if (ch[x.which]) paintInfo(x, false);
     for (const n of stageNodes) paintStage(n);
+    Scene.setTimers(P.info.st.timers); // таймеры в текстовых полях тем (scene.js)
   }
   function paintInfo(x, instant) {
     const c = P.info[x.which];

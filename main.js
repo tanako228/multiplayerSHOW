@@ -520,9 +520,9 @@ function openScreenWin({ key, s, o }) {
   screenWins.set(key, x);
 }
 
-/* ---------- Окно редактора ---------- */
+/* ---------- Окно «Картинка» (editor.html): правка фото; слайды — в редакторе тем главного окна ---------- */
 
-// payload: { mode: 'slides'|'themes'|'image', item?, themes, image? } — редактор правит копию,
+// payload: { image, target, ui } — окно правит копию картинки,
 // а по «Сохранить» отдаёт результат окну оператора, которое хранит библиотеку
 function openEditor(payload) {
   if (editor && !editor.isDestroyed()) {
@@ -535,7 +535,7 @@ function openEditor(payload) {
     width: 1400, height: 880, minWidth: 1000, minHeight: 640,
     backgroundColor: '#051822',
     autoHideMenuBar: true,
-    title: 'Редактор — ' + SHORT_NAME,
+    title: 'Картинка — ' + SHORT_NAME,
     icon: APP_ICON,
     webPreferences,
   });
@@ -838,17 +838,19 @@ app.whenReady().then(() => {
   const repoFile = (dir) => path.join(dir, 'repo.json');
   const ud = () => app.getPath('userData');
 
+  // Чья это часть: ключ library.json ('lib'), настройки ('set') или записи localStorage ('ls')
+  const repoOwner = (kind, k) => (REPO_PARTS.find((p) => (p[kind] || []).includes(k)) || { id: kind === 'lib' ? 'library' : 'settings' }).id;
+  // Записи localStorage — разобранным JSON (чтобы найти и переписать пути к файлам), не JSON — строкой
+  const lsParse = (v) => { try { const x = JSON.parse(v); return x && typeof x === 'object' ? x : v; } catch { return v; } };
+  const lsText = (v) => (typeof v === 'string' ? v : JSON.stringify(v));
+  const setsOf = (ls) => { try { return JSON.parse((ls || {})['cp.settings'] || '{}') || {}; } catch { return {}; } };
+
   // Разложить данные по частям
   function repoSplit(libAll, ls) {
     const out = Object.fromEntries(REPO_PARTS.map((p) => [p.id, { lib: {}, set: {}, ls: {} }]));
-    let set = {};
-    try { set = JSON.parse(ls['cp.settings'] || '{}') || {}; } catch { set = {}; }
-    const owner = (kind, k, def) => (REPO_PARTS.find((p) => (p[kind] || []).includes(k)) || { id: def }).id;
-    for (const [k, v] of Object.entries(libAll || {})) out[owner('lib', k, 'library')].lib[k] = v;
-    for (const [k, v] of Object.entries(set)) if (!REPO_NO_SET.includes(k)) out[owner('set', k, 'settings')].set[k] = v;
-    // Записи localStorage — разобранным JSON (чтобы найти и переписать пути к файлам), не JSON — строкой
-    const parse = (v) => { try { const x = JSON.parse(v); return x && typeof x === 'object' ? x : v; } catch { return v; } };
-    for (const [k, v] of Object.entries(ls)) if (k !== 'cp.settings') out[owner('ls', k, 'settings')].ls[k] = parse(v);
+    for (const [k, v] of Object.entries(libAll || {})) out[repoOwner('lib', k)].lib[k] = v;
+    for (const [k, v] of Object.entries(setsOf(ls))) if (!REPO_NO_SET.includes(k)) out[repoOwner('set', k)].set[k] = v;
+    for (const [k, v] of Object.entries(ls)) if (k !== 'cp.settings') out[repoOwner('ls', k)].ls[k] = lsParse(v);
     return out;
   }
 
@@ -889,14 +891,38 @@ app.whenReady().then(() => {
   };
 
   let repoBusy = null; // идёт запись — следующая подождёт
-  async function repoWrite(dir, parts, ls) {
+  // Части, которые уже есть в папке, дополняются: что есть в папке, но нет в программе, остаётся
+  const mergeObj = (a, b) => { const out = { ...(a || {}) }; for (const [k, v] of Object.entries(b || {})) out[k] = mergeVal(out[k], v); return out; };
+  const mergePart = (old, cur) => (old ? { lib: mergeObj(old.lib, cur.lib), set: mergeObj(old.set, cur.set), ls: mergeObj(old.ls, cur.ls) } : cur);
+
+  // Заменить: убрать из папки всё, что пишет программа (чужие файлы рядом не трогаем), и записать заново
+  function repoClear(dir) {
+    if (!fs.existsSync(repoFile(dir))) return;
+    for (const x of ['data', 'files', 'bibles', 'repo.json', 'ПРОЧТИ.txt']) fs.rmSync(path.join(dir, x), { recursive: true, force: true });
+  }
+
+  async function repoWrite(dir, parts, ls, mode) {
     if (!dir || !fs.existsSync(dir)) return { ok: false, missing: true };
+    if (mode === 'replace') repoClear(dir);
     const has = (p) => parts.includes(p);
     const split = repoSplit(readJson(libFile(), {}) || {}, ls || {});
-    let changed = 0;
-    for (const id of parts) if (split[id]) changed += writeIfChanged(path.join(dir, 'data', id + '.json'), JSON.stringify(split[id], null, 1)) ? 1 : 0;
+    let changed = mode === 'replace' ? 1 : 0;
+    for (const id of parts) {
+      if (!split[id]) continue;
+      const file = path.join(dir, 'data', id + '.json');
+      const data = mergePart(readJson(file, null), split[id]);
+      changed += writeIfChanged(file, JSON.stringify(data, null, 1)) ? 1 : 0;
+    }
 
-    if (has('bibles')) changed += await mirrorDir(bibleDir(), path.join(dir, 'bibles'));
+    if (has('bibles')) {
+      // Файлы переводов — копией, список index.json — сливается с тем, что в папке (переводы с других компьютеров остаются)
+      const bd = path.join(dir, 'bibles');
+      for (const f of fs.existsSync(bibleDir()) ? fs.readdirSync(bibleDir()) : []) {
+        if (f.endsWith('.json') && f !== 'index.json' && await copyIfNewer(path.join(bibleDir(), f), path.join(bd, f))) changed += 1;
+      }
+      const index = mergeVal(readJson(path.join(bd, 'index.json'), []), readIndex());
+      if (index.length && writeIfChanged(path.join(bd, 'index.json'), JSON.stringify(index))) changed += 1;
+    }
 
     // Файлы, на которые ссылаются сохраняемые части, и шрифты программы
     const old = readJson(repoFile(dir), {}) || {};
@@ -920,9 +946,9 @@ app.whenReady().then(() => {
     return { ok: true, changed, date: man.date, files: files.size };
   }
 
-  ipcMain.handle('repo:sync', async (_e, { dir, parts, ls }) => {
+  ipcMain.handle('repo:sync', async (_e, { dir, parts, ls, mode }) => {
     while (repoBusy) await repoBusy.catch(() => {});
-    repoBusy = repoWrite(dir, parts || [], ls);
+    repoBusy = repoWrite(dir, parts || [], ls, mode);
     try { return await repoBusy; } catch (err) { return { ok: false, error: String(err && err.message || err) }; } finally { repoBusy = null; }
   });
 
@@ -979,10 +1005,23 @@ app.whenReady().then(() => {
     return add;
   }
 
-  ipcMain.handle('repo:restore', async (_e, { dir, parts }) => {
+  // mode: 'add' — добавить к данным программы (ничего не пропадает), 'replace' — заменить выбранные части тем, что в папке.
+  // Перед заменой прежние данные откладываются в «прежние данные <дата>» в папке программы — их можно вернуть вручную.
+  // curLs — записи localStorage окна (для слияния и чтобы отложить их копию)
+  ipcMain.handle('repo:restore', async (_e, { dir, parts, mode, ls: curLs }) => {
     const m = readJson(repoFile(dir), null);
     if (!m || m.kind !== 'repo') return { ok: false };
     const has = (p) => parts.includes(p) && (m.parts || []).includes(p);
+    const replace = mode === 'replace';
+    curLs = curLs || {};
+    let aside = '';
+    if (replace) {
+      const stamp = new Date().toLocaleString('ru-RU').replace(/[/:]/g, '-').replace(/,/g, '');
+      aside = path.join(ud(), 'прежние данные ' + stamp);
+      fs.mkdirSync(aside, { recursive: true });
+      if (fs.existsSync(libFile())) fs.copyFileSync(libFile(), path.join(aside, 'library.json'));
+      fs.writeFileSync(path.join(aside, 'localStorage.json'), JSON.stringify(curLs, null, 1));
+    }
 
     // Файлы — в папку программы (что уже есть — не трогаем), ссылки переписываем на новые места
     const map = new Map();
@@ -993,6 +1032,12 @@ app.whenReady().then(() => {
         const rel = String(f.rel);
         const dst = rel.startsWith('files/appdata/') ? path.join(ud(), ...rel.slice(14).split('/')) : path.join(ud(), 'media', path.basename(rel));
         if (!dst.startsWith(ud())) continue;
+        // Замена — файл из папки поверх своего (свой — в отложенные); добавление — свой не трогаем
+        if (replace && fs.existsSync(dst) && fs.statSync(dst).size !== fs.statSync(src).size) {
+          const keep = path.join(aside, 'files', path.relative(ud(), dst));
+          fs.mkdirSync(path.dirname(keep), { recursive: true });
+          fs.renameSync(dst, keep);
+        }
         if (!fs.existsSync(dst)) { fs.mkdirSync(path.dirname(dst), { recursive: true }); await fs.promises.copyFile(src, dst); }
         map.set(f.str, f.url ? pathToFileURL(dst).href : dst);
       }
@@ -1005,27 +1050,40 @@ app.whenReady().then(() => {
       }
     }
 
-    // library.json: «Библиотеки» заменяются, остальное (темы, макросы, экраны…) добавляется к своему
+    // Данные частей. Добавление — слить со своим (списки по id, объекты по ключам);
+    // замена — у выбранных частей остаётся только то, что в папке (лишние ключи убираются)
     const cur = readJson(libFile(), {}) || {};
-    let set = {};
+    const curSet = setsOf(curLs);
+    const set = {};
     const ls = {};
+    const dropSet = [];
+    const dropLs = [];
     for (const id of parts) {
       if (!has(id)) continue;
       const d = rewrite(readJson(path.join(dir, 'data', id + '.json'), null), map);
       if (!d) continue;
-      for (const [k, v] of Object.entries(d.lib || {})) cur[k] = id === 'library' ? v : mergeVal(cur[k], v);
+      const dl = d.lib || {};
+      const ds = d.set || {};
+      const dls = d.ls || {};
+      if (replace) {
+        for (const k of Object.keys(cur)) if (repoOwner('lib', k) === id && !(k in dl)) delete cur[k];
+        for (const k of Object.keys(curSet)) if (repoOwner('set', k) === id && !(k in ds) && !REPO_NO_SET.includes(k)) dropSet.push(k);
+        for (const k of Object.keys(curLs)) if (k !== 'cp.settings' && k !== 'cp.repoLast' && repoOwner('ls', k) === id && !(k in dls)) dropLs.push(k);
+      }
+      for (const [k, v] of Object.entries(dl)) cur[k] = replace ? v : mergeVal(cur[k], v);
       // Темы из репозитория — сразу применённые, если в репозитории нет их черновика
-      if (id === 'themes' && cur.themesLive) for (const t of (d.lib && d.lib.themes) || []) if (!(d.lib.themesLive || {})[t.id]) delete cur.themesLive[t.id];
-      set = { ...set, ...(d.set || {}) };
-      for (const [k, v] of Object.entries(d.ls || {})) ls[k] = typeof v === 'string' ? v : JSON.stringify(v);
+      if (id === 'themes' && cur.themesLive) for (const t of dl.themes || []) if (!(dl.themesLive || {})[t.id]) delete cur.themesLive[t.id];
+      for (const [k, v] of Object.entries(ds)) set[k] = replace ? v : mergeVal(curSet[k], v);
+      for (const [k, v] of Object.entries(dls)) ls[k] = lsText(replace || !(k in curLs) ? v : mergeVal(lsParse(curLs[k]), v));
     }
     fs.writeFileSync(libFile() + '.tmp', JSON.stringify(cur));
     fs.renameSync(libFile() + '.tmp', libFile());
 
-    // Переводы Библии добавляются (с тем же id — заменяются)
+    // Переводы Библии добавляются (с тем же id — заменяются); при замене свои — в отложенные
     if (has('bibles') && fs.existsSync(path.join(dir, 'bibles'))) {
+      if (replace && fs.existsSync(bibleDir())) fs.renameSync(bibleDir(), path.join(aside, 'bibles'));
       fs.mkdirSync(bibleDir(), { recursive: true });
-      const index = readIndex();
+      const index = replace ? [] : readIndex();
       for (const b of readJson(path.join(dir, 'bibles', 'index.json'), [])) {
         const sid = safeId(b.id);
         const src = sid && path.join(dir, 'bibles', sid + '.json');
@@ -1037,7 +1095,7 @@ app.whenReady().then(() => {
       writeIndex(index);
     }
     // Настройки и записи localStorage записывает само окно
-    return { ok: true, set, ls };
+    return { ok: true, set, ls, dropSet, dropLs, aside };
   });
 
   ipcMain.handle('backup:restore', async (_e, { dir, parts }) => {

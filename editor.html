@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src file: data: blob:; media-src file:; style-src 'self' 'unsafe-inline'; font-src 'self' file: data:">
-  <title>Редактор — MP Show</title>
+  <title>Картинка — MP Show</title>
   <style>
     /* Палитра: 051822 · 2D383E · 7C5841 · AA7452 · 969A9E · D4C9C7 */
     :root {
@@ -101,109 +101,14 @@
 </head>
 <body>
   <div class="top" role="tablist">
-    <button class="tab" role="tab" data-view="slides" data-icon="slides" aria-selected="true">Слайды</button>
-    <button class="tab" role="tab" data-view="image" data-icon="image" aria-selected="false">Картинка</button>
+    <button class="tab" role="tab" data-view="image" data-icon="image" aria-selected="true">Картинка</button>
     <span class="spacer"></span>
     <span id="status"></span>
     <button id="save" class="primary" title="Сохранить (Ctrl+S)">Сохранить</button>
   </div>
 
-  <!-- ===== Слайды ===== -->
-  <section class="view" data-view="slides">
-    <div class="col-left">
-      <div class="list" id="slideList"></div>
-      <div class="acts">
-        <button id="slAdd" title="Новый слайд: текст, свой, картинка, видео или музыка">＋ Слайд ▾</button>
-        <button id="slDup" title="Копия слайда">Копия</button>
-        <button id="slUp" title="Выше">↑</button>
-        <button id="slDown" title="Ниже">↓</button>
-        <button id="slDel" title="Удалить слайд">Удалить</button>
-      </div>
-    </div>
-    <div class="center">
-      <div class="canvas-wrap" id="slWrap">
-        <div class="stage-host" id="slHost"><div class="stage" id="slStage"></div><div class="overlay" id="slOverlay"></div></div>
-        <div class="empty-note" id="slEmpty">Откройте песню или свои слайды кнопкой ✎ в плейлисте на вкладке «Экран», или создайте их там кнопкой «＋ Слайды».</div>
-      </div>
-    </div>
-    <div class="col-right" id="slProps">
-      <div>
-        <h3>Пункт</h3>
-        <div class="row"><span>Название</span><input type="text" id="itName"></div>
-        <div class="row"><span>Тема пункта</span><select id="itTheme" class="theme-sel"></select></div>
-      </div>
-      <div class="group">
-        <h3>Слайд</h3>
-        <div class="row"><span>Подпись</span><input type="text" id="slLabel" placeholder="Куплет 1, Припев…"></div>
-        <div class="row"><span>Тема слайда</span><select id="slTheme" class="theme-sel"></select></div>
-        <div class="row" id="slTplRow"><span>Шаблон темы</span><select id="slTpl"></select></div>
-        <div class="row"><span>Вид слайда</span><b id="slKind" style="color:var(--text)"></b></div>
-        <div id="songProps">
-          <div class="row" id="slRefRow"><span>Ссылка</span><input type="text" id="slRef" placeholder="Ин 3:16"></div>
-          <textarea id="slText" rows="9" placeholder="Текст слайда"></textarea>
-          <p class="hint">Шрифт, цвет, фон, подложка и расположение текста задаются темой и её шаблоном. Чтобы расставить текст и картинки вручную, сделайте его своим слайдом:</p>
-          <div class="btns" style="margin-top:6px"><button id="slToCustom">Превратить в свой слайд</button></div>
-        </div>
-        <div id="mediaProps">
-          <p class="hint" id="slFile" style="margin-bottom:8px;word-break:break-all"></p>
-          <div class="row" id="slFitRow"><span>На экране</span><select id="slFit">
-            <option value="">как в настройках</option><option value="contain">вписать целиком</option><option value="cover">заполнить (обрезать края)</option>
-            <option value="fill">растянуть</option><option value="none">реальный размер</option>
-          </select></div>
-          <div class="btns">
-            <button id="slReplace">Заменить файл…</button>
-            <button id="slEditImage">Изменить картинку</button>
-          </div>
-          <p class="hint" id="slAudioHint" style="margin-top:8px">Музыкальный слайд не меняет экран: когда до него доходят стрелками или щёлкают по нему, включается музыка.</p>
-        </div>
-      </div>
-      <div class="group" id="customProps">
-        <h3>Добавить на слайд</h3>
-        <div class="btns">
-          <button id="addText">＋ Текст</button>
-          <button id="addImage">＋ Картинка</button>
-        </div>
-        <p class="hint" style="margin-top:8px">Картинку можно перетащить на слайд из Проводника или медиапула. Двигайте блоки мышью, угол — размер. Delete — удалить, стрелки — сдвинуть.</p>
-      </div>
-      <div class="group" id="elProps">
-        <h3>Выбранный блок</h3>
-        <div id="elText">
-          <textarea id="elValue" rows="4" placeholder="Текст"></textarea>
-          <div class="row" style="margin-top:8px"><span>Шрифт</span><select id="elFont" class="font-sel"></select></div>
-          <div class="row"><span>Размер</span><input type="number" id="elSize" min="1" max="60" step="0.5"><output>% выс.</output></div>
-          <div class="row"><span>Цвет</span><input type="color" id="elColor"></div>
-          <div class="row"><span>Начертание</span><span class="btns">
-            <button id="elBold" title="Жирный"><b>Ж</b></button>
-            <button id="elItalic" title="Курсив"><i>К</i></button>
-            <button id="elShadow" title="Тень">Тень</button>
-            <button id="elUpper" title="Заглавные">АА</button>
-          </span></div>
-          <div class="row"><span>По ширине</span><span class="btns" id="elAlign">
-            <button data-v="left" title="Слева">⇤</button><button data-v="center" title="По центру">↔</button><button data-v="right" title="Справа">⇥</button>
-          </span></div>
-          <div class="row"><span>По высоте</span><span class="btns" id="elValign">
-            <button data-v="top" title="Сверху">⤒</button><button data-v="middle" title="По центру">↕</button><button data-v="bottom" title="Снизу">⤓</button>
-          </span></div>
-          <div class="row"><span>Подложка</span><label><input type="checkbox" id="elBgOn"> есть</label><input type="color" id="elBg"></div>
-        </div>
-        <div id="elImage">
-          <div class="row"><span>Вписать</span><select id="elFit"><option value="contain">целиком</option><option value="cover">заполнить</option></select></div>
-          <div class="row"><span>Скругление</span><input type="range" id="elRadius" data-def="0" min="0" max="10" step="0.5"><output id="elRadiusVal"></output></div>
-        </div>
-        <div class="row"><span>Прозрачность</span><input type="range" id="elOpacity" data-def="100" min="10" max="100" step="5"><output id="elOpacityVal"></output></div>
-        <div class="row"><span>Поворот</span><input type="range" id="elRot" data-def="0" min="-180" max="180" step="1"><output id="elRotVal"></output></div>
-        <div class="btns">
-          <button id="elFront" title="На передний план">Вперёд</button>
-          <button id="elBack" title="На задний план">Назад</button>
-          <button id="elDup" title="Копия (Ctrl+D)">Копия</button>
-          <button id="elDel" title="Удалить (Delete)">Удалить</button>
-        </div>
-      </div>
-    </div>
-  </section>
-
   <!-- ===== Картинка ===== -->
-  <section class="view" data-view="image" hidden>
+  <section class="view" data-view="image">
     <div class="center">
       <div class="canvas-wrap">
         <div id="imgHost"><canvas id="imgCanvas" width="10" height="10"></canvas><div id="cropBox" hidden></div></div>
@@ -272,8 +177,6 @@
 
   <script src="icons.js"></script>
   <script src="scene.js"></script>
-  <script src="slides.js"></script>
-  <script src="themes.js"></script>
   <script src="editor.js"></script>
 </body>
 </html>

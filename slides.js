@@ -11,6 +11,8 @@
      video  { url, path, name, fit? }
      audio  { url, path, name }            — на экран не выводится, играет музыку
      tpl?   — у текстовых слайдов: id шаблона темы (themes.js), иначе шаблон выбирается сам по виду слайда
+     look?  — у text | bible | custom: свой вид слайда — шаблон темы только для этого слайда (Themes.tpl: фон и объекты).
+              Правится в редакторе тем («Изменить в редакторе», themeeditor.js). Важнее темы и шаблона; тема экрана — важнее его.
      custom { elements: [...] }            — свой слайд: блоки текста и картинок
      live   { src: { type, id, label }, name, fit? } — живой источник из «Медиапул → Источники»
                                            (type: camera | screen | mic | ndi …, см. Scene.LIVE)
@@ -30,6 +32,11 @@ const Slides = (() => {
   // opt.meta — данные для полей шаблона темы: { title, ccli, number }; slide.tpl — шаблон темы, выбранный для слайда вручную
   function content(slide, style, opt = {}) {
     const th = { tpl: slide.tpl || undefined, meta: { ...(opt.meta || {}), label: slide.label || '' } };
+    // Свой вид слайда — единственный шаблон для этого слайда
+    if (slide.look && slide.look.id && ['text', 'bible', 'custom'].includes(slide.k)) {
+      style = { ...style, tpls: [slide.look], tpl: slide.look.id };
+      th.tpl = slide.look.id;
+    }
     switch (slide.k) {
       case 'text': return { type: 'text', text: slide.text || ' ', style, ...th };
       case 'bible': return { type: 'text', verses: slide.verses || [], ref: slide.ref || '', translation: slide.translation, trs: slide.trs || undefined, par: slide.par || undefined, style, ...th };

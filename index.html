@@ -1175,6 +1175,11 @@
     .tm-bar > i { display: block; height: 100%; width: 0; background: var(--live); }
     .tm-row.over .tm-bar > i { background: var(--warn); }
     .tm-empty { color: var(--muted); font-size: 12px; padding: 4px 6px; }
+    /* Куда выведен таймер (stage.js: t.out) */
+    .tm-outs { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 4px; }
+    .tm-out { display: inline-flex; align-items: center; gap: 2px; max-width: 100%; font-size: 11px; padding: 1px 2px 1px 7px; border: 1px solid var(--live); border-radius: 10px; color: var(--live); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+    .tm-outs button.tm-out-x { font-size: 11px; line-height: 1; padding: 1px 5px; border: 0; background: none; color: inherit; }
+    .tm-outs button.tm-out-add { font-size: 11px; padding: 1px 7px; border-radius: 10px; color: var(--muted); }
     /* Окно «Переход и авто-переключение» (playlist.js: openFx) */
     .fx-body { display: flex; flex-direction: column; gap: 8px; min-width: 380px; }
     .fx-sub { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin-top: 6px; }
@@ -1217,6 +1222,8 @@
     .set-part .mp-icon { width: 20px; height: 20px; }
     .repo-state { padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--field); margin: 0 0 10px !important; word-break: break-all; }
     .repo-state.off { color: var(--warn); }
+    .danger-btn:not(:disabled) { color: var(--warn); }
+    .danger-btn:not(:disabled):hover { border-color: var(--warn); }
     .out-screens-head { max-width: none; margin-bottom: 8px; }
     #screensView { height: 100%; display: flex; min-height: 0; overflow: hidden; background: var(--ink); }
     body.sc-mode aside, body.sc-mode .workspace > .splitter[data-split=aside] { display: none; }
@@ -1337,6 +1344,11 @@
     .te-tpl { cursor: pointer; border-radius: 6px; padding: 3px; border: 1px solid transparent; min-width: 0; }
     .te-tpl:hover { background: var(--field); }
     .te-tpl.sel { border-color: var(--live); background: var(--live-soft); }
+    .te-tpl.off { cursor: default; opacity: 0.45; }
+    .te-tpl.off:hover { background: none; }
+    /* Режим слайда (свой вид слайда): вместо тем — слайды презентации */
+    .te-slide-head { display: flex; align-items: center; gap: 8px; padding: 6px; border-bottom: 1px solid var(--line); }
+    .te-slide-head b { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
     .te-tpl .te-mini { width: 100%; }
     .te-tpl .nm { display: block; font-size: 11px; line-height: 1.3; padding: 4px 2px 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .te-tpl .nm small { display: block; color: var(--muted); font-size: 10px; }
@@ -1503,7 +1515,6 @@
     <button id="addMenu" class="tab-btn add-menu" data-icon="add" title="Добавить: песню, импорт, источник, файл, библиотеку…" aria-haspopup="menu">＋</button>
     <button id="svcTheme" class="tab-btn icon-only" data-icon="theme" title="Тема: для выделенных пунктов «Содержания» (Ctrl/Shift+щелчок, Ctrl+A), а если ничего не выделено — для того, что на экране"></button>
     <button id="poolToggle" class="tab-btn" data-icon="pool" title="Медиапул: файлы из закреплённых папок (F8)">Медиапул</button>
-    <button id="openEditor" class="tab-btn" data-icon="editor" title="Редактор слайдов, тем и картинок">Редактор</button>
     <button id="openSettings" class="tab-btn" data-icon="settings" title="Настройки: монитор и вывод, показ, звук, горячие клавиши">Настройки</button>
   </div>
 
@@ -2181,11 +2192,13 @@
             <p class="hint repo-state" id="repoState"></p>
             <div class="btns-row">
               <button id="repoPick" class="primary" data-icon="library">Выбрать папку…</button>
-              <button id="repoNow" data-icon="export">Сохранить сейчас</button>
+              <button id="repoNow" data-icon="export" title="Добавить данные программы к тому, что уже есть в папке. Из папки ничего не удаляется">Отправить в репозиторий</button>
               <button id="repoOpen">Открыть папку</button>
               <button id="repoOff">Отключить</button>
             </div>
             <div class="field"><label class="check"><input type="checkbox" id="repoAuto"> Сохранять изменения автоматически</label></div>
+            <p class="hint"><b>Защита:</b> отправка и автосохранение только дополняют папку — песни, темы и файлы, которые там уже есть (например, с другого компьютера), не удаляются, даже если в программе их нет.</p>
+            <div class="btns-row"><button id="repoReplace" class="danger-btn" title="Очистить папку и записать в неё только то, что сейчас в программе">Заменить содержимое папки…</button></div>
           </div>
           <div class="set-group">
             <h2>Что хранить в репозитории</h2>
@@ -2202,8 +2215,11 @@
             <div id="restoreBox" hidden>
               <p class="hint" id="restoreInfo"></p>
               <div id="restoreParts" class="parts"></div>
-              <div class="btns-row"><button id="restoreGo" class="primary">Восстановить выбранное</button></div>
-              <p class="hint">Библиотеки, плейлисты и выбранные настройки заменятся на те, что в папке. Темы, макросы, экраны, сцены и переводы Библии добавятся к вашим (с тем же именем-номером — заменятся). Файлы копируются в папку программы. После восстановления окно обновится.</p>
+              <div class="btns-row">
+                <button id="restoreGo" class="primary" title="Добавить к тому, что есть в программе. Ничего не удаляется">Добавить в программу</button>
+                <button id="restoreReplace" class="danger-btn" title="Отмеченное в программе заменится тем, что в папке">Заменить данные программы…</button>
+              </div>
+              <p class="hint" id="restoreHint"><b>Добавить</b> — песни, плейлисты, темы, макросы, экраны, переводы и файлы из папки добавятся к вашим; ваше не удаляется (то же самое с тем же номером обновится). <b>Заменить</b> — у отмеченных пунктов в программе останется только то, что в папке; прежние данные программа отложит в папку «прежние данные &lt;дата&gt;» рядом со своими данными. После восстановления окно обновится.</p>
             </div>
           </div>
           <div class="set-group">

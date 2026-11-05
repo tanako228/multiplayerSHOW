@@ -98,7 +98,8 @@ function applyTheme(id, tpl) {
       if (tpl !== undefined) it.slides.forEach((s) => { delete s.tpl; });
     }
     // Тема слайда важнее темы презентации; текст слайдов не меняется
-    if (t.kind === 'slides') { t.slides.forEach((x) => { if (id) x.slide.theme = id; else delete x.slide.theme; setTpl(x.slide); }); flashStatus(`Тема применена к слайдам: ${t.slides.length} · Ctrl+Z — вернуть`); }
+    // Свой вид слайда (редактор тем) уступает выбранной теме; у своего слайда в виде его блоки — остаётся
+    if (t.kind === 'slides') { t.slides.forEach((x) => { if (id) x.slide.theme = id; else delete x.slide.theme; setTpl(x.slide); if (x.slide.k !== 'custom') delete x.slide.look; }); flashStatus(`Тема применена к слайдам: ${t.slides.length} · Ctrl+Z — вернуть`); }
     if (t.kind === 'items') flashStatus(`Тема применена к пунктам: ${t.items.length}`);
     else if (t.kind === 'media') { if (id) t.media.theme = id; else delete t.media.theme; }
   } else {
@@ -145,36 +146,21 @@ $('svcTheme').addEventListener('click', () => {
   flashStatus('Выделите пункты в «Содержании» (Ctrl/Shift+щелчок, Ctrl+A) или выведите что-нибудь на экран');
 });
 
-/* ===== Редактор (отдельное окно) ===== */
+/* ===== Окно «Картинка» (editor.html): правка фото. Слайды правятся в редакторе тем (свой вид слайда),
+   старого редактора слайдов больше нет (решение владельца). ===== */
 
 const clone = (x) => JSON.parse(JSON.stringify(x));
 
-// sid — какой слайд открыть сразу
-function openEditorWindow(mode = 'slides', item = null, sid = null) {
-  if (!lib) return;
-  if (mode === 'themes') { openThemeTab(); return; } // темы правятся во вкладке «Темы» главного окна
-  window.api.openEditor({ mode, item: item ? clone(item) : null, sid, themes: clone(appliedThemes()), themeFor: clone(lib.themeFor), tplFor: clone(lib.tplFor || {}), base: textStyle(), ui: uiPalette() });
-}
-
 function openImageEditor(item, target) {
   window.api.openEditor({
-    mode: 'image', image: { url: item.url, path: item.path, name: item.name.replace(/\.[^.]+$/, '') },
-    target: target.media ? { mediaUrl: item.url } : target, themes: clone(appliedThemes()), themeFor: clone(lib.themeFor), base: textStyle(), ui: uiPalette(),
+    image: { url: item.url, path: item.path, name: item.name.replace(/\.[^.]+$/, '') },
+    target: target.media ? { mediaUrl: item.url } : target, ui: uiPalette(),
   });
 }
 
 window.api.onEditorSaved((msg) => {
   if (!lib || !msg) return;
-  if (msg.kind === 'item' && msg.item && msg.item.id) {
-    if (msg.item.song) songAbsorb(msg.item); // текст, поправленный в редакторе, — в песню и во все её аранжировки
-    msg.item.kind = Slides.presKind(msg.item);
-    if (lib.items[msg.item.id]) lib.items[msg.item.id] = msg.item;
-    else addItems([msg.item], true, 'rescue'); // сделанное в редакторе не теряем: открыт плейлист — в библиотеку
-  } else if (msg.kind === 'themes' && Array.isArray(msg.themes)) {
-    lib.themes = msg.themes;
-    delete lib.themesLive;
-    if (msg.themeFor) lib.themeFor = msg.themeFor;
-  } else if (msg.kind === 'image' && msg.file) {
+  if (msg.kind === 'image' && msg.file) {
     // Отредактированная картинка сохраняется отдельным файлом, исходник не трогаем
     const tg = msg.target || {};
     const it = tg.itemId && lib.items[tg.itemId];
@@ -196,17 +182,41 @@ window.api.onEditorSaved((msg) => {
   } else refreshLive();
 });
 
-$('openEditor').addEventListener('click', () => openEditorWindow('slides'));
 
-// «Свои слайды» (меню «＋»): свой слайд, где текст и картинки можно расставить как угодно
-function svcAddCustom() {
-  if (!findView() || plNoCreate()) return; // свои слайды создаются только в библиотеке
-  const it = {
-    id: newId(), type: 'pres', kind: 'custom', name: 'Новые слайды',
-    slides: [{ id: newId(), k: 'custom', elements: [{ id: newId(), kind: 'text', x: 10, y: 35, w: 80, h: 30, text: 'Заголовок', size: 10, weight: 700, align: 'center', valign: 'middle' }] }],
-  };
+// Новый свой слайд: блок текста посередине; оформление — тема «Свои слайды», правится в редакторе тем
+const newCustomSlide = () => ({ id: newId(), k: 'custom', elements: [{ id: newId(), kind: 'text', x: 10, y: 35, w: 80, h: 30, text: 'Новый слайд', size: 10, weight: 700, align: 'center', valign: 'middle' }] });
+
+// «＋ → Свой слайд»: новый слайд в уже существующую презентацию — после выделенного слайда, иначе в конец
+// выделенной или открытой в ленте презентации
+function svcAddSlide() {
+  if (!lib) return;
+  if (tab !== 'service') setTab('service');
+  const last = selectedSlides().pop();
+  const key = last ? last.key : selItems.length ? selItems[selItems.length - 1] : openKey;
+  const e = key && workEntry(key);
+  if (!e) { showNotice('Выделите презентацию или слайд в ней — новый слайд добавится туда. Новая презентация — «＋ → Новая презентация»', true); return; }
+  const item = e.item;
+  const s = newCustomSlide();
+  const at = last ? item.slides.indexOf(last.slide) + 1 : item.slides.length;
+  item.slides.splice(at, 0, s);
+  touched(item);
+  sel = [{ key: e.key, sid: s.id }];
+  selAnchor = sel[0];
+  renderService();
+  flashStatus(`Слайд добавлен в «${item.name}» · правая кнопка → «Изменить в редакторе» · Ctrl+Z — вернуть`);
+}
+
+// «＋ → Новая презентация»: только в библиотеке; сразу спросить название
+async function svcNewPres() {
+  if (!findView() || plNoCreate()) return;
+  const it = { id: newId(), type: 'pres', kind: 'custom', name: 'Новая презентация', slides: [newCustomSlide()] };
   addItems([it], true);
-  openEditorWindow('slides', it);
+  const name = await askName('Название презентации', it.name);
+  if (name && name !== it.name && lib.items[it.id]) {
+    lib.items[it.id].name = name;
+    saveLib();
+    renderService();
+  }
 }
 
 /* ===== Быстрая анимация: крупный план (камера с ключевыми точками), рисование и маркер поверх слайда ===== */
@@ -1478,10 +1488,11 @@ function repoTouch(kind) {
   repoTimer = setTimeout(() => repoSyncNow(false), 4000);
 }
 
-async function repoSyncNow(manual) {
+// mode: '' — дополнить папку (ничего в ней не удаляется), 'replace' — очистить и записать заново (только по кнопке)
+async function repoSyncNow(manual, mode) {
   clearTimeout(repoTimer);
   const r = repo();
-  if (!r.dir || repoBusy) { if (repoBusy) repoTimer = setTimeout(() => repoSyncNow(manual), 3000); return null; }
+  if (!r.dir || repoBusy) { if (repoBusy) repoTimer = setTimeout(() => repoSyncNow(manual, mode), 3000); return null; }
   const ls = lsSnapshot();
   const lsStr = JSON.stringify(ls);
   if (!manual && !repoLibDirty && lsStr === repoLastLs) return null; // ничего нового
@@ -1491,7 +1502,7 @@ async function repoSyncNow(manual) {
   repoLastLs = lsStr;
   if (manual) $('repoState').textContent = 'Сохраняю в репозиторий…';
   let res = null;
-  try { res = await window.api.repoSync({ dir: r.dir, parts: r.parts, ls }); } catch (err) { res = { ok: false, error: String(err) }; }
+  try { res = await window.api.repoSync({ dir: r.dir, parts: r.parts, ls, mode }); } catch (err) { res = { ok: false, error: String(err) }; }
   repoBusy = false;
   if (res && res.ok) {
     repoWarned = false;
@@ -1516,12 +1527,12 @@ function renderRepoState() {
   const st = $('repoState');
   st.classList.toggle('off', !r.dir || r.hold);
   if (!r.dir) st.textContent = 'Репозиторий не подключён. Нажмите «Выбрать папку…» — например, папку на флешке или в облачном диске.';
-  else if (r.hold) st.textContent = `Папка: ${r.dir}. В ней уже есть данные — восстановите нужное ниже или нажмите «Сохранить сейчас», чтобы записать туда текущие данные.`;
+  else if (r.hold) st.textContent = `Папка: ${r.dir}. В ней уже есть данные — возьмите нужное ниже («Восстановить») или нажмите «Отправить в репозиторий»: ваши данные добавятся к тем, что в папке, ничего не удалится.`;
   else {
     const when = repoLast && repoLast.date ? new Date(repoLast.date).toLocaleString('ru-RU') : 'ещё не сохранялось';
     st.textContent = `Папка: ${r.dir} · последнее сохранение: ${when}` + (repoLast && repoLast.files ? ` · файлов: ${repoLast.files}` : '') + (r.auto ? '' : ' · автосохранение выключено');
   }
-  for (const id of ['repoNow', 'repoOpen', 'repoOff']) $(id).disabled = !r.dir;
+  for (const id of ['repoNow', 'repoOpen', 'repoOff', 'repoReplace']) $(id).disabled = !r.dir;
   $('repoAuto').checked = !!r.auto;
   $('repoAuto').disabled = !r.dir;
 }
@@ -1561,7 +1572,17 @@ $('repoNow').addEventListener('click', async () => {
   repo().hold = false;
   saveSettings();
   const res = await repoSyncNow(true);
-  if (res && res.ok) savedFlash($('repoNow'), res.changed ? 'Сохранено' : 'Уже всё сохранено');
+  if (res && res.ok) savedFlash($('repoNow'), res.changed ? 'Отправлено' : 'Уже всё в папке');
+});
+// Заменить содержимое папки: всё, что в ней было от программы, удаляется, пишется только текущее
+$('repoReplace').addEventListener('click', async () => {
+  const r = repo();
+  if (!r.dir) return;
+  if (!window.confirm(`Вы точно хотите заменить содержимое репозитория?\n\n${r.dir}\n\nВсё, что сейчас лежит в этой папке (песни, темы, файлы — в том числе с других компьютеров), будет удалено, и туда запишется только то, что есть в программе сейчас. Вернуть удалённое из папки будет нельзя.`)) return;
+  r.hold = false;
+  saveSettings();
+  const res = await repoSyncNow(true, 'replace');
+  if (res && res.ok) flashStatus('Репозиторий записан заново — в нём только текущие данные программы');
 });
 $('repoOpen').addEventListener('click', () => window.api.repoReveal(repo().dir));
 $('repoOff').addEventListener('click', () => {
@@ -1588,6 +1609,8 @@ function openRestore(res) {
   const table = res.kind === 'repo' ? REPO_NAMES : OLD_PARTS;
   $('restoreInfo').textContent = (res.kind === 'repo' ? 'Репозиторий' : 'Резервная копия') + ` от ${new Date(res.date).toLocaleString('ru-RU')} (${res.dir}). Что в нём есть:`;
   partBoxes($('restoreParts'), table, res.parts, res.parts);
+  $('restoreReplace').hidden = res.kind !== 'repo'; // старые копии — только как раньше
+  $('restoreGo').textContent = res.kind === 'repo' ? 'Добавить в программу' : 'Восстановить выбранное';
   $('restoreBox').hidden = false;
 }
 
@@ -1598,26 +1621,38 @@ $('restorePick').addEventListener('click', async () => {
   openRestore(res);
 });
 
-$('restoreGo').addEventListener('click', async () => {
+// mode: 'add' — добавить к своему (ничего не удаляется), 'replace' — у отмеченного оставить только то, что в папке
+async function restoreRun(mode) {
   const parts = checkedParts($('restoreParts'));
-  if (!restoreSrc || !parts.length) return;
+  if (!restoreSrc || !parts.length) { if (restoreSrc) flashStatus('Отметьте, что восстановить'); return; }
   const table = restoreSrc.kind === 'repo' ? REPO_NAMES : OLD_PARTS;
   const list = parts.map((p) => '• ' + (table.find(([id]) => id === p) || [p, p])[1]).join('\n');
-  if (!window.confirm(`Восстановить из папки:\n${list}\n\n${parts.includes('library') ? 'Текущие библиотеки и плейлисты будут заменены.\n' : ''}Окно программы обновится.`)) return;
+  const ask = restoreSrc.kind === 'backup'
+    ? `Восстановить из копии:\n${list}\n\n${parts.includes('library') ? 'Текущие библиотеки и плейлисты будут заменены.\n' : ''}Окно программы обновится.`
+    : mode === 'replace'
+      ? `Вы точно хотите ЗАМЕНИТЬ данные программы?\n\n${list}\n\nУ этих пунктов в программе останется только то, что есть в папке репозитория, — всё остальное уберётся. Прежние данные программа отложит в папку «прежние данные <дата>» рядом со своими данными. Окно программы обновится.`
+      : `Добавить в программу из папки:\n${list}\n\nВаше не удаляется: новое добавится, то же самое обновится. Окно программы обновится.`;
+  if (!window.confirm(ask)) return;
   clearTimeout(saveTimer); // чтобы старая библиотека из памяти не перезаписала восстановленную
   clearTimeout(repoTimer);
   if (restoreSrc.kind === 'backup') { await restoreOldBackup(restoreSrc.dir, parts); return; }
-  const res = await window.api.repoRestore({ dir: restoreSrc.dir, parts });
+  const res = await window.api.repoRestore({ dir: restoreSrc.dir, parts, mode, ls: lsSnapshot() });
   if (!res || !res.ok) { showNotice('Не удалось восстановить из этой папки', true); return; }
   const keep = settings.repo;
   Object.assign(settings, res.set || {});
+  for (const k of res.dropSet || []) delete settings[k];
   settings.repo = keep;
   // Репозиторий не подключён или это он и есть — дальше программа пишет в эту папку
   if (!keep.dir || keep.dir === restoreSrc.dir) { keep.dir = restoreSrc.dir; keep.hold = false; }
   saveSettings();
-  try { for (const [k, v] of Object.entries(res.ls || {})) if (k.startsWith('cp.') && k !== 'cp.settings') localStorage.setItem(k, v); } catch { showNotice('Часть настроек не удалось записать', true); }
+  try {
+    for (const [k, v] of Object.entries(res.ls || {})) if (k.startsWith('cp.') && k !== 'cp.settings') localStorage.setItem(k, v);
+    for (const k of res.dropLs || []) if (k.startsWith('cp.') && k !== 'cp.settings') localStorage.removeItem(k);
+  } catch { showNotice('Часть настроек не удалось записать', true); }
   location.reload();
-});
+}
+$('restoreGo').addEventListener('click', () => restoreRun('add'));
+$('restoreReplace').addEventListener('click', () => restoreRun('replace'));
 
 // Старая резервная копия (manifest.json, local.json)
 async function restoreOldBackup(dir, parts) {

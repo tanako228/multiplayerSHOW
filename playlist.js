@@ -60,7 +60,13 @@ const kindOfItem = (item) => ({ deck: 'media', media: 'media' })[item.kind] || i
 
 // meta — данные для полей шаблона темы (название, CCLI, номер песни)
 const contentOf = (item, slide) => Slides.content(slide, styleFor(Slides.themeKind(slide), item, slide),
-  { fit: settings.fit, sound: settings.videoSound, loop: settings.videoLoop, meta: { title: item.name, ccli: item.song && item.song.ccli, number: item.song && item.song.number } });
+  { fit: settings.fit, sound: settings.videoSound, loop: settings.videoLoop, meta: { title: item.name, ccli: item.song && item.song.ccli, number: item.song && item.song.number, tm: tmMapOf(item) } });
+// Таймеры, выведенные в текстовые поля этой презентации (stage.js: t.out) → { id объекта шаблона: id таймера }
+function tmMapOf(item) {
+  let m = null;
+  for (const t of (typeof lib !== 'undefined' && lib && lib.timers) || []) for (const o of t.out || []) if (o.item === item.id) (m || (m = {}))[o.obj] = t.id;
+  return m;
+}
 
 let saveTimer = 0;
 function saveLib() {
@@ -625,7 +631,7 @@ function renderFeed() {
     if (item.song || (item.slides.length && item.slides.every((s) => s.k === 'text'))) btn('Текст', 'Текст песни, разметка частей и аранжировки', () => openSongDialog(item));
     const arrPick = songArrPick(item);
     if (arrPick) head.append(arrPick);
-    btn('✎', 'Открыть в редакторе слайдов', () => openEditorWindow('slides', item));
+    if (item.slides.some((s) => ['text', 'bible', 'custom'].includes(s.k))) btn('✎', 'Изменить слайды в редакторе тем', () => openSlideLook(item));
     const tb = btn('', 'Тема', () => openThemePicker({ kind: 'item', item, name: item.name }));
     tb.dataset.icon = 'theme';
     tb.classList.add('icon-only');
@@ -1211,7 +1217,8 @@ function slideMenu(e, key, sid) {
     ...(slide.k !== 'audio' ? [{ label: 'Переход и время слайда' + many + '…' + (slide.trans || slide.autoSec ? ' ✓' : ''), fn: () => openFx('slides', selectedSlides().map((x) => x.slide)) }] : []),
     ...(lib.macros && lib.macros.length ? [{ label: 'Привязать макрос…', fn: () => mcAttachMenu(e, { kind: 'slide', key, sid }) }] : []),
     ...(typeof stSlideMenu === 'function' ? stSlideMenu(e, entry, slide) : []), // сценический экран (stage.js)
-    { label: 'Изменить в редакторе', fn: () => openEditorWindow('slides', entry.item, sid) },
+    // Текст, Библия, свой слайд — в редакторе тем (свой вид слайда)
+    ...(['text', 'bible', 'custom'].includes(slide.k) ? [{ label: 'Изменить в редакторе' + (slide.look ? ' (свой вид)' : ''), fn: () => openSlideLook(entry.item, sid) }] : []),
     ...(slide.k === 'image' ? [{ label: 'Изменить картинку…', fn: () => openImageEditor({ url: slide.url, path: slide.path, name: slide.name || entry.item.name }, { itemId: entry.item.id, slideId: sid }) }] : []),
     ...(slide.path ? [{ label: 'Показать в проводнике', fn: () => revealFile(slide.path) }] : []),
     { label: 'Удалить' + many, key: 'Delete', fn: svcDelete },
@@ -1234,7 +1241,7 @@ function presMenu(e, key, item, isPl) {
     { label: 'Выделить все слайды', key: 'Ctrl+A', fn: () => { sel = item.slides.map((s) => ({ key, sid: s.id })); updatePlaylistLive(); } },
     { label: 'Копировать все слайды', fn: () => copySlides(item.slides).then((ok) => ok && flashStatus(`Скопировано слайдов: ${item.slides.length}`)) },
     '-',
-    { label: 'Открыть в редакторе', fn: () => openEditorWindow('slides', item) },
+    { label: 'Открыть в редакторе тем', disabled: !item.slides.some((s) => ['text', 'bible', 'custom'].includes(s.k)), fn: () => openSlideLook(item) },
     // Из плейлиста — перейти к песне в её библиотеке
     ...(isPl ? itemPlaces(item).filter((p) => p.kind === 'lib').map((p) => ({ label: `Найти в библиотеке «${p.name}»`, fn: () => gotoItem('lib', p.id, item.id) })) : []),
     ...(itemPath(item) ? [{ label: 'Показать в проводнике', fn: () => revealFile(itemPath(item)) }] : []),
@@ -1262,7 +1269,7 @@ function tplPickMenu(e, chosen) {
   if (!list.length) { flashStatus('У темы этого слайда нет шаблонов — сделайте их в редакторе тем (F7 → «Темы»)'); return; }
   const cur = slide.tpl || '';
   const pick = (id) => {
-    chosen.forEach((x) => { if (id) x.slide.tpl = id; else delete x.slide.tpl; });
+    chosen.forEach((x) => { if (id) x.slide.tpl = id; else delete x.slide.tpl; if (x.slide.k !== 'custom') delete x.slide.look; }); // выбран шаблон — свой вид слайда не мешает
     saveLib();
     renderService();
     if (plShown && chosen.some((x) => x.slide.id === plShown.sid)) showSlide(plShown.key, plShown.sid, plShown.view);
@@ -1787,7 +1794,8 @@ function openAddMenu() {
     { label: 'Добавить файл…', key: 'Ctrl+O', disabled: noNew, fn: () => (listsTab() ? inLists(svcAddFiles)() : pickFiles()) },
     { label: 'Добавить библиотеку', fn: () => createView('lib') },
     '-',
-    { label: 'Свои слайды', disabled: noNew, fn: inLists(svcAddCustom) },
+    { label: 'Свой слайд — в открытую презентацию', fn: inLists(svcAddSlide) },
+    { label: 'Новая презентация', disabled: noNew, fn: inLists(svcNewPres) },
     { label: 'Из библиотеки в плейлист…', disabled: !isPl, fn: inLists(openLibPick) },
     { label: 'Новый плейлист', fn: () => createView('pl') },
     { label: 'Перевод Библии…', fn: () => pickBibles() },
