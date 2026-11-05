@@ -1,0 +1,2042 @@
+/* ===== Вкладка «Экраны» (Ctrl+6): экраны, выходы и экранные сцены — как Screens / Screen Scenes в ProPresenter =====
+   Модель (library.json):
+   lib.screens — [{ id, name, w, h, hz, enabled, outputs: [{ kind: 'display'|'window'|'ndi', display?, name?, off? }],
+     mode: 'program'|'scene'|'blank', layers (null — все слои), fit, ink, sound, scene, sceneTrans, trans, fx, rotate, flipX, flipY }].
+     Экран 'main' — «Основной»: его монитор и разрешение — в Настройках (как было); здесь — что он показывает и доп. выходы.
+     enabled у экрана включает его выходы (у «Основного» — только дополнительные, главный — галочкой вывода).
+   lib.scenes — [{ id, name, w, h, bg, trans, items, outputs?, hz?, outSound? }], элемент — см. SC_ITEMS и compose.js.
+     outputs у сцены — свои выходы (как у экрана): для main.js это экран 'scene:id' с mode 'scene' (scSceneScreen).
+   Всё это — в «Настройки → Экран и вывод» (раньше вкладка «Экраны»).
+   Правка сцены — черновик; на экраны идёт применённая копия scLive[id] («Применить», Ctrl+Enter), как у тем.
+   Отрисовка — compose.js (общая с окнами вывода), окна выходов — main.js (screens:config).
+   Схема (решение владельца, ноябрь 2026):
+     Экран — всегда программа: свои выходы, какие слои идут (layers), своя тема для текстов (theme, themeTpl → look),
+       вписывание, переход, поворот, цвет. Сцен на экранах больше нет.
+     Сцена — свой макет (редактор) и свои выходы (outputs, hz, outSound, on), слои программы для её блоков (layers).
+       Сценических макетов отдельно нет: инфоблоки (SC_ITEMS с info: true) есть в любой сцене.
+       follow — макет меняется по слайдам (slide.stage / item.stage, stage.js); scAuto[id сцены] — какой макет сейчас
+       на её выходах вместо своего (слайд, панель «Сцена», макрос; не в library.json и не в отмене).
+     Выходы экранов и сцен включаются только вручную (enabled / on), при запуске все выключены.
+     Старые данные (экран со сценой, сценический экран, kind 'stage') переносит scMigrate. */
+
+const SC_FORMATS = [['16:9', 1920, 1080], ['9:16', 1080, 1920], ['1:1', 1080, 1080], ['4:3', 1440, 1080], ['21:9', 2560, 1080]];
+const SC_ITEMS = {
+  screen: { name: 'Экран / сцена', icon: 'screens', tip: 'Картинка другого экрана или другой сцены — как они идут сейчас' },
+  program: { name: 'Программа', icon: 'layers', tip: 'Слои вывода: тексты, медиа, источники — можно выбрать какие' },
+  cur: { name: 'Текущий слайд', icon: 'slides', tip: 'Слайд, который сейчас на экране (слой «Презентации»)' },
+  next: { name: 'Следующий слайд', icon: 'show', tip: 'Следующий слайд плейлиста — для монитора на сцене' },
+  media: { name: 'Фото / видео', icon: 'image', tip: 'Файл картинки или видео' },
+  source: { name: 'Источник', icon: 'camera', tip: 'Камера, карта захвата, экран компьютера, NDI, телефон' },
+  text: { name: 'Текст', icon: 'text', tip: 'Надпись' },
+  clock: { name: 'Часы', icon: 'timer', tip: 'Текущее время или дата' },
+  // Фигуры — кнопка «Фигура» (shape, more — не отдельной кнопкой)
+  rect: { name: 'Прямоугольник', icon: 'rect', tip: 'Фигура: цвет, градиент, рамка, скругление', shape: true, more: true },
+  ellipse: { name: 'Эллипс', icon: 'oval', tip: 'Круг или эллипс', shape: true, more: true },
+  line: { name: 'Линия', icon: 'line', tip: 'Полоса: толщина — высота элемента', shape: true, more: true },
+  arrow: { name: 'Стрелка', icon: 'arrow', tip: 'Стрелка вправо (поворот — за кружок над рамкой)', shape: true, more: true },
+  triangle: { name: 'Треугольник', icon: 'rect', tip: 'Треугольник', shape: true, more: true },
+  rhombus: { name: 'Ромб', icon: 'rect', tip: 'Ромб', shape: true, more: true },
+  hexagon: { name: 'Шестиугольник', icon: 'rect', tip: 'Шестиугольник', shape: true, more: true },
+  star: { name: 'Звезда', icon: 'star', tip: 'Пятиконечная звезда', shape: true, more: true },
+  // Инфоблоки (сценический экран) — обновляются сами по тому, что идёт в программе (stage.js)
+  curText: { name: 'Текст слайда', icon: 'text', tip: 'Текст текущего слайда крупно — размер подбирается сам', info: true },
+  nextText: { name: 'Текст следующего', icon: 'text', tip: 'Текст следующего слайда — размер подбирается сам', info: true },
+  notes: { name: 'Заметки к слайду', icon: 'note', tip: 'Заметка к слайду: правой кнопкой по слайду → «Заметка к слайду…»', info: true },
+  opnote: { name: 'Заметка оператора', icon: 'note', tip: 'Заметка к презентации — «?» у пункта в «Содержании»', info: true },
+  msg: { name: 'Сообщение', icon: 'message', tip: 'Сообщение для сцены — пишет оператор (кнопка «Сцена» под предпросмотром)', info: true },
+  plist: { name: 'Плейлист', icon: 'playlist', tip: 'Что сейчас и что дальше в плейлисте', info: true },
+  count: { name: 'Номер слайда', icon: 'counter', tip: 'Номер слайда и сколько всего: 3 / 12', info: true },
+  chords: { name: 'Аккорды', icon: 'chord', tip: 'Аккорды текущего слайда (поле «Аккорды» в окне песни)', info: true },
+  timer: { name: 'Таймер', icon: 'timer', tip: 'Таймер оператора: обратный отсчёт или секундомер', info: true },
+  countdown: { name: 'Отсчёт до времени', icon: 'timer', tip: 'Сколько осталось до заданного времени, например до 10:00', info: true },
+  vcd: { name: 'Остаток видео', icon: 'video', tip: 'Сколько осталось до конца видео на экране', info: true },
+  cap: { name: 'Запись и эфир', icon: 'rec', tip: 'Идёт ли запись и трансляция (отмечает оператор), NDI-выходы', info: true },
+  only: { name: 'Только для сцены', icon: 'stage', tip: 'Слайд или файл, который оператор отправил только на сценические экраны', info: true },
+};
+const SC_NATIVE = ['screen', 'program', 'cur', 'next', 'media', 'source', 'only']; // у них своё разрешение: обрезка и вписывание
+const SC_TEXTY = ['text', 'clock', 'curText', 'nextText', 'notes', 'opnote', 'msg', 'plist', 'count', 'chords', 'timer', 'countdown', 'vcd', 'cap']; // у них шрифт и цвет текста
+const SC_TRANS = Scene.TRANS; // все переходы — список в scene.js
+
+let scSel = { kind: 'screen', id: 'main' }; // что открыто: экран или сцена
+let scIt = null;      // id выделенного элемента сцены
+let scLive = {};      // применённые сцены: id → копия (на экраны идёт она)
+let scOpenOuts = [];  // открытые окна выходов (main.js): [{ key, screen, kind }]
+let scTabOn = false;
+let scH = null;       // что смонтировано в холсте: { kind, id, h }
+let scK = 1;          // масштаб холста
+const scSecOpen = {}; // какие разделы свойств раскрыты
+
+const scClone = (x) => JSON.parse(JSON.stringify(x));
+const scScreen = (id) => (lib && lib.screens ? lib.screens.find((s) => s.id === id) : null) || null;
+const scScene = (id) => (lib && lib.scenes ? lib.scenes.find((s) => s.id === id) : null) || null;
+const scCurScene = () => (scSel.kind === 'scene' ? scScene(scSel.id) : null);
+const scCurItem = () => { const s = scCurScene(); return s && scIt ? s.items.find((i) => i.id === scIt) || null : null; };
+// Настройки выхода сцены (не макет): идут на выходы сразу, без «Применить», в «есть правки» не считаются
+const SC_OUTK = ['outputs', 'hz', 'outSound', 'on', 'follow', 'layers', 'guides', 'alpha'];
+const scBody = (sc) => (sc ? { ...sc, ...Object.fromEntries(SC_OUTK.map((k) => [k, undefined])) } : null);
+const scDirty = (sc) => !!sc && JSON.stringify(scBody(sc)) !== JSON.stringify(scBody(scLive[sc.id]));
+const scMainSize = () => { const { W, H } = outputSize(); return { w: W, h: H }; };
+// Какой макет сейчас на выходах сцены: свой или другой сцены (scAuto — слайд, панель «Сцена», макрос)
+let scAuto = {};
+const scLayoutOf = (sc) => (scAuto[sc.id] && scAuto[sc.id] !== sc.id && scScene(scAuto[sc.id]) ? scAuto[sc.id] : sc.id);
+
+function scNewScreen(over) {
+  return {
+    id: newId(), name: 'Экран', w: 1920, h: 1080, hz: 0, enabled: false, outputs: [], mode: 'program', layers: null, fit: 'native',
+    theme: '', themeTpl: '', ink: true, sound: false, trans: null, fx: {}, rotate: 0, flipX: false, flipY: false, ...over,
+  };
+}
+
+// Перенос старой схемы: экран со сценой → его выходы уходят сцене; сценический экран без макета → новая сцена с его выходами
+function scMigrate() {
+  let ch = false;
+  for (const s of [...lib.screens]) {
+    const stage = s.kind === 'stage';
+    if (s.mode !== 'scene' && !stage) { if (s.mode === 'blank') { s.mode = 'program'; ch = true; } delete s.kind; continue; }
+    ch = true;
+    if (s.id === 'main') { Object.assign(s, { mode: 'program' }); delete s.kind; continue; }
+    let sc = s.mode === 'scene' ? scScene(s.scene) : null;
+    if (!sc && stage && (s.outputs || []).length) { sc = scTemplate('st-empty'); sc.name = s.name || 'Сцена'; sc.w = s.w || 1920; sc.h = s.h || 1080; lib.scenes.push(sc); }
+    if (sc) {
+      sc.outputs = [...(sc.outputs || []), ...(s.outputs || [])];
+      if (s.hz && !sc.hz) sc.hz = s.hz;
+      if (s.sound) sc.outSound = true;
+      if (stage && s.follow !== false) sc.follow = true;
+      lib.screens = lib.screens.filter((x) => x !== s);
+    } else { s.mode = 'program'; delete s.kind; }
+  }
+  for (const sc of lib.scenes) if (sc.kind) { delete sc.kind; ch = true; }
+  for (const s of lib.screens) for (const k of ['scene', 'sceneTrans', 'follow']) delete s[k];
+  if (ch) { saveLib(); flashStatus('Экраны и сцены — по новой схеме: экраны показывают программу, у сцен свои выходы'); }
+}
+
+function scInit() {
+  if (!Array.isArray(lib.screens)) lib.screens = [];
+  if (!lib.screens.some((s) => s.id === 'main')) lib.screens.unshift(scNewScreen({ id: 'main', name: 'Основной', outputs: [] }));
+  if (!Array.isArray(lib.scenes)) lib.scenes = [];
+  for (const sc of lib.scenes) if (!Array.isArray(sc.items)) sc.items = [];
+  scMigrate();
+  // При запуске выходы экранов и сцен закрыты — оператор включает их сам;
+  // «Включать вывод при запуске» (settings.outAutoOn) — остаются как были, когда программу закрыли
+  if (!settings.outAutoOn) {
+    for (const s of lib.screens) s.enabled = false;
+    for (const sc of lib.scenes) sc.on = false;
+  }
+  scLive = {};
+  for (const sc of lib.scenes) scLive[sc.id] = scClone(sc); // что было при запуске — то и на экранах
+  scSend();
+  if (window.api.screensState) window.api.screensState().then((st) => { scOpenOuts = st || []; scRenderLists(); }, () => {});
+  if (typeof stInit === 'function') stInit(); // сценический экран: таймеры, сообщения (stage.js)
+}
+function scOutputChanged() { if (scTabOn) { scRenderLists(); scRenderBar(); if (scSel.id === 'main' && !scIt) scRenderInsp(); } }
+if (window.api.onScreensState) window.api.onScreensState((st) => { scOpenOuts = st || []; if (typeof prevAudio === 'function') prevAudio();if (scTabOn) { scRenderLists(); if (scSel.kind === 'screen') scRenderBar(); } });
+
+/* ----- Отправка настроек: окнам выходов (main.js) и превью здесь ----- */
+
+let scSendT = 0;
+// Каждая сцена для окон вывода — экран 'scene:id' (её выходы, предпросмотр, плавающее окно); показывает свой или выбранный макет
+const scSceneSid = (sc) => 'scene:' + sc.id;
+function scSceneScreen(sc, main) {
+  const l = scLive[sc.id] || sc; // размер — применённой сцены
+  return scNewScreen({
+    id: scSceneSid(sc), name: sc.name || 'Сцена', w: l.w || main.w, h: l.h || main.h, hz: sc.hz || 0, enabled: !!sc.on,
+    outputs: scClone(sc.outputs || []), mode: 'scene', scene: scLayoutOf(sc), ink: false, sound: !!sc.outSound, alpha: !!sc.alpha,
+  });
+}
+// Тема экрана: все тексты программы (песни, Библия, текстовые слайды) на этом экране — в её оформлении
+function scLook(s) {
+  const t = s.theme && typeof themeById === 'function' ? themeById(s.theme) : null;
+  if (!t) return null;
+  return { ...THEME_DEFAULTS, ...Themes.style(t), showTranslation: settings.showTr, bible: bibleLook(), tpl: s.themeTpl || undefined };
+}
+function scConfig() {
+  const main = scMainSize();
+  const scenes = {};
+  for (const sc of lib.scenes) scenes[sc.id] = scLive[sc.id] || sc;
+  const screens = scClone(lib.screens).map((s) => ({ ...s, mode: 'program', look: scLook(s), ...(s.id === 'main' ? { w: main.w, h: main.h } : {}) }));
+  for (const sc of lib.scenes) screens.push(scSceneScreen(sc, main));
+  return { screens, scenes: scClone(scenes), main };
+}
+// Настройки выхода сцены (SC_OUTK) поменялись — сразу на выходы, без «Применить»
+function scSceneOutSet(sc, rerenderInsp) {
+  const live = scLive[sc.id];
+  if (live) for (const k of SC_OUTK) { if (sc[k] === undefined) delete live[k]; else live[k] = scClone(sc[k]); }
+  saveLib();
+  scSend();
+  if (typeof stPanelRefresh === 'function') stPanelRefresh();
+  if (!scTabOn) return;
+  scRenderLists();
+  scRenderBar();
+  if (rerenderInsp) scRenderInsp();
+}
+// Макет на выходах сцены: свой (layoutId = её id или '') или другой сцены; quiet — без строки состояния
+function scSetLayout(sceneId, layoutId, quiet) {
+  const sc = scScene(sceneId);
+  if (!sc) return;
+  const l = layoutId && layoutId !== sc.id ? scScene(layoutId) : null;
+  if (l) { scAuto[sc.id] = l.id; if (!scLive[l.id]) scLive[l.id] = scClone(l); } else delete scAuto[sc.id];
+  scSend();
+  if (scTabOn) { scRenderLists(); if (scSel.id === sc.id) scRenderInsp(); }
+  if (typeof stPanelRefresh === 'function') stPanelRefresh();
+  if (!quiet) flashStatus(`«${sc.name}»: ` + (l ? `макет «${l.name}»` : 'свой макет'));
+}
+function scSend() {
+  if (!lib || !lib.screens) return;
+  const cfg = scConfig();
+  Compose.setConfig(cfg); // превью — сразу
+  clearTimeout(scSendT);
+  scSendT = setTimeout(() => window.api.screensConfig && window.api.screensConfig(scConfig()), 40);
+  if (typeof prevScreenSync === 'function') prevScreenSync(); // экран в «Предпросмотре» (renderer.js)
+}
+
+// Текущий и следующий слайд и данные инфоблоков — собирает stage.js (stSend)
+let scStageT = 0;
+function scStage() { clearTimeout(scStageT); scStageT = setTimeout(() => { if (lib && typeof stSend === 'function') stSend(); }, 0); }
+
+function scAfterUndo() {
+  if (!Array.isArray(lib.screens) || !lib.screens.some((s) => s.id === 'main')) scInitKeepLive();
+  if (scSel.kind === 'screen' && !scScreen(scSel.id)) scSel = { kind: 'screen', id: 'main' };
+  if (scSel.kind === 'scene' && !scScene(scSel.id)) scSel = { kind: 'screen', id: 'main' };
+  if (!scCurItem()) scIt = null;
+  scSend();
+  if (scTabOn) scRenderAll(true);
+  if (typeof stAfterUndo === 'function') stAfterUndo(); // таймеры как были
+}
+function scInitKeepLive() {
+  if (!Array.isArray(lib.screens)) lib.screens = [];
+  if (!lib.screens.some((s) => s.id === 'main')) lib.screens.unshift(scNewScreen({ id: 'main', name: 'Основной' }));
+  if (!Array.isArray(lib.scenes)) lib.scenes = [];
+}
+
+/* ----- Вкладка ----- */
+
+// Экраны и сцены — «Редактор → Редактор сцен» (вкладка 'scenes', renderer.js setTab)
+function openScreensTab(sel) {
+  if (sel) { scSel = sel; scIt = null; }
+  const was = scTabOn;
+  document.querySelectorAll('dialog[open]').forEach((d) => d.close());
+  setTab('scenes');
+  if (sel && was) scRenderAll(true);
+}
+function scTabOpen() {
+  if (scTabOn) return;
+  scTabOn = true;
+  requestAnimationFrame(() => { if (scTabOn) scRenderAll(true); }); // окно уже показано — размеры холста известны
+}
+function scTabClose() {
+  if (!scTabOn) return;
+  scTabOn = false;
+  scUnmountView();
+}
+
+function scRenderAll(remount) {
+  scRenderLists();
+  scRenderBar();
+  scRenderInsp();
+  if (remount) scMountView(); else scUpdateView();
+}
+
+function scPick(sel) {
+  scSel = sel;
+  scIt = null;
+  scRenderAll(true);
+}
+
+/* ----- Левая колонка: экраны, сцены, элементы ----- */
+
+const scEl = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
+
+function scOutsOf(id) { return scOpenOuts.filter((o) => o.screen === id); }
+
+function scRenderLists() {
+  if (!lib || !lib.screens) return;
+  const sb = $('scScreens');
+  sb.replaceChildren(...lib.screens.map((s) => {
+    const row = scEl('div', 'sc-row' + (scSel.kind === 'screen' && scSel.id === s.id ? ' sel' : '') + (s.enabled || s.id === 'main' ? '' : ' off'));
+    const on = scOnBox(!!s.enabled, s.id === 'main' ? 'Дополнительные выходы «Основного» (главный — галочкой вывода в «Предпросмотре»)' : 'Вывод экрана: включить или выключить его выходы',
+      (v) => scScreenSet(s, { enabled: v }));
+    const nm = scEl('div', 'nm', s.name || 'Экран');
+    const sz = s.id === 'main' ? scMainSize() : { w: s.w, h: s.h };
+    const th = s.theme && typeof themeById === 'function' && themeById(s.theme);
+    const ly = Array.isArray(s.layers) ? ` · слоёв: ${s.layers.length}` : '';
+    nm.append(scEl('small', '', `${sz.w}×${sz.h} · программа${ly}` + (th ? ` · тема «${th.name}»` : '')));
+    const outs = s.id === 'main' ? outputOpen || scOutsOf(s.id).length : scOutsOf(s.id).length;
+    const dot = scEl('span', 'dot' + (outs ? ' on' : ''));
+    dot.title = outs ? 'Выводится' : (s.outputs || []).length ? 'Выходы закрыты' : 'Виртуальный экран (без выходов)';
+    row.append(on, Icons.el('screens'), nm, dot);
+    row.addEventListener('click', () => scPick({ kind: 'screen', id: s.id }));
+    row.addEventListener('contextmenu', (e) => { e.preventDefault(); scScreenMenu(e, s); });
+    return row;
+  }));
+  scRenderSceneList($('scScenes'));
+  scRenderPresets();
+  scRenderItems();
+}
+
+/* ----- Пресеты сцен (lib.scenePresets): сохранённый макет — как тема, но только для сцен -----
+   Пресет: { id, name, w, h, bg, trans, items, guides, follow }. Применить к сцене — её макет заменяется копией пресета,
+   а название, выходы, слои, альфа и вкл/выкл остаются. В отмене (HIST_KEYS) — Ctrl+Z. */
+const SC_PRESET_K = ['w', 'h', 'bg', 'trans', 'items', 'guides', 'follow'];
+const scPresets = () => (Array.isArray(lib.scenePresets) ? lib.scenePresets : (lib.scenePresets = []));
+const scPresetOf = (sc) => ({ ...Object.fromEntries(SC_PRESET_K.filter((k) => sc[k] !== undefined).map((k) => [k, scClone(sc[k])])), items: scClone(sc.items || []) });
+const scFreshItems = (items) => (items || []).map((x) => ({ ...scClone(x), id: newId() }));
+
+async function scSavePreset(sc = scCurScene()) {
+  if (!sc) { flashStatus('Откройте сцену — её макет сохранится как пресет'); return; }
+  const name = await askName('Название пресета сцены', sc.name);
+  if (!name) return;
+  scPresets().push({ id: newId(), name, ...scPresetOf(sc) });
+  saveLib();
+  scRenderLists();
+  flashStatus(`Пресет «${name}» сохранён — его можно применить к любой сцене`);
+}
+function scApplyPreset(p, sc = scCurScene()) {
+  if (!sc) { flashStatus('Сначала откройте сцену, к которой применить пресет'); return; }
+  for (const k of SC_PRESET_K) { if (p[k] === undefined) delete sc[k]; else sc[k] = scClone(p[k]); }
+  sc.items = scFreshItems(p.items);
+  scIt = null;
+  scMore = [];
+  scSceneTouch(true, sc);
+  scMountView();
+  flashStatus(`К сцене «${sc.name}» применён пресет «${p.name}» — на выходы по «Применить» (Ctrl+Enter) · Ctrl+Z — вернуть`);
+}
+function scSceneFromPreset(p) {
+  const base = scTemplate('empty');
+  const sc = { ...base, ...scClone(p), id: newId(), name: p.name, items: scFreshItems(p.items) };
+  scAddScene(sc);
+}
+function scRenderPresets() {
+  const box = $('scPresets');
+  if (!box) return;
+  const list = scPresets();
+  const cur = scCurScene();
+  if (!list.length) {
+    box.replaceChildren(scEl('div', 'te-empty', 'Пресетов пока нет. Откройте сцену и нажмите «＋» — её макет сохранится, и его можно будет применить к любой сцене.'));
+    return;
+  }
+  box.replaceChildren(...list.map((p) => {
+    const row = scEl('div', 'sc-row');
+    const nm = scEl('div', 'nm', p.name || 'Пресет');
+    nm.append(scEl('small', '', `${p.w || 1920}×${p.h || 1080} · ${(p.items || []).length} эл.`));
+    row.append(Icons.el('presets'), nm);
+    row.title = cur ? `Щелчок — меню. Двойной щелчок — применить к сцене «${cur.name}»` : 'Щелчок — меню';
+    const menu = (e) => scPresetMenu(e, p);
+    row.addEventListener('click', menu);
+    row.addEventListener('contextmenu', (e) => { e.preventDefault(); menu(e); });
+    row.addEventListener('dblclick', () => { document.querySelectorAll('.ctx-menu').forEach((m) => m.remove()); scApplyPreset(p); });
+    return row;
+  }));
+}
+function scPresetMenu(e, p) {
+  const sc = scCurScene();
+  const list = scPresets();
+  showMenu(e, [
+    { label: sc ? `Применить к сцене «${sc.name}»` : 'Применить (сначала откройте сцену)', disabled: !sc, fn: () => scApplyPreset(p, sc) },
+    { label: 'Новая сцена из пресета', fn: () => scSceneFromPreset(p) },
+    { label: sc ? `Обновить из сцены «${sc.name}»` : 'Обновить из сцены', disabled: !sc, fn: () => { Object.assign(p, scPresetOf(sc)); saveLib(); scRenderLists(); flashStatus(`Пресет «${p.name}» обновлён · Ctrl+Z — вернуть`); } },
+    '-',
+    { label: 'Переименовать…', fn: async () => { const n = await askName('Название пресета', p.name); if (n) { p.name = n; saveLib(); scRenderLists(); } } },
+    { label: 'Дублировать', fn: () => { list.splice(list.indexOf(p) + 1, 0, { ...scClone(p), id: newId(), name: p.name + ' (копия)' }); saveLib(); scRenderLists(); } },
+    { label: 'Сохранить в файл…', fn: () => scExport({ ...scClone(p), outputs: [] }) },
+    '-',
+    { label: 'Удалить пресет', fn: () => { lib.scenePresets = list.filter((x) => x !== p); saveLib(); scRenderLists(); flashStatus(`Пресет «${p.name}» удалён · Ctrl+Z — вернуть`); } },
+  ]);
+}
+$('scAddPreset').addEventListener('click', () => scSavePreset());
+
+// Галочка «вывод включён» в строке списка (щелчок по ней строку не выбирает)
+function scOnBox(v, title, on) {
+  const b = scEl('input');
+  b.type = 'checkbox';
+  b.checked = v;
+  b.title = title;
+  b.addEventListener('click', (e) => e.stopPropagation());
+  b.addEventListener('change', () => on(b.checked));
+  return b;
+}
+
+function scRenderSceneList(lb) {
+  if (!lib.scenes.length) {
+    lb.replaceChildren(scEl('div', 'te-empty', 'Сцен пока нет. «＋» — новая сцена: пустая или из шаблона (для сцены: текущий и следующий слайд, таймер, аккорды; для зрителей: мультиэкран, трансляция).'));
+    return;
+  }
+  lb.replaceChildren(...lib.scenes.map((sc) => {
+    const has = (sc.outputs || []).length > 0;
+    const row = scEl('div', 'sc-row' + (scSel.kind === 'scene' && scSel.id === sc.id ? ' sel' : '') + (has && !sc.on ? ' off' : ''));
+    const nm = scEl('div', 'nm', sc.name || 'Сцена');
+    const lay = scLayoutOf(sc) !== sc.id ? scScene(scLayoutOf(sc)) : null;
+    nm.append(scEl('small', '', `${sc.w}×${sc.h} · ${sc.items.length} эл.` + (has ? ` · выходов: ${sc.outputs.length}` : ' · без выхода') + (lay ? ` · сейчас макет «${lay.name}»` : '')));
+    row.append(has ? scOnBox(!!sc.on, 'Вывод сцены: включить или выключить её выходы', (v) => { sc.on = v; scSceneOutSet(sc, scSel.id === sc.id); }) : scEl('span', 'sc-nobox'), Icons.el('scene'), nm);
+    if (has) {
+      const open = scOutsOf(scSceneSid(sc)).length;
+      const dot = scEl('span', 'dot' + (open ? ' on' : ''));
+      dot.title = open ? 'Сцена выводится' : 'Выходы сцены закрыты';
+      row.append(dot);
+    }
+    if (scDirty(sc)) { const d = scEl('span', 'dirty', 'изменена'); d.title = 'Есть неприменённые правки — «Применить» (Ctrl+Enter)'; row.append(d); }
+    row.addEventListener('click', () => scPick({ kind: 'scene', id: sc.id }));
+    row.addEventListener('contextmenu', (e) => { e.preventDefault(); scSceneMenu(e, sc); });
+    return row;
+  }));
+}
+
+function scRenderItems() {
+  const sc = scCurScene();
+  $('scItemsHead').hidden = $('scItems').hidden = !sc;
+  if (!sc) return;
+  const box = $('scItems');
+  if (!sc.items.length) { box.replaceChildren(scEl('div', 'te-empty', 'Пусто. Добавьте элементы кнопками над холстом или перетащите файл из Проводника на холст.')); return; }
+  box.replaceChildren(...[...sc.items].reverse().map((it) => {
+    const row = scEl('div', 'sc-row' + (scSelIds().includes(it.id) ? ' sel' : '') + (it.hidden ? ' off' : ''));
+    row.draggable = true;
+    const nm = scEl('div', 'nm', it.name || SC_ITEMS[it.type].name);
+    const eye = scEl('button', it.hidden ? '' : 'on');
+    eye.title = it.hidden ? 'Показать' : 'Скрыть';
+    eye.append(Icons.el('eye'));
+    eye.addEventListener('click', (e) => { e.stopPropagation(); scItemSet(it, { hidden: !it.hidden }); });
+    const lock = scEl('button', it.locked ? 'on' : '');
+    lock.title = it.locked ? 'Разблокировать' : 'Закрепить (не двигается мышью)';
+    lock.append(Icons.el('lock'));
+    lock.addEventListener('click', (e) => { e.stopPropagation(); scItemSet(it, { locked: !it.locked }); });
+    row.append(Icons.el(SC_ITEMS[it.type].icon), nm, eye, lock);
+    // Ctrl / Shift — добавить к выделению
+    row.addEventListener('click', (e) => scSelectItem(it.id, e.ctrlKey || e.metaKey || e.shiftKey));
+    row.addEventListener('contextmenu', (e) => { e.preventDefault(); if (!scSelIds().includes(it.id)) scSelectItem(it.id); scItemMenu(e, it); });
+    // Порядок — перетаскиванием (верхняя строка — поверх всех)
+    row.addEventListener('dragstart', (e) => { e.dataTransfer.setData('application/x-cp-scitem', it.id); e.dataTransfer.effectAllowed = 'move'; });
+    row.addEventListener('dragover', (e) => {
+      if (!e.dataTransfer.types.includes('application/x-cp-scitem')) return;
+      e.preventDefault();
+      const r = row.getBoundingClientRect();
+      row.classList.toggle('drop-before', e.clientY < r.top + r.height / 2);
+      row.classList.toggle('drop-after', e.clientY >= r.top + r.height / 2);
+    });
+    row.addEventListener('dragleave', () => row.classList.remove('drop-before', 'drop-after'));
+    row.addEventListener('drop', (e) => {
+      const id = e.dataTransfer.getData('application/x-cp-scitem');
+      row.classList.remove('drop-before', 'drop-after');
+      if (!id || id === it.id) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const above = e.clientY < row.getBoundingClientRect().top + row.offsetHeight / 2; // выше в списке = поверх
+      const moved = sc.items.find((x) => x.id === id);
+      sc.items = sc.items.filter((x) => x.id !== id);
+      const at = sc.items.indexOf(it);
+      sc.items.splice(above ? at + 1 : at, 0, moved);
+      scSceneTouch(false);
+    });
+    return row;
+  }));
+}
+
+function scScreenMenu(e, s) {
+  const i = lib.screens.indexOf(s);
+  showMenu(e, [
+    { label: s.enabled ? 'Выключить вывод' : 'Включить вывод', disabled: s.id === 'main', fn: () => scScreenSet(s, { enabled: !s.enabled }, true) },
+    { label: 'Показать в «Предпросмотре»', fn: () => scPreviewOn(s.id) },
+    { label: 'Открыть в отдельном окне', fn: () => scFloat(s.id) },
+    '-',
+    { label: 'Переименовать…', fn: async () => { const n = await askName('Название экрана', s.name); if (n) scScreenSet(s, { name: n }, true); } },
+    { label: 'Дублировать', disabled: s.id === 'main', fn: () => { const c = { ...scClone(s), id: newId(), name: s.name + ' (копия)', outputs: [], enabled: false }; lib.screens.splice(i + 1, 0, c); saveLib(); scSend(); scPick({ kind: 'screen', id: c.id }); } },
+    '-',
+    { label: 'Выше', disabled: i <= 1, fn: () => { lib.screens.splice(i - 1, 0, lib.screens.splice(i, 1)[0]); saveLib(); scSend(); scRenderLists(); } },
+    { label: 'Ниже', disabled: s.id === 'main' || i >= lib.screens.length - 1, fn: () => { lib.screens.splice(i + 1, 0, lib.screens.splice(i, 1)[0]); saveLib(); scSend(); scRenderLists(); } },
+    '-',
+    { label: 'Удалить экран', disabled: s.id === 'main', fn: () => {
+      lib.screens = lib.screens.filter((x) => x !== s);
+      // элементы «Экран» в сценах, ссылавшиеся на него, покажут «Экран удалён»
+      saveLib(); scSend();
+      if (scSel.id === s.id) scSel = { kind: 'screen', id: 'main' };
+      scRenderAll(true);
+      flashStatus(`Экран «${s.name}» удалён · Ctrl+Z — вернуть`);
+    } },
+  ]);
+}
+
+function scSceneMenu(e, sc) {
+  const i = lib.scenes.indexOf(sc);
+  showMenu(e, [
+    { label: sc.on ? 'Выключить вывод' : 'Включить вывод', disabled: !(sc.outputs || []).length, fn: () => { sc.on = !sc.on; scSceneOutSet(sc, true); } },
+    { label: 'Показать в «Предпросмотре»', fn: () => scPreviewOn(scSceneSid(sc)) },
+    { label: 'Открыть в отдельном окне', fn: () => scFloat(scSceneSid(sc)) },
+    '-',
+    { label: 'Применить правки', disabled: !scDirty(sc), key: 'Ctrl+Enter', fn: () => scApply(sc) },
+    { label: 'Переименовать…', fn: async () => { const n = await askName('Название сцены', sc.name); if (n) { sc.name = n; scSceneTouch(true, sc); } } },
+    { label: 'Дублировать', fn: () => { const c = { ...scClone(sc), id: newId(), name: sc.name + ' (копия)', outputs: [], on: false }; c.items.forEach((x) => { x.id = newId(); }); scAddScene(c); } },
+    { label: 'Сохранить как пресет сцены…', fn: () => scSavePreset(sc) },
+    { label: 'Сохранить в файл…', fn: () => scExport(sc) },
+    '-',
+    { label: 'Выше', disabled: i <= 0, fn: () => { lib.scenes.splice(i - 1, 0, lib.scenes.splice(i, 1)[0]); saveLib(); scRenderLists(); } },
+    { label: 'Ниже', disabled: i >= lib.scenes.length - 1, fn: () => { lib.scenes.splice(i + 1, 0, lib.scenes.splice(i, 1)[0]); saveLib(); scRenderLists(); } },
+    '-',
+    { label: 'Удалить сцену', fn: () => {
+      lib.scenes = lib.scenes.filter((x) => x !== sc);
+      delete scLive[sc.id];
+      delete scAuto[sc.id];
+      for (const k of Object.keys(scAuto)) if (scAuto[k] === sc.id) delete scAuto[k];
+      saveLib(); scSend();
+      if (scSel.id === sc.id) scSel = { kind: 'screen', id: 'main' };
+      scRenderAll(true);
+      flashStatus(`Сцена «${sc.name}» удалена · Ctrl+Z — вернуть`);
+    } },
+  ]);
+}
+
+// Показать экран или сцену ('scene:id') в «Предпросмотре» окна оператора
+function scPreviewOn(id) {
+  settings.prevScreen = id;
+  saveSettings();
+  if (typeof prevScreenSync === 'function') prevScreenSync();
+  flashStatus('В «Предпросмотре»: ' + scNameOf(id));
+}
+// Отдельное плавающее окно (поверх остальных) с экраном или сценой — main.js: screens:float
+function scFloat(id) {
+  if (!window.api.screensFloat) { flashStatus('Отдельное окно — только в программе'); return; }
+  window.api.screensFloat({ id, name: scNameOf(id) });
+}
+function scNameOf(id) {
+  if (!id || id === 'main') return (scScreen('main') || {}).name || 'Основной';
+  if (id.startsWith('scene:')) return 'сцена «' + ((scScene(id.slice(6)) || {}).name || '?') + '»';
+  return (scScreen(id) || {}).name || '?';
+}
+
+/* ----- Правка ----- */
+
+function scScreenSet(s, patch, rerenderInsp) {
+  Object.assign(s, patch);
+  saveLib();
+  scSend();
+  // Тема «Основного» сменилась — «Предпросмотр» перерисовать сразу (окна выходов перерисуются сами)
+  if (s.id === 'main' && ('theme' in patch || 'themeTpl' in patch) && typeof refreshLive === 'function') refreshLive();
+  if (!scTabOn) return;
+  scRenderLists();
+  if (scSel.kind === 'screen' && scSel.id === s.id) {
+    scRenderBar();
+    if (rerenderInsp) scRenderInsp();
+    if ('w' in patch || 'h' in patch) scLayout();
+  }
+}
+
+// Сцена изменилась (черновик): превью, рамки, списки; на экраны — только по «Применить»
+function scSceneTouch(rerenderInsp, sc = scCurScene()) {
+  saveLib();
+  if (sc && scH && scH.kind === 'scene' && scH.id === sc.id) Compose.updateScene(scH.h, sc);
+  scLayout();
+  scRenderLists();
+  scRenderBar();
+  if (rerenderInsp) scRenderInsp();
+}
+function scItemSet(it, patch, rerenderInsp) {
+  Object.assign(it, patch);
+  scSceneTouch(rerenderInsp);
+}
+const scSub = (obj, key, sub, v) => { obj[key] = { ...(obj[key] || {}), [sub]: v }; };
+
+function scApply(sc = scCurScene()) {
+  if (!sc) return;
+  scLive[sc.id] = scClone(sc);
+  scSend();
+  scRenderLists();
+  scRenderBar();
+  flashStatus(`Сцена «${sc.name}» применена` + ((sc.outputs || []).length ? (sc.on ? ' — на выходах' : ' (вывод выключен)') : ' (выходов нет)'));
+}
+function scRevert(sc = scCurScene()) {
+  if (!sc || !scLive[sc.id]) return;
+  Object.assign(sc, scClone(scLive[sc.id]));
+  if (!scCurItem()) scIt = null;
+  scSceneTouch(true, sc);
+  if (scH && scH.kind === 'scene') scMountView();
+  flashStatus('Правки сцены сброшены · Ctrl+Z — вернуть');
+}
+
+function scAddScreen(fmt) {
+  const [name, w, h] = fmt || ['', 1920, 1080];
+  const s = scNewScreen({ name: `Экран ${lib.screens.length + 1}` + (name ? ` (${name})` : ''), w, h });
+  lib.screens.push(s);
+  saveLib();
+  scSend();
+  scPick({ kind: 'screen', id: s.id });
+  flashStatus('Новый экран — программа. Выход (монитор, окно, NDI) — справа в «Выходах», потом включите вывод');
+}
+$('scAddScreen').addEventListener('click', (e) => {
+  const r = e.currentTarget.getBoundingClientRect();
+  showMenu({ clientX: r.left, clientY: r.bottom + 2 }, [
+    ...SC_FORMATS.map((f) => ({ label: `${f[0]} — ${f[1]}×${f[2]}`, fn: () => scAddScreen(f) })),
+    { label: 'Своё разрешение…', fn: () => scAddScreen(['', 1920, 1080]) },
+  ]);
+});
+
+function scAddScene(sc) {
+  lib.scenes.push(sc);
+  scLive[sc.id] = scClone(sc);
+  saveLib();
+  scSend();
+  scPick({ kind: 'scene', id: sc.id });
+}
+// Готовые сцены для сцены (музыкантам, ведущим) — как Stage Layouts в ProPresenter
+const SC_STAGE_TPL = [
+  ['st-curnext', 'Текущий и следующий слайд'],
+  ['st-timer', 'Текущий + следующий слайд + таймер'],
+  ['st-chords', 'Текущий слайд + аккорды'],
+  ['st-screens', 'Основной экран + экран трансляции'],
+  ['st-multi', 'Мониторинг всех экранов'],
+  ['st-host', 'Ведущему: заметки и таймер'],
+];
+$('scAddScene').addEventListener('click', (e) => {
+  const r = e.currentTarget.getBoundingClientRect();
+  showMenu({ clientX: r.left, clientY: r.bottom + 2 }, [
+    { label: 'Пустая 16:9', fn: () => scAddScene(scTemplate('empty')) },
+    { label: 'Пустая 9:16 (вертикальная)', fn: () => scAddScene(scTemplate('vertical')) },
+    '-',
+    { label: 'Для сцены (музыкантам, ведущим)', disabled: true, fn() {} },
+    ...SC_STAGE_TPL.map(([k, name]) => ({ label: '   ' + name, fn: () => scAddScene(scTemplate(k)) })),
+    '-',
+    { label: 'Для зрителей и трансляции', disabled: true, fn() {} },
+    { label: '   Мультиэкран: слайды, следующий, камера', fn: () => scAddScene(scTemplate('multi')) },
+    { label: '   Три экрана: 1:1 · 16:9 · 9:16', fn: () => scAddScene(scTemplate('three')) },
+    { label: '   Трансляция: камера + текст песни', fn: () => scAddScene(scTemplate('broadcast')) },
+    ...(scPresets().length ? ['-', { label: 'Из пресета', disabled: true, fn() {} }, ...scPresets().map((p) => ({ label: '   ' + p.name, fn: () => scSceneFromPreset(p) }))] : []),
+  ]);
+});
+$('scImport').addEventListener('click', scImport);
+
+// Какой макет сейчас на выходах сцены: свой или другой сцены (как смена макета на сценическом экране)
+function scLayoutPick(sc) {
+  return scSelect(lib.scenes.map((x) => [x.id, x.id === sc.id ? 'Свой (эта сцена)' : x.name]), scLayoutOf(sc), (v) => scSetLayout(sc.id, v));
+}
+
+/* ----- Примеры сцен ----- */
+
+function scItem(type, x, y, w, h, over) {
+  return { id: newId(), type, name: '', x, y, w, h, rot: 0, opacity: 100, fit: 'contain', ...over };
+}
+function scTemplate(kind) {
+  const pres = layerDefs().filter((l) => l.kind === 'pres').map((l) => l.id);
+  const t = (text, x, y, w, h, over) => scItem('text', x, y, w, h, { text, size: 40, color: '#ffffff', align: 'left', valign: 'middle', ...over });
+  const base = { id: newId(), w: 1920, h: 1080, bg: '#000000', trans: { type: 'fade', ms: 600 }, items: [] };
+  if (kind === 'vertical') return { ...base, name: 'Вертикальная сцена', w: 1080, h: 1920 };
+  if (kind === 'multi') return { ...base, name: 'Мультиэкран', bg: '#0b0f16', items: [
+    scItem('program', 40, 70, 1240, 698, { name: 'Основная программа', radius: 12 }),
+    t('Сейчас на экране', 40, 16, 600, 50, { size: 30, color: '#9fb6dc' }),
+    scItem('next', 1320, 70, 560, 315, { name: 'Следующий слайд', radius: 10 }),
+    t('Далее', 1320, 16, 300, 50, { size: 30, color: '#9fb6dc' }),
+    scItem('source', 1320, 453, 560, 315, { name: 'Камера', fit: 'cover', radius: 10 }),
+    t('Камера', 1320, 400, 300, 50, { size: 30, color: '#9fb6dc' }),
+    scItem('clock', 40, 820, 600, 200, { size: 150, color: '#ffffff', align: 'left', bold: true }),
+  ] };
+  if (kind === 'three') return { ...base, name: 'Три экрана', w: 3608, h: 1080, items: [
+    scItem('media', 0, 0, 1080, 1080, { name: 'Левый 1:1', fit: 'cover' }),
+    scItem('program', 1080, 0, 1920, 1080, { name: 'Центр 16:9' }),
+    scItem('program', 3000, 0, 608, 1080, { name: 'Правый 9:16', fit: 'cover', layers: layerDefs().filter((l) => l.kind !== 'pres').map((l) => l.id) }),
+  ] };
+  if (kind === 'broadcast') return { ...base, name: 'Трансляция', items: [
+    scItem('source', 0, 0, 1920, 1080, { name: 'Камера', fit: 'cover' }),
+    scItem('rect', 0, 660, 1920, 420, { name: 'Затемнение снизу', fill: 'rgba(0,0,0,0)', fill2: '#000000', fillA: 180, opacity: 85 }),
+    scItem('program', 0, 0, 1920, 1080, { name: 'Текст песни', layers: pres.length ? pres : null }),
+    t('Прямая трансляция', 60, 40, 700, 70, { size: 34, bold: true, bg: '#e5484d', pad: 14, align: 'center', radius: 8 }),
+    scItem('clock', 1560, 40, 300, 70, { size: 44, color: '#ffffff', align: 'right', tshadow: true }),
+  ] };
+  if (kind.startsWith('st-')) return scStageTemplate(kind, base, t);
+  return { ...base, name: 'Новая сцена' };
+}
+
+// Сценические макеты: инфоблоки + слайды + экраны; сообщение для сцены — полосой снизу (скрыто, пока пусто)
+function scStageTemplate(kind, base0, t) {
+  const base = { ...base0, trans: { type: 'fade', ms: 300 }, follow: true };
+  const info = (type, x, y, w, h, over) => scItem(type, x, y, w, h, { size: 64, color: '#ffffff', align: 'center', valign: 'middle', auto: true, minSize: 14, ...over });
+  const cap = (text, x, y, color) => t(text, x, y, 560, 46, { size: 30, color, bold: true });
+  const msg = (y = 950) => info('msg', 0, y, 1920, 130, { name: 'Сообщение', size: 72, bold: true, bg: '#c81e2e', pad: 10, hideEmpty: true, blink: true });
+  const timer = () => (typeof stEnsureTimer === 'function' ? stEnsureTimer() : '');
+  const now = () => [cap('СЕЙЧАС', 40, 16, '#4fe08a')];
+  const curBox = (x, y, w, h) => scItem('cur', x, y, w, h, { name: 'Текущий слайд', border: { w: 3, c: '#4fe08a' } });
+  const nextBox = (x, y, w, h) => scItem('next', x, y, w, h, { name: 'Следующий слайд', border: { w: 3, c: '#f5a524' } });
+  const clock = (x, y, w, h, size) => scItem('clock', x, y, w, h, { size, bold: true, color: '#ffffff', align: 'center' });
+  if (kind === 'st-curnext') return { ...base, name: 'Текущий и следующий', items: [
+    ...now(), curBox(40, 72, 1150, 647),
+    cap('ДАЛЕЕ', 1230, 16, '#f5a524'), nextBox(1230, 72, 650, 366),
+    clock(1230, 470, 650, 160, 140),
+    info('count', 1230, 640, 650, 80, { size: 44, color: '#9fb6dc', prefix: 'Слайд' }),
+    info('plist', 40, 750, 1840, 190, { size: 48, align: 'left' }),
+    msg(),
+  ] };
+  if (kind === 'st-timer') return { ...base, name: 'Слайды и таймер', items: [
+    ...now(), curBox(40, 72, 1150, 647),
+    cap('ДАЛЕЕ', 1230, 16, '#f5a524'), nextBox(1230, 72, 650, 366),
+    cap('ТАЙМЕР', 1230, 466, '#9fb6dc'),
+    info('timer', 1230, 515, 650, 200, { size: 180, bold: true, ref: timer() }),
+    clock(40, 750, 600, 180, 120),
+    info('plist', 680, 750, 1200, 180, { size: 44, align: 'left' }),
+    msg(),
+  ] };
+  if (kind === 'st-chords') return { ...base, name: 'Слайд и аккорды', items: [
+    ...now(), curBox(40, 72, 760, 428),
+    cap('ДАЛЕЕ', 40, 520, '#f5a524'),
+    info('nextText', 40, 570, 760, 300, { size: 56, color: '#b8c4d6', label: true }),
+    info('chords', 840, 20, 1040, 900, { size: 64, align: 'left', valign: 'top', chordC: '#ffd84a', nextToo: true }),
+    clock(40, 880, 380, 70, 56),
+    info('count', 420, 880, 380, 70, { size: 44, color: '#9fb6dc' }),
+    msg(),
+  ] };
+  if (kind === 'st-screens') {
+    const other = lib.screens.find((s) => s.id !== 'main' && /трансл|stream|эфир|ndi/i.test(s.name))
+      || lib.screens.find((s) => s.id !== 'main' && (s.outputs || []).some((o) => o.kind === 'ndi'))
+      || lib.screens.find((s) => s.id !== 'main');
+    return { ...base, name: 'Основной и трансляция', items: [
+      cap('ОСНОВНОЙ ЭКРАН', 40, 16, '#4fe08a'),
+      scItem('screen', 40, 72, 900, 506, { name: 'Основной экран', ref: 'main', border: { w: 2, c: '#4fe08a' } }),
+      cap('ТРАНСЛЯЦИЯ', 980, 16, '#e5484d'),
+      scItem('screen', 980, 72, 900, 506, { name: other ? other.name : 'Трансляция — выберите экран справа', ref: other ? other.id : 'main', border: { w: 2, c: '#e5484d' } }),
+      cap('ДАЛЕЕ', 40, 610, '#f5a524'), nextBox(40, 660, 520, 293),
+      info('timer', 600, 660, 640, 160, { size: 140, bold: true, ref: timer() }),
+      clock(600, 830, 640, 120, 96),
+      info('cap', 1280, 660, 600, 290, { size: 56, bold: true, align: 'left' }),
+      msg(),
+    ] };
+  }
+  if (kind === 'st-multi') {
+    const cells = lib.screens.map((s) => ({ type: 'screen', ref: s.id, name: s.name }));
+    cells.push({ type: 'next', name: 'Следующий слайд' });
+    const n = cells.length;
+    const cols = n <= 1 ? 1 : n <= 4 ? 2 : n <= 9 ? 3 : 4;
+    const rows = Math.ceil(n / cols);
+    const gap = 30;
+    const top = 20;
+    const availH = 940 - top;
+    let w = (1920 - gap * (cols + 1)) / cols;
+    let h = (w * 9) / 16;
+    if (rows * (h + 46 + gap) > availH) { h = availH / rows - 46 - gap; w = (h * 16) / 9; }
+    const x0 = (1920 - (cols * w + (cols - 1) * gap)) / 2;
+    const items = [];
+    cells.forEach((c, i) => {
+      const x = Math.round(x0 + (i % cols) * (w + gap));
+      const y = Math.round(top + Math.floor(i / cols) * (h + 46 + gap));
+      items.push(t(c.name.toUpperCase(), x, y, Math.round(w), 40, { size: 26, color: '#9fb6dc', bold: true }));
+      items.push(scItem(c.type, x, y + 44, Math.round(w), Math.round(h), { name: c.name, ref: c.ref, border: { w: 2, c: '#3a4658' } }));
+    });
+    items.push(clock(40, 960, 420, 100, 80), info('cap', 500, 960, 900, 100, { size: 40, bold: true, align: 'left' }), info('timer', 1440, 960, 440, 100, { size: 80, bold: true, ref: timer() }), msg(0));
+    return { ...base, name: 'Мониторинг экранов', bg: '#07090d', items };
+  }
+  if (kind === 'st-host') return { ...base, name: 'Ведущему', items: [
+    ...now(), curBox(40, 72, 880, 495),
+    info('timer', 960, 40, 920, 260, { size: 220, bold: true, ref: timer() }),
+    clock(960, 310, 920, 120, 90),
+    cap('ЗАМЕТКИ К СЛАЙДУ', 960, 450, '#ffe066'),
+    info('notes', 960, 500, 920, 300, { size: 56, align: 'left', valign: 'top', color: '#ffe066' }),
+    cap('ЗАМЕТКА ОПЕРАТОРА', 40, 590, '#7fd3ff'),
+    info('opnote', 40, 640, 880, 290, { size: 48, align: 'left', valign: 'top', color: '#9fe0ff' }),
+    info('plist', 960, 820, 920, 110, { size: 40, align: 'left' }),
+    msg(),
+  ] };
+  return { ...base, name: 'Пустой макет' };
+}
+
+async function scExport(sc) {
+  const file = await window.api.saveJson({ name: sc.name, data: { app: 'church-presenter', kind: 'screen-scene', version: 1, scene: sc }, title: 'Сохранить сцену', label: 'Экранная сцена MP Show' });
+  if (file) flashStatus('Сохранено: ' + file.split(/[\\/]/).pop());
+}
+async function scImport() {
+  const res = await window.api.openJson({ title: 'Загрузить сцену', label: 'Экранная сцена (JSON)' });
+  if (!res) return;
+  const sc = res.ok && res.data && res.data.kind === 'screen-scene' && res.data.scene;
+  if (!sc || !Array.isArray(sc.items)) { showNotice('В файле нет экранной сцены', true); return; }
+  const c = scClone(sc);
+  c.id = newId();
+  c.outputs = []; // мониторы другого компьютера — свои выходы настраиваются здесь
+  c.items = c.items.filter((x) => x && SC_ITEMS[x.type]).map((x) => ({ ...x, id: newId() }));
+  // ссылки на экраны и слои другого компьютера — что не нашлось, остаётся пустым
+  scAddScene(c);
+  flashStatus(`Сцена «${c.name}» загружена`);
+}
+
+/* ----- Холст: превью экрана или редактор сцены ----- */
+
+function scUnmountView() {
+  if (scH) { if (scH.kind === 'screen') Compose.unmountScreen(scH.h); else Compose.unmountScene(scH.h); }
+  scH = null;
+  $('scView').replaceChildren();
+  $('scOv').replaceChildren();
+}
+function scMountView() {
+  scUnmountView();
+  if (!scTabOn) return;
+  const view = $('scView');
+  if (scSel.kind === 'screen' && scScreen(scSel.id)) scH = { kind: 'screen', id: scSel.id, h: Compose.mountScreen(view, scSel.id, { preview: true }) };
+  else if (scCurScene()) scH = { kind: 'scene', id: scSel.id, h: Compose.mountScene(view, scCurScene(), { preview: true, chain: [], edit: true }) };
+  scLayout();
+}
+function scUpdateView() {
+  const sc = scCurScene();
+  if (sc && scH && scH.kind === 'scene') Compose.updateScene(scH.h, sc);
+  scLayout();
+}
+function scViewSize() {
+  const sc = scCurScene();
+  if (sc) return { W: Math.max(16, sc.w), H: Math.max(16, sc.h) };
+  const { w, h } = Compose.screenSize(scSel.id);
+  return { W: w, H: h };
+}
+function scLayout() {
+  if (!scTabOn) return;
+  const cv = $('scCanvas');
+  const host = $('scHost');
+  const view = $('scView');
+  const { W, H } = scViewSize();
+  const cw = cv.clientWidth;
+  const ch = cv.clientHeight;
+  if (!cw || !ch) return;
+  scK = Math.min(cw / W, ch / H);
+  host.style.width = W * scK + 'px';
+  host.style.height = H * scK + 'px';
+  host.style.left = (cw - W * scK) / 2 + 'px';
+  host.style.top = (ch - H * scK) / 2 + 'px';
+  view.style.width = W + 'px';
+  view.style.height = H + 'px';
+  view.style.transform = `scale(${scK})`;
+  scDrawOverlay();
+  const it = scCurItem();
+  $('scFoot').textContent = scCurScene()
+    ? `${W}×${H} · ${Math.round(scK * 100)}%` + (it ? ` · ${it.name || SC_ITEMS[it.type].name}: ${Math.round(it.x)}, ${Math.round(it.y)} · ${Math.round(it.w)}×${Math.round(it.h)}` : '') + ' · Стрелки — сдвиг (Shift — ×10), Delete, Ctrl+D, Ctrl+Enter — применить'
+    : `${W}×${H} · Так экран выглядит сейчас на выходе (без звука)`;
+}
+new ResizeObserver(() => scLayout()).observe($('scCanvas'));
+
+/* ----- Рамки элементов: выбор, перенос, размер, поворот ----- */
+
+const SC_HANDLES = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'];
+function scDrawOverlay(snaps) {
+  const ov = $('scOv');
+  ov.replaceChildren();
+  const sc = scCurScene();
+  if (!sc) { scStretchHandle(ov); return; }
+  const k = scK;
+  // Сетка и безопасная зона (только в редакторе, на выход не идут)
+  if (scOpt.grid) {
+    const g = scEl('div', 'grid');
+    const st = Number(scOpt.gridStep) || 5;
+    g.style.backgroundImage = 'linear-gradient(to right, rgba(255,255,255,.6) 1px, transparent 1px), linear-gradient(to bottom, rgba(255,255,255,.6) 1px, transparent 1px)';
+    g.style.backgroundSize = `${st}% ${st}%`;
+    ov.append(g);
+  }
+  if (scOpt.safe) {
+    const p = (Number(scOpt.safePct) || 0) + '%';
+    const s = scEl('div', 'safe');
+    Object.assign(s.style, { left: p, top: p, right: p, bottom: p });
+    ov.append(s);
+  }
+  const ids = scSelIds();
+  const single = ids.length === 1;
+  for (const it of sc.items) {
+    if (it.hidden) continue;
+    const sel = ids.includes(it.id);
+    const b = scEl('div', 'box' + (sel ? ' sel' : '') + (it.locked ? ' locked' : ''));
+    b.style.left = it.x * k + 'px';
+    b.style.top = it.y * k + 'px';
+    b.style.width = it.w * k + 'px';
+    b.style.height = it.h * k + 'px';
+    if (it.rot) b.style.transform = `rotate(${it.rot}deg)`;
+    b.dataset.id = it.id;
+    if (sel) {
+      b.append(scEl('span', 'bl', it.name || SC_ITEMS[it.type].name));
+      if (!it.locked && single) {
+        for (const h of SC_HANDLES) { const d = scEl('div', 'handle ' + h); d.dataset.h = h; b.append(d); }
+        const r = scEl('div', 'handle rot');
+        r.dataset.h = 'rot';
+        r.title = 'Повернуть (Shift — по 15°)';
+        b.append(r);
+      }
+    }
+    b.addEventListener('pointerdown', (e) => scBoxDown(e, it));
+    b.addEventListener('contextmenu', (e) => { e.preventDefault(); if (!scSelIds().includes(it.id)) scSelectItem(it.id); scItemMenu(e, it); });
+    ov.append(b);
+  }
+  // Направляющие сцены (sc.guides, px): тянуть — сдвинуть, за край или двойной щелчок — убрать
+  (sc.guides || []).forEach((g, i) => {
+    const d = scEl('div', 'guide ' + g.d);
+    d.title = 'Направляющая: тяните, чтобы сдвинуть; за край холста или двойной щелчок — убрать';
+    if (g.d === 'v') d.style.left = g.p * k + 'px'; else d.style.top = g.p * k + 'px';
+    d.addEventListener('pointerdown', (e) => scGuideDrag(e, sc, i));
+    d.addEventListener('dblclick', () => { sc.guides.splice(i, 1); scGuidesSaved(sc); });
+    ov.append(d);
+  });
+  for (const s of snaps || []) {
+    const l = scEl('div', 'snapline ' + s.d);
+    if (s.d === 'v') l.style.left = s.p * k + 'px'; else l.style.top = s.p * k + 'px';
+    ov.append(l);
+  }
+}
+
+// Превью экрана: полоска снизу — вытянуть или сжать по вертикали под настоящий экран (меняет высоту разрешения).
+// Пока тянем — меняется только рамка; на выходы и в отмену (Ctrl+Z) — одним шагом, когда отпустили.
+function scStretchHandle(ov) {
+  const s = scScreen(scSel.id);
+  if (!s || s.id === 'main') return; // у «Основного» разрешение — в настройках вывода
+  const hd = scEl('div', 'sc-stretch');
+  hd.title = 'Потяните вниз или вверх — подогнать высоту экрана под настоящий (ширина не меняется)';
+  hd.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    hd.setPointerCapture(e.pointerId);
+    const host = $('scHost');
+    const view = $('scView');
+    const cv = $('scCanvas');
+    const k0 = scK;
+    const y0 = e.clientY;
+    const h0 = s.h;
+    let h = h0;
+    // Рамка вписывается в холст заново: высокий экран уменьшается, но виден целиком
+    const move = (ev) => {
+      h = Math.max(16, Math.min(16384, Math.round((h0 + (ev.clientY - y0) / k0) / 2) * 2));
+      const cw = cv.clientWidth;
+      const ch = cv.clientHeight;
+      const k = Math.min(cw / s.w, ch / h);
+      host.style.width = s.w * k + 'px';
+      host.style.height = h * k + 'px';
+      host.style.left = (cw - s.w * k) / 2 + 'px';
+      host.style.top = (ch - h * k) / 2 + 'px';
+      view.style.height = h + 'px';
+      view.style.transform = `scale(${k})`;
+      $('scFoot').textContent = `${s.w}×${h} · отпустите — экран станет такой высоты`;
+    };
+    const up = () => {
+      hd.removeEventListener('pointermove', move);
+      hd.removeEventListener('pointerup', up);
+      hd.removeEventListener('pointercancel', up);
+      if (h !== h0) { scScreenSet(s, { h }, true); flashStatus(`«${s.name}»: ${s.w}×${h}`); } else scLayout();
+    };
+    hd.addEventListener('pointermove', move);
+    hd.addEventListener('pointerup', up);
+    hd.addEventListener('pointercancel', up);
+  });
+  ov.append(hd);
+}
+
+// Пустое место холста: протянуть — рамка выделения (Ctrl/Shift — добавить), щелчок — снять выделение
+$('scOv').addEventListener('pointerdown', (e) => {
+  const ov = $('scOv');
+  if (e.target !== ov || !scCurScene() || e.button !== 0) return;
+  const add = e.ctrlKey || e.metaKey || e.shiftKey;
+  const r = ov.getBoundingClientRect();
+  const x0 = (e.clientX - r.left) / scK;
+  const y0 = (e.clientY - r.top) / scK;
+  const was = add ? scSelIds() : [];
+  let box = null;
+  ov.setPointerCapture(e.pointerId);
+  const move = (ev) => {
+    const x1 = (ev.clientX - r.left) / scK;
+    const y1 = (ev.clientY - r.top) / scK;
+    if (!box && Math.abs(x1 - x0) + Math.abs(y1 - y0) < 4 / scK) return;
+    const L = Math.min(x0, x1), T = Math.min(y0, y1), R = Math.max(x0, x1), B = Math.max(y0, y1);
+    const hit = scCurScene().items.filter((it) => !it.hidden && it.x < R && it.x + it.w > L && it.y < B && it.y + it.h > T).map((it) => it.id);
+    scSetSel([...new Set([...was, ...hit])], true);
+    box = scEl('div', 'marq');
+    Object.assign(box.style, { left: L * scK + 'px', top: T * scK + 'px', width: (R - L) * scK + 'px', height: (B - T) * scK + 'px' });
+    ov.append(box);
+  };
+  const up = () => {
+    ov.removeEventListener('pointermove', move);
+    ov.removeEventListener('pointerup', up);
+    ov.removeEventListener('pointercancel', up);
+    if (!box && !add) scSetSel([]);
+    else scSetSel(scSelIds());
+  };
+  ov.addEventListener('pointermove', move);
+  ov.addEventListener('pointerup', up);
+  ov.addEventListener('pointercancel', up);
+});
+
+// Выделение: scIt — главный элемент (его свойства справа), scMore — ещё выделенные (Ctrl/Shift, рамка)
+let scMore = [];
+const scSelIds = () => (scIt ? [scIt, ...scMore.filter((x) => x !== scIt)] : []);
+function scSelItems() {
+  const sc = scCurScene();
+  if (!sc) return [];
+  const ids = scSelIds();
+  return sc.items.filter((i) => ids.includes(i.id));
+}
+// fast — только рамки (во время протягивания рамки выделения)
+function scSetSel(ids, fast) {
+  scIt = ids[0] || null;
+  scMore = ids.slice(1);
+  scDrawOverlay();
+  if (fast) return;
+  scRenderItems();
+  scRenderInsp();
+  scRenderBar();
+  scLayout();
+}
+// add — Ctrl/Shift: добавить к выделению или убрать из него
+function scSelectItem(id, add) {
+  const ids = scSelIds();
+  if (add && id) { scSetSel(ids.includes(id) ? ids.filter((x) => x !== id) : [...ids, id]); return; }
+  if (scIt === id && !scMore.length) return;
+  scSetSel(id ? [id] : []);
+}
+
+// Направляющие сцены (sc.guides = [{ d: 'v'|'h', p: px }]): не содержимое — на выходы не идут, «Применить» не нужно
+function scGuidesSaved(sc) {
+  if (scLive[sc.id]) scLive[sc.id].guides = scClone(sc.guides || []);
+  saveLib();
+  scDrawOverlay();
+  scRenderBar();
+}
+function scGuideAdd(d, p) {
+  const sc = scCurScene();
+  if (!sc) return;
+  sc.guides = [...(sc.guides || []), { d, p: Math.round(p) }];
+  scGuidesSaved(sc);
+}
+function scGuideDrag(e, sc, i) {
+  if (e.button !== 0) return;
+  e.preventDefault();
+  e.stopPropagation();
+  const ov = $('scOv');
+  const r = ov.getBoundingClientRect();
+  const g = sc.guides[i];
+  ov.setPointerCapture(e.pointerId);
+  const move = (ev) => {
+    let p = g.d === 'v' ? (ev.clientX - r.left) / scK : (ev.clientY - r.top) / scK;
+    if (scOpt.snap && !ev.altKey) { const c = scNear(p, g.d === 'v' ? [0, sc.w / 2, sc.w] : [0, sc.h / 2, sc.h], 7 / scK); if (c != null) p = c; }
+    g.p = Math.round(p);
+    scDrawOverlay();
+  };
+  const up = () => {
+    ov.removeEventListener('pointermove', move);
+    ov.removeEventListener('pointerup', up);
+    ov.removeEventListener('pointercancel', up);
+    const max = g.d === 'v' ? sc.w : sc.h;
+    if (g.p < 0 || g.p > max) sc.guides.splice(sc.guides.indexOf(g), 1);
+    scGuidesSaved(sc);
+  };
+  ov.addEventListener('pointermove', move);
+  ov.addEventListener('pointerup', up);
+  ov.addEventListener('pointercancel', up);
+}
+
+// Настройки привязки редактора сцен и макетов (как в редакторе тем): общий магнит и к чему прилипать.
+// Хранятся у оператора (localStorage), не в сцене. Alt при перетаскивании — без привязки.
+const scOpt = (() => {
+  const def = { snap: true, sEdges: true, sItems: true, sGrid: true, sSafe: true, sGuides: true, grid: false, gridStep: 5, safe: false, safePct: 5 };
+  try { return { ...def, ...JSON.parse(localStorage.getItem('cp.sceneEditor') || '{}') }; } catch { return def; }
+})();
+const scSaveOpt = () => { try { localStorage.setItem('cp.sceneEditor', JSON.stringify(scOpt)); } catch { /* без памяти — не страшно */ } };
+
+// Куда можно прилипнуть (px сцены): края и центр, другие элементы, сетка, безопасная зона — что включено
+function scTargets(sc, it) {
+  const xs = [];
+  const ys = [];
+  if (scOpt.sEdges) { xs.push(0, sc.w / 2, sc.w); ys.push(0, sc.h / 2, sc.h); }
+  if (scOpt.sItems) for (const o of sc.items) {
+    if (o === it || (it && it.skip && it.skip.includes(o)) || o.hidden || o.rot) continue; // skip — сдвигаемая группа
+    xs.push(o.x, o.x + o.w / 2, o.x + o.w);
+    ys.push(o.y, o.y + o.h / 2, o.y + o.h);
+  }
+  if (scOpt.grid && scOpt.sGrid) {
+    const st = Number(scOpt.gridStep) || 5;
+    for (let v = 0; v <= 100.001; v += st) { xs.push((sc.w * v) / 100); ys.push((sc.h * v) / 100); }
+  }
+  if (scOpt.sGuides) for (const g of sc.guides || []) (g.d === 'v' ? xs : ys).push(g.p);
+  if (scOpt.safe && scOpt.sSafe) {
+    const p = (Number(scOpt.safePct) || 0) / 100;
+    xs.push(sc.w * p, sc.w * (1 - p));
+    ys.push(sc.h * p, sc.h * (1 - p));
+  }
+  return { xs, ys };
+}
+const scNear = (v, list, tol) => { let best = null; for (const c of list) if (Math.abs(c - v) < tol && (best == null || Math.abs(c - v) < Math.abs(best - v))) best = c; return best; };
+
+// Прилипание при сдвиге: левый край, центр или правый край — что ближе (без поворота)
+function scSnap(sc, it, x, y) {
+  const tol = 7 / scK;
+  const { xs, ys } = scTargets(sc, it);
+  const lines = [];
+  const pick = (pos, size, cands, d) => {
+    let best = null;
+    for (const off of [0, size / 2, size]) for (const c of cands) {
+      const dd = Math.abs(pos + off - c);
+      if (dd < tol && (!best || dd < best.dd)) best = { dd, v: c - off, c };
+    }
+    if (best) { lines.push({ d, p: best.c }); return best.v; }
+    return pos;
+  };
+  return { x: pick(x, it.w, xs, 'v'), y: pick(y, it.h, ys, 'h'), lines };
+}
+
+function scBoxDown(e, it) {
+  if (e.button !== 0) return;
+  e.preventDefault();
+  e.stopPropagation();
+  const sc = scCurScene();
+  const mode = e.target.dataset && e.target.dataset.h ? e.target.dataset.h : 'move';
+  // Ctrl/Shift — добавить к выделению или убрать; щелчок по невыделенному — выделить только его
+  if (e.ctrlKey || e.metaKey || e.shiftKey) { scSelectItem(it.id, true); return; }
+  if (!scSelIds().includes(it.id)) scSelectItem(it.id);
+  if (it.locked) return;
+  const ov = $('scOv');
+  const k = scK;
+  const s0 = { x: it.x, y: it.y, w: it.w, h: it.h, rot: it.rot || 0 };
+  // Сдвиг нескольких: все выделенные незакреплённые, привязка — по общей рамке
+  const group = mode === 'move' ? scSelItems().filter((x) => !x.locked) : [it];
+  const g0 = group.map((x) => ({ x, sx: x.x, sy: x.y }));
+  const gb = { x: Math.min(...group.map((x) => x.x)), y: Math.min(...group.map((x) => x.y)) };
+  gb.w = Math.max(...group.map((x) => x.x + x.w)) - gb.x;
+  gb.h = Math.max(...group.map((x) => x.y + x.h)) - gb.y;
+  const x0 = e.clientX;
+  const y0 = e.clientY;
+  const or = ov.getBoundingClientRect();
+  const cx0 = s0.x + s0.w / 2;
+  const cy0 = s0.y + s0.h / 2;
+  let moved = false;
+  ov.setPointerCapture(e.pointerId);
+  const move = (ev) => {
+    const dx = (ev.clientX - x0) / k;
+    const dy = (ev.clientY - y0) / k;
+    if (!moved && Math.abs(dx) + Math.abs(dy) < 2 / k) return;
+    moved = true;
+    let snaps = [];
+    if (mode === 'move') {
+      let mx = dx;
+      let my = dy;
+      if (ev.shiftKey) { if (Math.abs(dx) > Math.abs(dy)) my = 0; else mx = 0; } // Shift — только по одной оси
+      if (scOpt.snap && !ev.altKey && (group.length > 1 || !s0.rot)) {
+        const r = scSnap(sc, group.length > 1 ? { ...gb, skip: group } : it, gb.x + mx, gb.y + my);
+        mx = r.x - gb.x; my = r.y - gb.y; snaps = r.lines;
+      }
+      for (const q of g0) { q.x.x = Math.round(q.sx + mx); q.x.y = Math.round(q.sy + my); }
+    } else if (mode === 'rot') {
+      const px = (ev.clientX - or.left) / k;
+      const py = (ev.clientY - or.top) / k;
+      let a = (Math.atan2(py - cy0, px - cx0) * 180) / Math.PI + 90;
+      a = ev.shiftKey ? Math.round(a / 15) * 15 : a;
+      for (const q of [0, 90, 180, 270, 360, -90]) if (Math.abs(a - q) < 3) a = q;
+      it.rot = Math.round((((a % 360) + 540) % 360) - 180);
+    } else {
+      // Размер — в осях самого элемента (он может быть повёрнут); противоположная сторона стоит на месте
+      const th = (s0.rot * Math.PI) / 180;
+      const cos = Math.cos(th);
+      const sin = Math.sin(th);
+      const lx = dx * cos + dy * sin;
+      const ly = -dx * sin + dy * cos;
+      const sx = mode.includes('e') ? 1 : mode.includes('w') ? -1 : 0;
+      const sy = mode.includes('s') ? 1 : mode.includes('n') ? -1 : 0;
+      let w = Math.max(8, s0.w + sx * lx);
+      let h = Math.max(8, s0.h + sy * ly);
+      if (ev.shiftKey && sx && sy) { const r = s0.w / s0.h; if (w / h > r) h = w / r; else w = h * r; }
+      if (!sx) w = s0.w;
+      if (!sy) h = s0.h;
+      const cxl = (sx * (w - s0.w)) / 2;
+      const cyl = (sy * (h - s0.h)) / 2;
+      const cx = cx0 + cxl * cos - cyl * sin;
+      const cy = cy0 + cxl * sin + cyl * cos;
+      it.w = Math.round(w);
+      it.h = Math.round(h);
+      it.x = Math.round(cx - w / 2);
+      it.y = Math.round(cy - h / 2);
+      // Привязка тянущейся стороны (без поворота; с Shift — пропорции важнее)
+      if (scOpt.snap && !ev.altKey && !ev.shiftKey && !s0.rot) {
+        const tol = 7 / k;
+        const { xs, ys } = scTargets(sc, it);
+        let L = it.x, R = it.x + it.w, T = it.y, B = it.y + it.h;
+        const n = (v, list, d) => { const c = scNear(v, list, tol); if (c == null) return v; snaps.push({ d, p: c }); return c; };
+        if (sx > 0) R = n(R, xs, 'v'); else if (sx < 0) L = n(L, xs, 'v');
+        if (sy > 0) B = n(B, ys, 'h'); else if (sy < 0) T = n(T, ys, 'h');
+        if (R - L >= 8 && B - T >= 8) Object.assign(it, { x: Math.round(L), y: Math.round(T), w: Math.round(R - L), h: Math.round(B - T) });
+      }
+    }
+    if (scH && scH.kind === 'scene') Compose.updateScene(scH.h, sc);
+    scDrawOverlay(snaps);
+  };
+  const up = () => {
+    ov.removeEventListener('pointermove', move);
+    ov.removeEventListener('pointerup', up);
+    ov.removeEventListener('pointercancel', up);
+    if (moved) scSceneTouch(true); else scDrawOverlay();
+  };
+  ov.addEventListener('pointermove', move);
+  ov.addEventListener('pointerup', up);
+  ov.addEventListener('pointercancel', up);
+}
+
+// Файл из Проводника — на холст сцены элементом «Фото / видео»
+$('scCanvas').addEventListener('dragover', (e) => {
+  if (!scCurScene() || !e.dataTransfer.types.includes('Files')) return;
+  e.preventDefault();
+  $('scCanvas').classList.add('drop');
+});
+$('scCanvas').addEventListener('dragleave', () => $('scCanvas').classList.remove('drop'));
+$('scCanvas').addEventListener('drop', (e) => {
+  $('scCanvas').classList.remove('drop');
+  const sc = scCurScene();
+  if (!sc || !e.dataTransfer.files.length) return;
+  e.preventDefault();
+  e.stopPropagation();
+  const r = $('scOv').getBoundingClientRect();
+  let x = (e.clientX - r.left) / scK;
+  let y = (e.clientY - r.top) / scK;
+  for (const f of e.dataTransfer.files) {
+    const p = window.api.pathForFile(f);
+    if (!p || !/\.(jpe?g|png|gif|webp|bmp|svg|mp4|webm|mov|m4v|ogv)$/i.test(p)) continue;
+    const w = Math.round(sc.w * 0.4);
+    const h = Math.round((w * 9) / 16);
+    const it = scItem('media', Math.round(x - w / 2), Math.round(y - h / 2), w, h, { url: window.api.fileUrl(p), name: p.split(/[\\/]/).pop() });
+    sc.items.push(it);
+    scIt = it.id;
+    x += 40; y += 40;
+  }
+  scSceneTouch(true);
+});
+
+/* ----- Добавление элементов ----- */
+
+function scAddItem(type) {
+  const sc = scCurScene();
+  if (!sc) return;
+  const main = scMainSize();
+  let w = Math.round(sc.w * 0.45);
+  let h = Math.round(w * (main.h / main.w));
+  const over = {};
+  if (type === 'text') { h = Math.round(sc.h * 0.14); over.text = 'Текст'; over.size = Math.round(sc.h / 14); over.color = '#ffffff'; }
+  if (type === 'clock') { w = Math.round(sc.w * 0.25); h = Math.round(sc.h * 0.14); over.size = Math.round(sc.h / 10); over.color = '#ffffff'; over.bold = true; }
+  if (SC_ITEMS[type].shape) {
+    w = h = Math.round(Math.min(sc.w, sc.h) * 0.3);
+    over.fill = '#3e8bff';
+    if (type === 'line') { w = Math.round(sc.w * 0.4); h = Math.max(4, Math.round(sc.h / 120)); over.fill = '#ffffff'; }
+    if (type === 'arrow') { w = Math.round(sc.w * 0.25); h = Math.round(w * 0.45); }
+  }
+  if (type === 'screen') {
+    const other = lib.screens.find((s) => s.mode !== 'scene' || s.scene !== sc.id) || lib.screens[0];
+    over.ref = other.id;
+    const z = Compose.screenSize(other.id);
+    h = Math.round(w * (z.h / z.w));
+  }
+  if (type === 'source') over.fit = 'cover';
+  // Инфоблоки: текст крупно, размер подбирается сам
+  if (SC_ITEMS[type].info && type !== 'only') {
+    w = Math.round(sc.w * 0.4);
+    h = Math.round(sc.h * (['curText', 'nextText', 'notes', 'opnote', 'chords'].includes(type) ? 0.32 : 0.15));
+    Object.assign(over, { size: Math.round(sc.h / (['timer', 'countdown', 'vcd'].includes(type) ? 6 : 12)), color: '#ffffff', align: 'center', valign: 'middle', auto: true, minSize: 14 });
+    if (type === 'chords' || type === 'notes' || type === 'opnote') Object.assign(over, { align: 'left', valign: 'top' });
+    if (type === 'chords') Object.assign(over, { chordC: '#ffd84a', nextToo: true });
+    if (type === 'timer' || type === 'countdown' || type === 'vcd') over.bold = true;
+    if (type === 'timer') over.ref = typeof stEnsureTimer === 'function' ? stEnsureTimer() : '';
+    if (type === 'countdown') over.to = '10:00';
+    if (type === 'msg') { w = sc.w; h = Math.round(sc.h * 0.12); Object.assign(over, { bg: '#c81e2e', pad: 10, bold: true, hideEmpty: true, blink: true }); }
+  }
+  if (h > sc.h * 0.9) { const k = (sc.h * 0.9) / h; h = Math.round(h * k); w = Math.round(w * k); }
+  const it = scItem(type, Math.round((sc.w - w) / 2), Math.round((sc.h - h) / 2), w, h, over);
+  sc.items.push(it);
+  scIt = it.id;
+  scSceneTouch(true);
+  if (type === 'media') scPickMedia(it);
+}
+
+// Удалить, дублировать — всё выделенное
+function scDeleteSel() {
+  const sc = scCurScene();
+  const sel = scSelItems();
+  if (!sc || !sel.length) return;
+  sc.items = sc.items.filter((x) => !sel.includes(x));
+  scIt = null;
+  scMore = [];
+  scSceneTouch(true);
+  flashStatus((sel.length > 1 ? `Удалено элементов: ${sel.length}` : 'Элемент удалён') + ' · Ctrl+Z — вернуть');
+}
+function scDeleteItem(it) { scSetSel([it.id], true); scDeleteSel(); }
+function scDupSel() {
+  const sc = scCurScene();
+  const sel = scSelItems();
+  if (!sc || !sel.length) return;
+  const made = sel.map((it) => { const c = { ...scClone(it), id: newId(), x: it.x + 30, y: it.y + 30 }; sc.items.splice(sc.items.indexOf(it) + 1, 0, c); return c.id; });
+  scIt = made[0];
+  scMore = made.slice(1);
+  scSceneTouch(true);
+}
+function scDupItem(it) { scSetSel([it.id], true); scDupSel(); }
+function scOrder(it, d) {
+  const sc = scCurScene();
+  const i = sc.items.indexOf(it);
+  const j = d === 'top' ? sc.items.length - 1 : d === 'bottom' ? 0 : Math.max(0, Math.min(sc.items.length - 1, i + d));
+  if (i === j) return;
+  sc.items.splice(j, 0, sc.items.splice(i, 1)[0]);
+  scSceneTouch(false);
+}
+
+// Копировать / вставить элементы — между сценами тоже (в памяти, пока программа открыта)
+let scClip = null;
+function scCopySel() {
+  const sel = scSelItems();
+  if (!sel.length) return;
+  scClip = scClone(sel);
+  flashStatus(sel.length > 1 ? `Скопировано элементов: ${sel.length}` : 'Элемент скопирован');
+}
+function scPaste() {
+  const sc = scCurScene();
+  if (!sc || !scClip || !scClip.length) return;
+  const made = scClip.map((it) => { const c = { ...scClone(it), id: newId(), x: it.x + 30, y: it.y + 30 }; sc.items.push(c); return c.id; });
+  scClip = scClip.map((it) => ({ ...it, x: it.x + 30, y: it.y + 30 })); // следующая вставка — ещё правее
+  scIt = made[0];
+  scMore = made.slice(1);
+  scSceneTouch(true);
+}
+
+// Выровнять и распределить: один элемент — по сцене, несколько — друг по другу (или по сцене, если выбрано)
+function scAlign(how, toScene) {
+  const sc = scCurScene();
+  const sel = scSelItems().filter((x) => !x.locked);
+  if (!sc || !sel.length) return;
+  const by = sel.length === 1 || toScene ? { x: 0, y: 0, w: sc.w, h: sc.h } : (() => {
+    const x = Math.min(...sel.map((i) => i.x));
+    const y = Math.min(...sel.map((i) => i.y));
+    return { x, y, w: Math.max(...sel.map((i) => i.x + i.w)) - x, h: Math.max(...sel.map((i) => i.y + i.h)) - y };
+  })();
+  const R = Math.round;
+  if (how === 'l') sel.forEach((i) => { i.x = R(by.x); });
+  if (how === 'c') sel.forEach((i) => { i.x = R(by.x + (by.w - i.w) / 2); });
+  if (how === 'r') sel.forEach((i) => { i.x = R(by.x + by.w - i.w); });
+  if (how === 't') sel.forEach((i) => { i.y = R(by.y); });
+  if (how === 'm') sel.forEach((i) => { i.y = R(by.y + (by.h - i.h) / 2); });
+  if (how === 'b') sel.forEach((i) => { i.y = R(by.y + by.h - i.h); });
+  if (how === 'full') sel.forEach((i) => Object.assign(i, { x: 0, y: 0, w: sc.w, h: sc.h, rot: 0 }));
+  if (how === 'safe') { const p = (Number(scOpt.safePct) || 5) / 100; sel.forEach((i) => Object.assign(i, { x: R(sc.w * p), y: R(sc.h * p), w: R(sc.w * (1 - 2 * p)), h: R(sc.h * (1 - 2 * p)), rot: 0 })); }
+  if (how === 'sameW' || how === 'sameH') { const m = scCurItem() || sel[0]; sel.forEach((i) => { if (how === 'sameW') i.w = m.w; else i.h = m.h; }); }
+  // Распределить: крайние стоят, между остальными — равные промежутки
+  if ((how === 'dh' || how === 'dv') && sel.length > 2) {
+    const h = how === 'dh';
+    const s = [...sel].sort((a, b) => (h ? a.x - b.x : a.y - b.y));
+    const first = s[0];
+    const last = s[s.length - 1];
+    const span = h ? last.x + last.w - first.x : last.y + last.h - first.y;
+    const sum = s.reduce((a, i) => a + (h ? i.w : i.h), 0);
+    const gap = (span - sum) / (s.length - 1);
+    let p = h ? first.x : first.y;
+    for (const i of s) { if (h) { i.x = R(p); p += i.w + gap; } else { i.y = R(p); p += i.h + gap; } }
+  }
+  scSceneTouch(true);
+}
+function scAlignMenu(e) {
+  const many = scSelItems().length > 1;
+  const pre = many ? 'друг по другу' : 'по сцене';
+  scMenuAt(e, [
+    { label: `Выровнять (${pre})`, disabled: true, fn() {} },
+    { label: 'По левому краю', fn: () => scAlign('l') },
+    { label: 'По центру ↔', fn: () => scAlign('c') },
+    { label: 'По правому краю', fn: () => scAlign('r') },
+    { label: 'По верху', fn: () => scAlign('t') },
+    { label: 'По середине ↕', fn: () => scAlign('m') },
+    { label: 'По низу', fn: () => scAlign('b') },
+    ...(many ? ['-',
+      { label: 'По центру сцены ↔', fn: () => scAlign('c', true) },
+      { label: 'По середине сцены ↕', fn: () => scAlign('m', true) },
+      '-',
+      { label: 'Распределить по горизонтали', disabled: scSelItems().length < 3, fn: () => scAlign('dh') },
+      { label: 'Распределить по вертикали', disabled: scSelItems().length < 3, fn: () => scAlign('dv') },
+      { label: 'Одинаковая ширина (как у главного)', fn: () => scAlign('sameW') },
+      { label: 'Одинаковая высота (как у главного)', fn: () => scAlign('sameH') },
+    ] : []),
+    '-',
+    { label: 'Во весь экран', fn: () => scAlign('full') },
+    { label: 'В безопасную зону', fn: () => scAlign('safe') },
+  ]);
+}
+
+function scItemMenu(e, it) {
+  const many = scSelItems().length > 1;
+  showMenu(e, [
+    ...(many ? [] : [
+      { label: 'Поверх всех', fn: () => scOrder(it, 'top') },
+      { label: 'Выше', fn: () => scOrder(it, 1) },
+      { label: 'Ниже', fn: () => scOrder(it, -1) },
+      { label: 'Под всеми', fn: () => scOrder(it, 'bottom') },
+      '-',
+    ]),
+    { label: 'Выровнять…', fn: () => scAlignMenu(e) },
+    { label: it.hidden ? 'Показать' : 'Скрыть', fn: () => { const v = !it.hidden; scSelItems().forEach((x) => { x.hidden = v; }); scSceneTouch(true); } },
+    { label: it.locked ? 'Разблокировать' : 'Закрепить', fn: () => { const v = !it.locked; scSelItems().forEach((x) => { x.locked = v; }); scSceneTouch(true); } },
+    '-',
+    { label: 'Копировать', key: 'Ctrl+C', fn: scCopySel },
+    { label: 'Вставить', key: 'Ctrl+V', disabled: !scClip, fn: scPaste },
+    { label: 'Дублировать', key: 'Ctrl+D', fn: scDupSel },
+    { label: many ? 'Удалить выделенные' : 'Удалить', key: 'Delete', fn: scDeleteSel },
+  ]);
+}
+
+async function scPickMedia(it) {
+  const r = await window.api.pickMedia({});
+  const f = r && r.items.find((x) => x.type === 'image' || x.type === 'video');
+  if (!f) { if (r && r.items.length) flashStatus('Нужна картинка или видео'); return; }
+  scItemSet(it, { url: f.url, name: it.name || f.name }, true);
+}
+
+async function scPickSource(e, on) {
+  flashStatus('Ищу источники…');
+  const kinds = SOURCE_KINDS.filter((k) => ['camera', 'screen', 'ndi', 'cast'].includes(k.type));
+  const lists = await Promise.all(kinds.map((k) => k.find().catch(() => [])));
+  const items = [];
+  kinds.forEach((k, i) => {
+    const l = (lists[i] || []).filter((s) => !s.noAdd);
+    if (!l.length) return;
+    if (items.length) items.push('-');
+    items.push({ label: k.title, disabled: true, fn() {} });
+    l.forEach((s) => items.push({ label: '   ' + s.label, fn: () => on({ type: s.type, id: s.id, label: s.label }) }));
+  });
+  if (!items.length) { flashStatus('Источники не найдены'); return; }
+  flashStatus('');
+  showMenu(e, items);
+}
+
+/* ----- Клавиши на вкладке ----- */
+
+function scKey(e) {
+  const ctrl = e.ctrlKey || e.metaKey;
+  const sc = scCurScene();
+  if (ctrl && e.key === 'Enter' && sc) { scApply(); return true; }
+  if (!sc) return false;
+  // В полях ввода — их собственные клавиши (копировать текст и т. п.)
+  const t = e.target;
+  if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) return false;
+  if (ctrl && e.code === 'KeyA') { scSetSel(sc.items.filter((x) => !x.hidden).map((x) => x.id)); return true; }
+  if (ctrl && e.code === 'KeyV') { scPaste(); return true; }
+  const sel = scSelItems();
+  if (!sel.length) return false;
+  if (!ctrl && (e.key === 'Delete' || e.key === 'Backspace')) { scDeleteSel(); return true; }
+  if (ctrl && e.code === 'KeyD') { scDupSel(); return true; }
+  if (ctrl && e.code === 'KeyC') { scCopySel(); return true; }
+  if (ctrl && e.code === 'KeyX') { scCopySel(); scDeleteSel(); return true; }
+  if (e.key === 'Escape') { scSetSel([]); return true; }
+  const d = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[e.key];
+  if (d && !ctrl) {
+    const m = e.shiftKey ? 10 : 1;
+    for (const it of sel) if (!it.locked) { it.x += d[0] * m; it.y += d[1] * m; }
+    scSceneTouch(true);
+    return true;
+  }
+  return false;
+}
+
+/* ----- Строка над холстом ----- */
+
+// Меню под кнопкой; у пункта может быть title — подсказка
+function scMenuAt(e, items) {
+  const r = e.currentTarget && e.currentTarget.getBoundingClientRect ? e.currentTarget.getBoundingClientRect() : { left: e.clientX, bottom: e.clientY };
+  showMenu({ clientX: r.left, clientY: r.bottom + 2 }, items);
+  const m = document.querySelector('.ctx-menu');
+  const flat = items.filter((x) => x !== '-');
+  if (m) [...m.children].filter((x) => !x.classList.contains('ctx-sep')).forEach((row, i) => { if (flat[i] && flat[i].title) row.title = flat[i].title; });
+}
+// Кнопка «Вывод: включён / выключен» — выходы экрана или сцены включаются только вручную
+function scOutBtn(on, fn) {
+  return scBtn(on ? 'Вывод включён' : 'Вывод выключен', on ? 'done' : 'output', fn, on ? 'Щелчок — закрыть выходы' : 'Щелчок — открыть выходы (монитор, окно, NDI)', on ? 'sc-onair' : '');
+}
+
+function scBtn(text, icon, fn, title, cls) {
+  const b = scEl('button', cls || '');
+  if (icon) b.dataset.icon = icon;
+  if (text) b.textContent = text;
+  if (title) b.title = title;
+  b.addEventListener('click', fn);
+  return b;
+}
+
+// Меню «▾» у магнита: к чему прилипать, шаг сетки, безопасная зона
+function scSnapMenu(e) {
+  const r = e.currentTarget.getBoundingClientRect();
+  const re = () => { scSaveOpt(); scRenderBar(); scDrawOverlay(); };
+  const chk = (key, label) => ({ label: (scOpt[key] ? '✓ ' : '   ') + label, fn: () => { scOpt[key] = !scOpt[key]; if (scOpt[key]) scOpt.snap = true; re(); } });
+  const pick = (key, v, label, show) => ({ label: (Number(scOpt[key]) === v ? '● ' : '   ') + label, fn: () => { scOpt[key] = v; scOpt[show] = true; re(); } });
+  showMenu({ clientX: r.left, clientY: r.bottom + 2 }, [
+    { label: (scOpt.snap ? '✓ ' : '   ') + 'Привязка включена', fn: () => { scOpt.snap = !scOpt.snap; re(); } },
+    '-',
+    { label: 'Прилипать к:', disabled: true, fn() {} },
+    chk('sEdges', 'Краям и центру экрана'),
+    chk('sItems', 'Другим элементам (края и центр)'),
+    chk('sGrid', 'Сетке (когда она видна)'),
+    chk('sSafe', 'Безопасной зоне (когда она видна)'),
+    chk('sGuides', 'Направляющим'),
+    '-',
+    { label: 'Направляющие:', disabled: true, fn() {} },
+    { label: '   ＋ Вертикальная по центру', fn: () => { const sc = scCurScene(); scGuideAdd('v', sc.w / 2); } },
+    { label: '   ＋ Горизонтальная по центру', fn: () => { const sc = scCurScene(); scGuideAdd('h', sc.h / 2); } },
+    { label: '   ＋ Трети (4 линии)', fn: () => { const sc = scCurScene(); scGuideAdd('v', sc.w / 3); scGuideAdd('v', (sc.w * 2) / 3); scGuideAdd('h', sc.h / 3); scGuideAdd('h', (sc.h * 2) / 3); } },
+    { label: '   Убрать все', disabled: !((scCurScene() || {}).guides || []).length, fn: () => { const sc = scCurScene(); sc.guides = []; scGuidesSaved(sc); } },
+    '-',
+    { label: 'Шаг сетки:', disabled: true, fn() {} },
+    ...[[2.5, '2,5 %'], [5, '5 %'], [10, '10 %'], [12.5, '12,5 % (8 клеток)'], [25, '25 % (4 клетки)']].map(([v, l]) => pick('gridStep', v, l, 'grid')),
+    '-',
+    { label: 'Безопасная зона:', disabled: true, fn() {} },
+    ...[[3, '3 %'], [5, '5 %'], [10, '10 %']].map(([v, l]) => pick('safePct', v, l, 'safe')),
+    '-',
+    { label: 'Alt при перетаскивании — без привязки', disabled: true, fn() {} },
+  ]);
+}
+
+function scRenderBar() {
+  const bar = $('scBar');
+  bar.replaceChildren();
+  const sc = scCurScene();
+  if (sc) {
+    const add = scEl('span', 'te-grp');
+    for (const [type, x] of Object.entries(SC_ITEMS)) if (!x.info && !x.more) add.append(scBtn('', x.icon, () => scAddItem(type), `Добавить: ${x.name} — ${x.tip}`, 'icon-only'));
+    // Фигуры и инфоблоки — меню (их много)
+    add.append(scBtn('Фигура', 'rect', (e) => scMenuAt(e, Object.entries(SC_ITEMS).filter(([, x]) => x.shape).map(([type, x]) => ({ label: x.name, fn: () => scAddItem(type) }))),
+      'Прямоугольник, эллипс, линия, стрелка, треугольник, звезда'));
+    add.append(scBtn('Инфоблок', 'stage', (e) => {
+      const list = [...['cur', 'next'], ...Object.keys(SC_ITEMS).filter((k) => SC_ITEMS[k].info), 'clock', 'screen'];
+      scMenuAt(e, list.map((type) => ({ label: SC_ITEMS[type].name, title: SC_ITEMS[type].tip, fn: () => scAddItem(type) })));
+    }, 'Блоки, которые обновляются сами: текущий и следующий слайд, текст слайда, заметки, таймер, сообщение, аккорды, плейлист…', 'sc-info'));
+    const sel = scSelItems();
+    const one = sel.length === 1 ? sel[0] : null;
+    const ed = scEl('span', 'te-grp');
+    const b1 = scBtn('', 'front', () => one && scOrder(one, 1), 'Выше (поверх соседа)', 'icon-only');
+    const b2 = scBtn('', 'back', () => one && scOrder(one, -1), 'Ниже', 'icon-only');
+    const b3 = scBtn('', 'copy', () => scDupSel(), 'Дублировать (Ctrl+D)', 'icon-only');
+    const b4 = scBtn('', 'trash', () => scDeleteSel(), 'Удалить (Delete)', 'icon-only');
+    const b5 = scBtn('Выровнять', 'alignC', (e) => scAlignMenu(e), 'Выровнять и распределить выделенное (по сцене или друг по другу)');
+    [b1, b2].forEach((b) => { b.disabled = !one; });
+    [b3, b4, b5].forEach((b) => { b.disabled = !sel.length; });
+    ed.append(b1, b2, b3, b4, b5);
+    // Привязка, сетка, безопасная зона, направляющие — как в редакторе тем; «▾» — к чему прилипать
+    const help = scEl('span', 'te-grp');
+    const tog = (icon, key, title) => {
+      const b = scBtn('', icon, () => { scOpt[key] = !scOpt[key]; scSaveOpt(); scRenderBar(); scDrawOverlay(); }, title, 'icon-only');
+      b.setAttribute('aria-pressed', String(!!scOpt[key]));
+      return b;
+    };
+    help.append(
+      tog('magnet', 'snap', 'Привязка: прилипание к краям, центру, другим элементам, сетке, направляющим (Alt при перетаскивании — без привязки)'),
+      scBtn('▾', '', scSnapMenu, 'К чему прилипать, шаг сетки, размер безопасной зоны, направляющие'),
+      tog('grid', 'grid', 'Сетка'),
+      tog('safe', 'safe', 'Безопасная зона'),
+    );
+    const ap = scEl('span', 'te-apply');
+    const dirty = scDirty(sc);
+    const rv = scBtn('Сбросить', '', () => scRevert(sc), 'Вернуть сцену как на выходе');
+    rv.disabled = !dirty;
+    const ok = scBtn('Применить', 'done', () => scApply(sc), 'Отправить правки на выходы сцены (Ctrl+Enter)');
+    ok.disabled = !dirty;
+    ap.append(rv, ok);
+    if ((sc.outputs || []).length) ap.append(scOutBtn(!!sc.on, () => { sc.on = !sc.on; scSceneOutSet(sc, true); }));
+    bar.append(add, scEl('span', 'te-sep'), ed, scEl('span', 'te-sep'), help, ap);
+  } else {
+    const s = scScreen(scSel.id);
+    if (!s) return;
+    bar.append(scEl('b', 'sc-bar-name', s.name), scEl('span', 'te-sub', 'программа' + (scLook(s) ? ' · своя тема' : '')));
+    bar.append(scEl('span', 'spacer'));
+    const outs = scOutsOf(s.id);
+    if (s.id === 'main') bar.append(scEl('span', 'te-sub', outputOpen ? 'Основной вывод включён' : 'Основной вывод выключен (галочка у «Предпросмотра»)'));
+    for (const o of outs) {
+      const b = scBtn({ display: 'Монитор', window: 'Окно', ndi: 'NDI' }[o.kind] || o.kind, '', () => window.api.screensFocus(o.key), o.kind === 'window' ? 'Показать окно экрана' : 'Выход открыт', 'sc-chip');
+      bar.append(b);
+    }
+    if (s.id !== 'main' && (s.outputs || []).length) bar.append(scOutBtn(!!s.enabled, () => scScreenSet(s, { enabled: !s.enabled }, true)));
+  }
+  Icons.apply(bar);
+}
+
+/* ----- Свойства справа ----- */
+
+function scSec(title, kids, open = true) {
+  const d = scEl('details', 'te-sec');
+  d.open = scSecOpen[title] != null ? scSecOpen[title] : open;
+  d.addEventListener('toggle', () => { scSecOpen[title] = d.open; });
+  d.append(scEl('summary', '', title));
+  const bd = scEl('div', 'bd');
+  bd.append(...kids.filter(Boolean));
+  d.append(bd);
+  return d;
+}
+function scRow(label, ...ct) {
+  const r = scEl('div', 'te-row');
+  r.append(scEl('span', 'lb', label));
+  const c = scEl('div', 'ct');
+  c.append(...ct.filter(Boolean));
+  r.append(c);
+  return r;
+}
+function scNum(v, on, o = {}) {
+  const i = scEl('input');
+  i.type = 'number';
+  i.value = v != null ? Math.round(v * 100) / 100 : '';
+  if (o.min != null) i.min = o.min;
+  if (o.max != null) i.max = o.max;
+  i.step = o.step || 1;
+  i.addEventListener('input', () => { const x = Number(i.value); if (i.value !== '' && Number.isFinite(x)) on(x); });
+  return i;
+}
+// def — значение по умолчанию: двойной щелчок по ползунку (общий обработчик в icons.js)
+function scRange(v, min, max, step, on, unit = '', def) {
+  const w = scEl('span', 'sc-range');
+  const r = scEl('input');
+  r.type = 'range';
+  r.min = min; r.max = max; r.step = step; r.value = v;
+  if (def != null) r.dataset.def = def;
+  const out = scEl('span', 'te-sub', v + unit);
+  r.addEventListener('input', () => { out.textContent = r.value + unit; on(Number(r.value)); });
+  w.append(r, out);
+  return w;
+}
+function scColor(v, on) {
+  const i = scEl('input');
+  i.type = 'color';
+  i.value = /^#[0-9a-f]{6}$/i.test(v || '') ? v : '#000000';
+  i.addEventListener('input', () => on(i.value));
+  return i;
+}
+function scSelect(opts, v, on) {
+  const s = scEl('select');
+  for (const [val, label] of opts) s.append(Object.assign(scEl('option', '', label), { value: val }));
+  s.value = v != null ? v : '';
+  s.addEventListener('change', () => on(s.value));
+  return s;
+}
+function scCheck(label, v, on, title) {
+  const l = scEl('label', 'check');
+  const i = scEl('input');
+  i.type = 'checkbox';
+  i.checked = !!v;
+  i.addEventListener('change', () => on(i.checked));
+  l.append(i, document.createTextNode(label));
+  if (title) l.title = title;
+  return l;
+}
+function scText(v, on, ph) {
+  const i = scEl('input');
+  i.type = 'text';
+  i.value = v || '';
+  if (ph) i.placeholder = ph;
+  i.addEventListener('change', () => on(i.value.trim()));
+  return i;
+}
+const scNote = (text, warn) => scEl('div', 'sc-note' + (warn ? ' warn' : ''), text);
+
+function scRenderInsp() {
+  const box = $('scInsp');
+  if (!scTabOn) return;
+  const keep = box.scrollTop;
+  box.replaceChildren();
+  const it = scCurItem();
+  const sc = scCurScene();
+  if (scSelItems().length > 1) box.append(...scMultiInsp(scSelItems(), sc).filter(Boolean));
+  else if (it) box.append(...scItemInsp(it, sc).filter(Boolean));
+  else if (sc) box.append(...scSceneInsp(sc).filter(Boolean));
+  else if (scScreen(scSel.id)) box.append(...scScreenInsp(scScreen(scSel.id)).filter(Boolean));
+  Icons.apply(box);
+  box.scrollTop = keep;
+}
+
+function scTitle(icon, text, sub) {
+  const t = scEl('div', 'te-title');
+  t.append(Icons.el(icon), scEl('b', '', text));
+  if (sub) t.append(scEl('span', 'te-sub', sub));
+  return t;
+}
+
+// Формат и разрешение: готовые пропорции или свои числа
+function scSizeRows(obj, on) {
+  const fmt = (SC_FORMATS.find((f) => f[1] === obj.w && f[2] === obj.h) || ['custom'])[0];
+  return [
+    scRow('Формат', scSelect([...SC_FORMATS.map((f) => [f[0], `${f[0]} — ${f[1]}×${f[2]}`]), ['custom', 'Своё разрешение']], fmt, (v) => {
+      const f = SC_FORMATS.find((x) => x[0] === v);
+      if (f) on({ w: f[1], h: f[2] }, true);
+    })),
+    scRow('Ширина × высота',
+      scNum(obj.w, (v) => on({ w: Math.max(16, Math.min(16384, Math.round(v))) }), { min: 16, max: 16384 }),
+      scEl('span', 'te-sub', '×'),
+      scNum(obj.h, (v) => on({ h: Math.max(16, Math.min(16384, Math.round(v))) }), { min: 16, max: 16384 }),
+      scBtn('⇄', '', () => on({ w: obj.h, h: obj.w }, true), 'Повернуть: поменять ширину и высоту')),
+  ];
+}
+
+// Цвет: яркость, контраст, насыщенность, оттенок, гамма, температура, размытие
+function scFxSec(obj, apply) {
+  const fx = obj.fx || {};
+  const set = (k, v) => { obj.fx = { ...(obj.fx || {}), [k]: v }; apply(false); };
+  const r = (label, k, min, max, step, def, unit) => {
+    const w = scRange(fx[k] != null ? fx[k] : def, min, max, step, (v) => set(k, v), unit, def);
+    return scRow(label, w);
+  };
+  return scSec('Цвет и эффекты', [
+    r('Яркость', 'b', 0, 200, 1, 100, '%'),
+    r('Контраст', 'c', 0, 200, 1, 100, '%'),
+    r('Насыщенность', 's', 0, 300, 1, 100, '%'),
+    r('Оттенок', 'h', -180, 180, 1, 0, '°'),
+    r('Гамма', 'g', 0.2, 3, 0.05, 1, ''),
+    r('Температура', 'temp', -100, 100, 1, 0, ''),
+    r('Зелёный ↔ пурпур', 'tint', -100, 100, 1, 0, ''),
+    r('Размытие', 'blur', 0, 40, 0.5, 0, ' px'),
+    scRow('', scBtn('Сбросить цвет', '', () => { obj.fx = {}; apply(true); })),
+  ], false);
+}
+
+function scLayerChecks(cur, on) {
+  const defs = layerDefs();
+  const all = !Array.isArray(cur);
+  const wrap = scEl('div', 'sc-checks');
+  wrap.append(scCheck('Все слои', all, (v) => on(v ? null : defs.map((l) => l.id)), 'Всё, что выводится'));
+  if (!all) for (const l of [...defs].reverse()) {
+    wrap.append(scCheck(layerName(l), cur.includes(l.id), (v) => on(v ? [...new Set([...cur, l.id])] : cur.filter((x) => x !== l.id))));
+  }
+  return wrap;
+}
+
+function scTransRows(tr, on, none) {
+  const t = tr && tr.type ? tr : null;
+  return [
+    scRow('Переход', scSelect([...(none ? [['', none]] : []), ...SC_TRANS], t ? t.type : '', (v) => on(v ? { type: v, ms: t ? t.ms : 600 } : null, true))),
+    t && t.type !== 'none' ? scRow('Время', scRange(t.ms || 600, 100, 3000, 100, (v) => on({ ...t, ms: v }), ' мс', 600)) : null,
+  ];
+}
+
+// Карточки выходов: монитор/проектор (HDMI, SDI, DisplayPort — всё, что Windows видит монитором), окно, NDI.
+// sid — id экрана в окнах выходов (у сцены — 'scene:id'), put(list, re) — сохранить список, added() — после «＋ Выход»
+function scOutputRows(sid, name, outs, put, added) {
+  const rows = [];
+  outs.forEach((o, i) => {
+    const setO = (p, re) => put(outs.map((x, j) => (j === i ? { ...x, ...p } : x)), re);
+    const card = scEl('div', 'sc-out');
+    const open = scOutsOf(sid).some((x) => x.key.startsWith(`${sid}|${i}|`));
+    const head = scEl('div', 'te-row');
+    const kind = scSelect([['display', 'Монитор / проектор (HDMI, SDI, DP)'], ['window', 'Окно на рабочем столе'], ['ndi', 'NDI-выход в сеть']], o.kind, (v) => setO({ kind: v }, true));
+    const rm = scBtn('', 'trash', () => put(outs.filter((_, j) => j !== i), true), 'Убрать выход', 'icon-only');
+    const st = scEl('span', 'dot' + (open ? ' on' : ''));
+    st.title = open ? 'Открыт' : 'Закрыт';
+    head.append(st, kind, rm);
+    card.append(head);
+    if (o.kind === 'display') {
+      const opts = displays.map((d) => [String(d.id), d.label + (d.hz ? ` · ${d.hz} Гц` : '')]);
+      card.append(scRow('Монитор', scSelect(opts.length ? opts : [['', 'Мониторов нет']], String(o.display || ''), (v) => setO({ display: Number(v) }))));
+      const busy = scDisplayBusy(Number(o.display), sid, i);
+      if (busy.length) card.append(scNote('Этот монитор уже занят: ' + busy.join(', ') + '. Окна лягут друг на друга.', true));
+      if ((displays.find((d) => d.id === Number(o.display)) || {}).primary) card.append(scNote('Это главный монитор — на нём окно программы. Выход закроет его на весь экран.', true));
+      if (!displays.some((d) => d.id === Number(o.display))) card.append(scNote('Монитор не подключён — выход откроется, когда он появится.', true));
+      card.append(scNote('SDI (Blackmagic DeckLink и т. п.) — выберите карту здесь, если в Windows она видна как монитор (Desktop Video → «Использовать как монитор»).'));
+    } else if (o.kind === 'ndi') {
+      card.append(scRow('Имя в сети', scText(o.name, (v) => setO({ name: v }), `MP Show — ${name}`)));
+      if (!Scene.LIVE.ndi) card.append(scNote('Для NDI-выхода установите бесплатные NDI Tools (ndi.video) и перезапустите программу.', true));
+      else card.append(scNote('Принимать — в OBS, vMix, NDI Studio Monitor. Звук по NDI пока не идёт.'));
+    } else {
+      card.append(scNote('Окно можно растянуть, перенести на любой монитор или захватить в OBS. Закрыли окно — откроется снова при следующей правке.'));
+    }
+    card.append(scCheck('Выход включён', !o.off, (v) => setO({ off: !v })));
+    rows.push(card);
+  });
+  rows.push(scRow('', scBtn('＋ Выход', '', () => {
+    // Новый выход: второй монитор (не главный), а если его нет — окно. У сцены — выключенным (у экрана есть общий «Вывод»)
+    const free = displays.find((d) => !d.primary);
+    put([...outs, { kind: free ? 'display' : 'window', display: free ? free.id : undefined, ...(sid.startsWith('scene:') ? { off: true } : {}) }], true);
+    if (added) added();
+  }, 'Добавить выход: монитор (HDMI, SDI), окно или NDI')));
+  return rows;
+}
+
+// Кто ещё выводит на этот монитор (кроме выхода i у sid)
+function scDisplayBusy(display, sid, i) {
+  const busy = [];
+  if (outputOpen && display === Number(displaySel.value)) busy.push('«Основной» (Монитор для вывода)');
+  for (const z of lib.screens) (z.outputs || []).forEach((y, j) => { if (z.enabled && !y.off && y.kind === 'display' && Number(y.display) === display && !(z.id === sid && j === i)) busy.push(`«${z.name}»`); });
+  for (const sc of lib.scenes) (sc.outputs || []).forEach((y, j) => { if (!y.off && y.kind === 'display' && Number(y.display) === display && !(scSceneSid(sc) === sid && j === i)) busy.push(`сцена «${sc.name}»`); });
+  return busy;
+}
+
+// Альфа-канал: прозрачный фон в NDI (OBS, vMix видят только текст и элементы); на мониторе прозрачности нет — там чёрный
+function scAlphaRows(on, fn) {
+  return [
+    scCheck('Альфа-канал (прозрачный фон)', on, fn, 'Для NDI в OBS, vMix: фон прозрачный — видно только текст и элементы'),
+    ...(on ? [scNote('NDI-выход отдаёт картинку с прозрачным фоном: фон темы, шаблона и сцены убирается, остаются текст, фигуры, фото и видео. В «Предпросмотре» прозрачное — шахматкой. На мониторе и в окне прозрачности нет (там чёрный).')] : []),
+  ];
+}
+
+function scScreenInsp(s) {
+  const set = (patch, re) => scScreenSet(s, patch, re);
+  const main = s.id === 'main';
+  const out = [scTitle('screens', s.name, main ? 'основной · программа' : 'программа')];
+  out.push(scSec('Экран', [
+    scRow('Название', scText(s.name, (v) => v && set({ name: v }))),
+    ...(main ? [scNote('Монитор и разрешение «Основного» — выше, в «Монитор» и «Разрешение вывода». ' + `Сейчас: ${scMainSize().w}×${scMainSize().h}.`)]
+      : scSizeRows(s, (p, re) => set(p, re !== false))),
+    scRow('Частота', scSelect([['0', 'Как у выхода'], ['24', '24 кадр/с'], ['25', '25'], ['30', '30'], ['50', '50'], ['60', '60']], String(s.hz || 0), (v) => set({ hz: Number(v) }))),
+    scNote('Частоту монитора меняет Windows (Параметры → Дисплей); здесь она задаёт NDI-выход.'),
+  ]));
+  // Выходы
+  const rows = [];
+  if (main) rows.push(scNote(`Главный выход — монитор выше («Монитор для вывода»): ${outputOpen ? 'включён' : 'выключен'} (галочка в «Предпросмотре»). Ниже — дополнительные: тот же экран ещё на проектор, в окно или NDI.`));
+  // Включить/выключить вывод — только вручную (новый выход экран не включает)
+  if (!main && (s.outputs || []).length) rows.push(scRow('Вывод', scOutBtn(!!s.enabled, () => set({ enabled: !s.enabled }, true))));
+  rows.push(...scOutputRows(s.id, s.name, s.outputs || [], (list, re) => { s.outputs = list; set({}, re); }));
+  if (!(s.outputs || []).length && !main) rows.push(scNote('Выходов нет — экран виртуальный: его можно показывать в «Предпросмотре», в отдельном окне и внутри сцен (блок «Экран»).'));
+  rows.push(...scAlphaRows(!!s.alpha, (v) => set({ alpha: v }, true)));
+  out.push(scSec('Выходы', rows));
+  // Что идёт: слои и тема
+  const th = lib.themes || [];
+  const t = s.theme && typeof themeById === 'function' ? themeById(s.theme) : null;
+  const tpls = t && Array.isArray(t.templates) ? t.templates : [];
+  const cont = [
+    scRow('Слои', scLayerChecks(s.layers, (v) => set({ layers: v }, true))),
+    scNote('Какие слои программы идут на этот экран. Например, на трансляцию — только «Презентации» (текст без фона).'),
+    scRow('Тема', scSelect([['', 'Как у слайдов (обычные темы)'], ...th.map((x) => [x.id, x.name || 'Тема'])], s.theme || '', (v) => set({ theme: v, themeTpl: '' }, true))),
+    t && tpls.length > 1 ? scRow('Шаблон', scSelect([['', 'По виду: песня, Библия…'], ...tpls.map((x) => [x.id, x.name || 'Шаблон'])], s.themeTpl || '', (v) => set({ themeTpl: v }))) : null,
+    scNote(t ? `Все тексты на этом экране — песни, Библия, текстовые слайды — в оформлении темы «${t.name}», в её текстовом окне. Фото, видео и PowerPoint — как есть.`
+      : 'Своя тема экрана: все тексты программы (песни, Библия) встанут в текстовое окно этой темы — как «Look» в ProPresenter. Другие экраны не меняются.'),
+    t ? scRow('', scBtn('Открыть тему', 'theme', () => { const d = document.querySelector('dialog[open]'); if (d) d.close(); openThemeTab(t.id); })) : null,
+  ];
+  if (!main) cont.push(scRow('Размер', scSelect([['native', 'Своё разрешение (текст подстроится)'], ['contain', 'Вписать «Основной»'], ['cover', 'Заполнить «Основным» (обрезать)'], ['stretch', 'Растянуть «Основной»']], s.fit || 'native', (v) => set({ fit: v }))));
+  cont.push(scCheck('Рисунок поверх слайда', s.ink !== false, (v) => set({ ink: v })));
+  if (!main) cont.push(scCheck('Звук видео и источников', !!s.sound, (v) => set({ sound: v }), 'Обычно звук идёт только с «Основного» — иначе будет эхо'));
+  cont.push(...scTransRows(s.trans, (v, re) => set({ trans: v }, re), 'Как в программе'));
+  out.push(scSec('Что идёт на экран', cont.filter(Boolean)));
+  out.push(scSec('Поворот и отражение', [
+    scRow('Поворот', scSelect([['0', 'Нет'], ['90', '90° по часовой'], ['180', '180°'], ['270', '90° против часовой']], String(s.rotate || 0), (v) => set({ rotate: Number(v) }))),
+    scCheck('Отразить по горизонтали (обратная проекция)', s.flipX, (v) => set({ flipX: v })),
+    scCheck('Отразить по вертикали', s.flipY, (v) => set({ flipY: v })),
+    scNote('Поворот и отражение — только на выходах; превью здесь — без них.'),
+  ], false));
+  out.push(scFxSec(s, (re) => set({}, re)));
+  return out;
+}
+
+function scSceneInsp(sc) {
+  const set = (patch, re) => { Object.assign(sc, patch); scSceneTouch(re); };
+  const outSet = (patch, re) => { Object.assign(sc, patch); scSceneOutSet(sc, re); };
+  const has = (sc.outputs || []).length > 0;
+  const lay = scLayoutOf(sc);
+  return [
+    scTitle('scene', sc.name, scDirty(sc) ? 'есть правки' : 'сцена'),
+    scSec('Сцена', [
+      scRow('Название', scText(sc.name, (v) => v && set({ name: v }))),
+      ...scSizeRows(sc, (p, re) => set(p, re)),
+      scRow('Фон', scColor(sc.bg || '#000000', (v) => set({ bg: v }))),
+      ...scTransRows(sc.trans, (v, re) => set({ trans: v }, re)),
+      scNote('Макет сцены правится на холсте: элементы — кнопками над ним. На выходы идёт после «Применить» (Ctrl+Enter).'),
+    ]),
+    scSec('Выходы сцены', [
+      scNote('Куда идёт сцена: монитор или телевизор на сцене (HDMI, SDI), окно или NDI в сеть.'),
+      has ? scRow('Вывод', scOutBtn(!!sc.on, () => outSet({ on: !sc.on }, true))) : null,
+      ...scOutputRows(scSceneSid(sc), sc.name, sc.outputs || [], (list, re) => outSet({ outputs: list }, re)),
+      ...(has ? [
+        scRow('Частота', scSelect([['0', '30 кадр/с'], ['24', '24'], ['25', '25'], ['50', '50'], ['60', '60']], String(sc.hz || 0), (v) => outSet({ hz: Number(v) }, false))),
+        scCheck('Звук элементов сцены', !!sc.outSound, (v) => outSet({ outSound: v }, false), 'Обычно звук идёт только с «Основного» — иначе будет эхо'),
+      ] : []),
+      ...scAlphaRows(!!sc.alpha, (v) => outSet({ alpha: v }, true)),
+    ].filter(Boolean)),
+    scSec('Что идёт в сцену', [
+      scRow('Слои', scLayerChecks(sc.layers, (v) => outSet({ layers: v }, true))),
+      scNote('Какие слои программы видны в блоках «Программа» этой сцены (если у блока не выбраны свои).'),
+      scRow('Макет сейчас', scLayoutPick(sc)),
+      lay !== sc.id ? scNote(`На выходах сейчас макет сцены «${(scScene(lay) || {}).name}». Вернуть свой — выберите «Свой».`) : null,
+      scCheck('Менять макет по слайдам', !!sc.follow, (v) => { if (!v) delete scAuto[sc.id]; outSet({ follow: v }, true); },
+        'Слайд или презентация с выбранным макетом сцены (правая кнопка в ленте → «Макет сцены…») включает его на выходах этой сцены'),
+    ].filter(Boolean)),
+    scSec('Пресет сцены', [
+      scNote('Пресет — сохранённый макет (как тема, но для сцен): его можно применить к любой сцене. Список — слева, «Пресеты сцен».'),
+      scRow('', scBtn('Сохранить как пресет', 'presets', () => scSavePreset(sc))),
+      ...(scPresets().length ? [scRow('Применить', scSelect([['', '— выберите пресет —'], ...scPresets().map((p) => [p.id, p.name])], '', (v) => { const p = scPresets().find((x) => x.id === v); if (p) scApplyPreset(p, sc); }))] : []),
+      scRow('Файл', scBtn('Сохранить…', 'export', () => scExport(sc)), scBtn('Загрузить…', 'import', scImport)),
+    ], false),
+  ];
+}
+
+// Шрифт и вид текста: у надписи, часов и инфоблоков
+function scTextRows(it, set) {
+  const fonts = [...Object.entries(Scene.FONT_NAMES), ...Scene.fontsList().map((f) => [f.family, f.family])];
+  const info = !['text', 'clock'].includes(it.type);
+  const auto = info && it.auto !== false;
+  return [
+    scRow('Шрифт', scSelect(fonts.filter((f, i, a) => a.findIndex((x) => x[0] === f[0]) === i), it.font || 'segoe', (v) => set({ font: v }))),
+    scRow(auto ? 'Размер (наибольший)' : 'Размер', scNum(it.size || 64, (v) => set({ size: Math.max(4, v) }), { min: 4, max: 2000 }), scColor(it.color || '#ffffff', (v) => set({ color: v })),
+      scCheck('Ж', it.bold, (v) => set({ bold: v }), 'Жирный'), scCheck('К', it.italic, (v) => set({ italic: v }), 'Курсив')),
+    info ? scRow('Размер — сам', scCheck('', auto, (v) => set({ auto: v }, true), 'Длинный текст уменьшается, чтобы влезть в блок'),
+      auto ? scEl('span', 'te-sub', 'не меньше') : null, auto ? scNum(it.minSize || 14, (v) => set({ minSize: Math.max(4, v) }), { min: 4, max: 400 }) : null) : null,
+    scRow('Выравнивание', scSelect([['left', 'Слева'], ['center', 'По центру'], ['right', 'Справа']], it.align || 'center', (v) => set({ align: v })),
+      scSelect([['top', 'Сверху'], ['middle', 'Посередине'], ['bottom', 'Снизу']], it.valign || 'middle', (v) => set({ valign: v }))),
+    scRow('Насыщенность', scSelect([['', 'Как «Ж»'], ['300', 'Тонкий'], ['400', 'Обычный'], ['500', 'Средний'], ['600', 'Полужирный'], ['700', 'Жирный'], ['900', 'Очень жирный']], String(it.weight || ''), (v) => set({ weight: v ? Number(v) : 0 })),
+      scCheck('Ч', it.underline, (v) => set({ underline: v }), 'Подчёркнутый')),
+    scRow('Регистр', scSelect([['', 'Как написано'], ['upper', 'ВСЕ ЗАГЛАВНЫЕ'], ['lower', 'все строчные'], ['title', 'Каждое Слово С Заглавной']], it.case || '', (v) => set({ case: v }))),
+    scRow('Межстрочный', scRange(it.lineH || 1.2, 0.7, 2.5, 0.05, (v) => set({ lineH: v }), '', 1.2), scEl('span', 'te-sub', 'буквы'), scNum(it.spacing || 0, (v) => set({ spacing: v }), { min: -20, max: 100 })),
+    scRow('Подложка', scCheck('', !!it.bg, (v) => set({ bg: v ? '#000000' : '' }, true)), it.bg ? scColor(it.bg, (v) => set({ bg: v })) : null,
+      scEl('span', 'te-sub', 'отступ'), scNum(it.pad || 0, (v) => set({ pad: Math.max(0, v) }), { min: 0, max: 400 }),
+      it.bg ? scEl('span', 'te-sub', 'скругл.') : null, it.bg ? scNum(it.bgR || 0, (v) => set({ bgR: Math.max(0, v) }), { min: 0, max: 400 }) : null),
+    scRow('Обводка', scNum(it.stroke || 0, (v) => set({ stroke: Math.max(0, v) }), { min: 0, max: 40 }), scColor(it.strokeC || '#000000', (v) => set({ strokeC: v }))),
+    scRow('Тень текста', scCheck('', it.tshadow, (v) => set({ tshadow: v }, true)),
+      it.tshadow ? scNum(it.tshadowB != null ? it.tshadowB : 8, (v) => set({ tshadowB: Math.max(0, v) }), { min: 0, max: 80 }) : null,
+      it.tshadow ? scColor(it.tshadowC || '#000000', (v) => set({ tshadowC: v })) : null),
+  ];
+}
+
+// Настройки инфоблоков сценического экрана
+function scInfoRows(it, set) {
+  const out = [];
+  const st = typeof stApi === 'object' ? stApi : null; // stage.js: таймеры, сообщение, запись
+  const time = (over) => [
+    scRow('Вид', scSelect([['auto', '05:00 или 1:05:00'], ['ms', 'мм:сс (65:00)'], ['hms', 'чч:мм:сс']], it.fmt || 'auto', (v) => set({ fmt: v }))),
+    scRow('Подпись', scText(it.prefix, (v) => set({ prefix: v }), 'например: До начала')),
+    scRow('Предупредить за', scNum(it.warn != null ? it.warn : 60, (v) => set({ warn: Math.max(0, v) }), { min: 0, max: 36000 }), scEl('span', 'te-sub', 'с'), scColor(it.warnC || '#f5a524', (v) => set({ warnC: v }))),
+    scRow('Время вышло', scColor(it.overC || '#ff4d4f', (v) => set({ overC: v })), over ? scCheck('Считать дальше (−0:12)', it.over !== false, (v) => set({ over: v })) : null),
+  ];
+  switch (it.type) {
+    case 'curText': case 'nextText':
+      out.push(scCheck('Подпись части сверху (Куплет 1, Припев)', !!it.label, (v) => set({ label: v })));
+      out.push(scNote(it.type === 'curText' ? 'Текст слайда, который сейчас на экране: песня, стих (со ссылкой), свой слайд.' : 'Текст следующего слайда плейлиста.'));
+      break;
+    case 'notes': out.push(scNote('Заметка к слайду: правой кнопкой по слайду в ленте → «Заметка к слайду…». Зрители её не видят.')); break;
+    case 'opnote': out.push(scNote('Заметка к презентации — «?» у пункта в «Содержании». Видна, пока идут слайды этой презентации.')); break;
+    case 'msg':
+      out.push(scCheck('Мигать, когда приходит новое', it.blink !== false, (v) => set({ blink: v })));
+      out.push(scNote('Сообщение пишет оператор: кнопка «Сцена» под предпросмотром или макрос «Сообщение на сцену».'));
+      if (st) out.push(scRow('', scBtn('Написать…', 'message', async () => { const t = await askName('Сообщение для сцены', st.msg()); if (t != null) st.setMsg(t); }), scBtn('Убрать', '', () => st.setMsg(''))));
+      break;
+    case 'plist': out.push(scRow('Показывать', scSelect([['both', 'Сейчас и далее'], ['cur', 'Только что сейчас'], ['next', 'Только что далее']], it.show || 'both', (v) => set({ show: v })))); break;
+    case 'count':
+      out.push(scRow('Вид', scSelect([['nt', '3 / 12'], ['n', 'только номер']], it.fmt === 'n' ? 'n' : 'nt', (v) => set({ fmt: v }))));
+      out.push(scRow('Подпись', scText(it.prefix, (v) => set({ prefix: v }), 'например: Слайд')));
+      break;
+    case 'chords':
+      out.push(scRow('Цвет аккордов', scColor(it.chordC || '#ffd84a', (v) => set({ chordC: v }))));
+      out.push(scCheck('И следующий слайд (бледнее)', !!it.nextToo, (v) => set({ nextToo: v })));
+      out.push(scNote('Аккорды — в окне песни, поле «Аккорды для сцены»: [Am]Слава [G]Богу или аккорды строкой над словами. Из ChordPro подставляются сами.'));
+      break;
+    case 'timer': {
+      const list = st ? st.timers() : [];
+      out.push(scRow('Таймер', list.length ? scSelect(list.map((t) => [t.id, t.name]), it.ref || '', (v) => set({ ref: v }, true)) : scEl('span', 'te-sub', 'таймеров нет'),
+        st ? scBtn('＋', '', () => set({ ref: st.newTimer() }, true), 'Новый таймер') : null));
+      if (st && it.ref && list.some((t) => t.id === it.ref)) out.push(scRow('', scBtn('▶ ❚❚', '', () => st.toggle(it.ref), 'Пуск / пауза'), scBtn('Сброс', '', () => st.reset(it.ref), 'Сначала'), scBtn('Время…', '', () => st.editTimer(it.ref), 'Сколько минут отсчитывать')));
+      out.push(...time(true));
+      out.push(scNote('Таймерами управляет оператор: кнопка «Сцена» под предпросмотром, макрос «Таймер».'));
+      break;
+    }
+    case 'countdown': {
+      const inp = scEl('input');
+      inp.type = 'time';
+      inp.value = /^\d{1,2}:\d{2}$/.test(it.to || '') ? String(it.to).padStart(5, '0') : '10:00';
+      inp.addEventListener('change', () => inp.value && set({ to: inp.value }));
+      out.push(scRow('До времени', inp));
+      out.push(...time(true));
+      break;
+    }
+    case 'vcd':
+      out.push(scRow('Показывать', scSelect([['left', 'Сколько осталось'], ['elapsed', 'Сколько прошло']], it.show === 'elapsed' ? 'elapsed' : 'left', (v) => set({ show: v }))));
+      out.push(...time(false));
+      out.push(scNote('Видео, которое сейчас на экране (слой «Медиа» и другие). На паузе цифры бледнее.'));
+      break;
+    case 'cap':
+      out.push(scNote('Запись и трансляцию программа сама не ведёт (это OBS, vMix…) — отмечает оператор кнопками в панели «Сцена». Ещё показывается, сколько открыто NDI-выходов.'));
+      if (st) out.push(scRow('', scBtn(st.cap().rec ? '■ Запись идёт' : '● Запись', '', () => { st.toggleCap('rec'); scRenderInsp(); }), scBtn(st.cap().live ? '■ Эфир идёт' : '● Эфир', '', () => { st.toggleCap('live'); scRenderInsp(); })));
+      break;
+    default: break;
+  }
+  out.push(scCheck('Скрывать, когда пусто', !!it.hideEmpty, (v) => set({ hideEmpty: v }), 'Нет данных — блока (и его подложки) не видно'));
+  return out;
+}
+
+// Выделено несколько: выравнивание, общие прозрачность, видимость, закрепление; текстовым — общий шрифт и цвет
+function scMultiInsp(sel, sc) {
+  const all = (patch, re) => { sel.forEach((x) => Object.assign(x, patch)); scSceneTouch(re); };
+  const ab = (how, icon, title, scene) => scBtn('', icon, () => scAlign(how, scene), title, 'icon-only');
+  const texty = sel.filter((x) => SC_TEXTY.includes(x.type));
+  const shapes = sel.filter((x) => SC_ITEMS[x.type].shape);
+  const fonts = [...Object.entries(Scene.FONT_NAMES), ...Scene.fontsList().map((f) => [f.family, f.family])].filter((f, i, a) => a.findIndex((x) => x[0] === f[0]) === i);
+  const out = [scTitle('group', `Выделено: ${sel.length}`, 'Ctrl/Shift — добавить или убрать')];
+  out.push(scSec('Выровнять', [
+    scRow('Друг по другу', ab('l', 'alignL', 'По левому краю'), ab('c', 'alignC', 'По центру ↔'), ab('r', 'alignR', 'По правому краю'),
+      ab('t', 'alignT', 'По верху'), ab('m', 'alignM', 'По середине ↕'), ab('b', 'alignB', 'По низу')),
+    scRow('По сцене', ab('c', 'alignC', 'По центру сцены ↔', true), ab('m', 'alignM', 'По середине сцены ↕', true)),
+    scRow('Распределить', ab('dh', 'distH', 'Равные промежутки по горизонтали (от трёх)'), ab('dv', 'distV', 'Равные промежутки по вертикали (от трёх)'),
+      ab('sameW', 'sameW', 'Одинаковая ширина — как у главного (выделен первым)')),
+  ]));
+  out.push(scSec('Вид', [
+    scRow('Прозрачность', scRange(sel[0].opacity != null ? sel[0].opacity : 100, 0, 100, 1, (v) => all({ opacity: v }), '%', 100)),
+    scRow('', scBtn('Скрыть', 'eye', () => all({ hidden: true }, true)), scBtn('Показать', 'eye', () => all({ hidden: false }, true)),
+      scBtn('Закрепить', 'lock', () => all({ locked: true }, true)), scBtn('Открепить', 'lock', () => all({ locked: false }, true))),
+  ]));
+  if (texty.length) {
+    const t0 = texty[0];
+    const allT = (patch, re) => { texty.forEach((x) => Object.assign(x, patch)); scSceneTouch(re); };
+    out.push(scSec(`Текст (${texty.length})`, [
+      scRow('Шрифт', scSelect(fonts, t0.font || 'segoe', (v) => allT({ font: v }))),
+      scRow('Цвет', scColor(t0.color || '#ffffff', (v) => allT({ color: v })), scCheck('Ж', t0.bold, (v) => allT({ bold: v })), scCheck('К', t0.italic, (v) => allT({ italic: v }))),
+      scRow('Выравнивание', scSelect([['left', 'Слева'], ['center', 'По центру'], ['right', 'Справа']], t0.align || 'center', (v) => allT({ align: v }))),
+    ]));
+  }
+  if (shapes.length) out.push(scSec(`Фигуры (${shapes.length})`, [scRow('Цвет', scColor(shapes[0].fill || '#3e8bff', (v) => { shapes.forEach((x) => { x.fill = v; }); scSceneTouch(false); }))]));
+  out.push(scSec('Действия', [scRow('', scBtn('Копировать', 'copy', scCopySel), scBtn('Дублировать', 'copy', scDupSel), scBtn('Удалить', 'trash', scDeleteSel))]));
+  return out;
+}
+
+function scItemInsp(it, sc) {
+  const set = (patch, re) => scItemSet(it, patch, re);
+  const out = [scTitle(SC_ITEMS[it.type].icon, it.name || SC_ITEMS[it.type].name, SC_ITEMS[it.type].name)];
+  const c = [scRow('Название', scText(it.name, (v) => set({ name: v }, true), SC_ITEMS[it.type].name))];
+  if (it.type === 'screen') {
+    // Любой экран или другая сцена (как она идёт на свои выходы)
+    c.push(scRow('Показывает', scSelect([...lib.screens.map((s) => [s.id, 'Экран: ' + s.name]), ...lib.scenes.filter((x) => x !== sc).map((x) => [scSceneSid(x), 'Сцена: ' + x.name])], it.ref, (v) => set({ ref: v }, true))));
+  } else if (it.type === 'program') {
+    c.push(scRow('Слои', scLayerChecks(it.layers, (v) => set({ layers: v }, true))));
+    c.push(scCheck('Рисунок поверх слайда', it.ink !== false, (v) => set({ ink: v })));
+    c.push(scCheck('Звук', !!it.sound, (v) => set({ sound: v }), 'Если экран со звуком'));
+  } else if (it.type === 'cur' || it.type === 'next') {
+    c.push(scNote(it.type === 'cur' ? 'Слайд из слоя «Презентации», который сейчас на экране.' : 'Следующий слайд рабочего плейлиста (после того, что на экране).'));
+    c.push(scCheck('Только текст — крупно, размер подбирается сам', !!it.plain, (v) => set(v ? { plain: true, size: it.size || 72, color: it.color || '#ffffff', auto: true, minSize: it.minSize || 14 } : { plain: false }, true),
+      'Без фона и оформления темы: длинный текст уменьшается, чтобы влезть'));
+  } else if (it.type === 'only') {
+    c.push(scNote('Оператор отправляет сюда слайд правой кнопкой в ленте → «Только на сцену». Зрители этого не видят. Убрать — кнопка «Сцена» под предпросмотром.'));
+  } else if (SC_ITEMS[it.type] && SC_ITEMS[it.type].info) {
+    c.push(...scInfoRows(it, set));
+  } else if (it.type === 'media') {
+    c.push(scRow('Файл', scEl('span', 'te-sub sc-file', it.url ? decodeURIComponent(it.url.split('/').pop()) : 'не выбран'), scBtn('Выбрать…', '', () => scPickMedia(it))));
+    if (it.url && !/\.(jpe?g|png|gif|webp|bmp|svg)$/i.test(it.url)) {
+      c.push(scCheck('По кругу', it.loop !== false, (v) => set({ loop: v })));
+      c.push(scCheck('Звук', !!it.sound, (v) => set({ sound: v })));
+    }
+  } else if (it.type === 'source') {
+    c.push(scRow('Источник', scEl('span', 'te-sub sc-file', it.src ? it.src.label : 'не выбран'), scBtn('Выбрать…', '', (e) => scPickSource(e, (src) => set({ src, name: it.name || src.label }, true)))));
+  } else if (it.type === 'text' || it.type === 'clock') {
+    if (it.type === 'text') {
+      const ta = scEl('textarea');
+      ta.rows = 3;
+      ta.value = it.text || '';
+      ta.addEventListener('input', () => set({ text: ta.value }));
+      c.push(ta);
+    } else c.push(scRow('Показывать', scSelect([['hm', 'Часы:минуты'], ['hms', 'Часы:минуты:секунды'], ['date', 'Дату']], it.fmt || 'hm', (v) => set({ fmt: v }))));
+  } else if (SC_ITEMS[it.type].shape) {
+    c.push(scRow('Фигура', scSelect(Object.entries(SC_ITEMS).filter(([, x]) => x.shape).map(([k, x]) => [k, x.name]), it.type, (v) => set({ type: v }, true))));
+    c.push(scRow('Цвет', scColor(it.fill || '#3e8bff', (v) => set({ fill: v })), scCheck('Градиент', !!it.fill2, (v) => set({ fill2: v ? '#000000' : '' }, true))));
+    if (it.fill2) c.push(scRow('Второй цвет', scColor(it.fill2, (v) => set({ fill2: v })), scNum(it.fillA != null ? it.fillA : 180, (v) => set({ fillA: v }), { min: 0, max: 360 }), scEl('span', 'te-sub', '°')));
+    if (it.type === 'line') c.push(scNote('Толщина линии — высота элемента. Наклон — поворот (кружок над рамкой).'));
+  }
+  out.push(scSec('Содержимое', c));
+  if (SC_TEXTY.includes(it.type) || ((it.type === 'cur' || it.type === 'next') && it.plain)) out.push(scSec('Текст', scTextRows(it, set)));
+  out.push(scSec('Положение и размер', [
+    scRow('X, Y', scNum(it.x, (v) => set({ x: v })), scNum(it.y, (v) => set({ y: v }))),
+    scRow('Ширина, высота', scNum(it.w, (v) => set({ w: Math.max(1, v) }), { min: 1 }), scNum(it.h, (v) => set({ h: Math.max(1, v) }), { min: 1 })),
+    scRow('Поворот', scRange(it.rot || 0, -180, 180, 1, (v) => set({ rot: v }), '°', 0)),
+    scRow('', scCheck('Отразить ↔', it.flipX, (v) => set({ flipX: v })), scCheck('↕', it.flipY, (v) => set({ flipY: v }))),
+    scRow('', scBtn('Во весь экран', '', () => set({ x: 0, y: 0, w: sc.w, h: sc.h, rot: 0 }, true)), scBtn('По центру', '', () => set({ x: Math.round((sc.w - it.w) / 2), y: Math.round((sc.h - it.h) / 2) }, true))),
+  ]));
+  if (SC_NATIVE.includes(it.type) && !it.plain) {
+    const cr = it.crop || {};
+    const cset = (k, v) => { scSub(it, 'crop', k, Math.max(0, Math.min(45, v))); scSceneTouch(false); };
+    out.push(scSec('Вписывание и обрезка', [
+      scRow('Вписать', scSelect([['contain', 'Целиком (поля)'], ['cover', 'Заполнить (обрезать)'], ['stretch', 'Растянуть']], it.fit || 'contain', (v) => set({ fit: v }))),
+      scRow('Слева, справа', scNum(cr.l || 0, (v) => cset('l', v), { min: 0, max: 45 }), scNum(cr.r || 0, (v) => cset('r', v), { min: 0, max: 45 }), scEl('span', 'te-sub', '%')),
+      scRow('Сверху, снизу', scNum(cr.t || 0, (v) => cset('t', v), { min: 0, max: 45 }), scNum(cr.b || 0, (v) => cset('b', v), { min: 0, max: 45 }), scEl('span', 'te-sub', '%')),
+      scRow('', scBtn('Без обрезки', '', () => set({ crop: {} }, true))),
+    ], !!(cr.l || cr.r || cr.t || cr.b)));
+  }
+  const sh = it.shadow || {};
+  const g = it.grad || {};
+  const bd = it.border || {};
+  out.push(scSec('Вид', [
+    scRow('Прозрачность', scRange(it.opacity != null ? it.opacity : 100, 0, 100, 1, (v) => set({ opacity: v }), '%', 100)),
+    scRow('Наложение', scSelect(Compose.BLENDS.map((b) => [b, ({ normal: 'Обычное', multiply: 'Умножение', screen: 'Экран', overlay: 'Перекрытие', darken: 'Темнее', lighten: 'Светлее', difference: 'Разница', 'soft-light': 'Мягкий свет', 'hard-light': 'Жёсткий свет', luminosity: 'Яркость', color: 'Цветность' })[b] || b]), it.blend || 'normal', (v) => set({ blend: v }))),
+    scRow('Маска', scSelect([['none', 'Нет'], ['ellipse', 'Круг / эллипс'], ['fade', 'Мягкие края']], it.mask || 'none', (v) => set({ mask: v }, true))),
+    it.mask === 'fade' ? scRow('Ширина края', scRange(it.feather || 12, 1, 50, 1, (v) => set({ feather: v }), '%', 12)) : scRow('Скругление', scNum(it.radius || 0, (v) => set({ radius: Math.max(0, v) }), { min: 0, max: 2000 })),
+    scRow('Рамка', scNum(bd.w || 0, (v) => { scSub(it, 'border', 'w', Math.max(0, v)); scSceneTouch(false); }, { min: 0, max: 200 }), scColor(bd.c || '#ffffff', (v) => { scSub(it, 'border', 'c', v); scSceneTouch(false); })),
+    scRow('Тень', scNum(sh.blur || 0, (v) => { scSub(it, 'shadow', 'blur', Math.max(0, v)); scSceneTouch(false); }, { min: 0, max: 300 }),
+      scNum(sh.x || 0, (v) => { scSub(it, 'shadow', 'x', v); scSceneTouch(false); }), scNum(sh.y || 0, (v) => { scSub(it, 'shadow', 'y', v); scSceneTouch(false); }),
+      scColor(sh.c || '#000000', (v) => { scSub(it, 'shadow', 'c', v); scSceneTouch(false); })),
+    scNote('Тень: размытие, сдвиг X, Y, цвет.'),
+    scRow('Градиент поверх', scCheck('', !!g.on, (v) => { scSub(it, 'grad', 'on', v); scSceneTouch(true); })),
+    g.on ? scRow('Цвета, угол', scColor(g.c1 || '#000000', (v) => { scSub(it, 'grad', 'c1', v); scSceneTouch(false); }), scColor(g.c2 || '#000000', (v) => { scSub(it, 'grad', 'c2', v); scSceneTouch(false); }),
+      scNum(g.a != null ? g.a : 180, (v) => { scSub(it, 'grad', 'a', v); scSceneTouch(false); }, { min: 0, max: 360 })) : null,
+    g.on ? scRow('Сила', scRange(g.o != null ? g.o : 100, 0, 100, 1, (v) => { scSub(it, 'grad', 'o', v); scSceneTouch(false); }, '%', 100)) : null,
+  ], false));
+  out.push(scFxSec(it, (re) => scSceneTouch(re)));
+  return out;
+}

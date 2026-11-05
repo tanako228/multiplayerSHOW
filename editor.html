@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src file: data: blob:; media-src file:; style-src 'self' 'unsafe-inline'; font-src 'self' file: data:">
+  <title>Редактор — MP Show</title>
+  <style>
+    /* Палитра: 051822 · 2D383E · 7C5841 · AA7452 · 969A9E · D4C9C7 */
+    :root {
+      --ink: #051822; --panel: #0d212b; --field: #12272f; --line: #2d383e; --text: #d4c9c7; --muted: #969a9e;
+      --live: #aa7452; --live-ink: #051822; --brown: #7c5841; --live-soft: color-mix(in srgb, var(--live) 16%, transparent); --warn: #e07a6a;
+      font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+      color-scheme: dark;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; background: var(--ink); color: var(--text); }
+    body { display: flex; flex-direction: column; font-size: 14px; }
+    select, button, input[type=text], input[type=number], textarea {
+      font: inherit; color: var(--text); background: var(--field); border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px;
+    }
+    button { cursor: pointer; }
+    button:hover { border-color: var(--muted); }
+    button:disabled { opacity: .45; cursor: default; }
+    button.primary { background: var(--live); color: var(--live-ink); border-color: var(--live); font-weight: 600; }
+    button[aria-pressed=true] { border-color: var(--live); color: var(--live); background: var(--live-soft); }
+    button:focus-visible, select:focus-visible, input:focus-visible, textarea:focus-visible { outline: 2px solid var(--live); outline-offset: 1px; }
+    input[type=range] { accent-color: var(--live); }
+    input[type=color] { width: 44px; height: 30px; padding: 0; border: 1px solid var(--line); border-radius: 6px; background: none; }
+    label { display: flex; align-items: center; gap: 8px; color: var(--muted); }
+    [hidden] { display: none !important; }
+
+    .top { display: flex; align-items: center; gap: 4px; padding: 0 14px; background: var(--panel); border-bottom: 1px solid var(--line); }
+    .tab { background: none; border: 0; border-bottom: 2px solid transparent; border-radius: 0; padding: 12px 14px; color: var(--muted); }
+    .tab[aria-selected=true] { color: var(--text); border-bottom-color: var(--live); }
+    /* Иконки Multi Play (icons.js) */
+    [data-icon] { display: inline-flex; align-items: center; gap: 7px; }
+    [data-icon][hidden] { display: none; }
+    .mp-icon { width: 20px; height: 20px; flex: none; display: inline-flex; }
+    .mp-icon svg { width: 100%; height: 100%; display: block; filter: drop-shadow(0 1px 1.5px rgba(0, 0, 0, .35)); }
+    .tab[aria-selected=false] .mp-icon { filter: saturate(.45) opacity(.75); }
+    .spacer { flex: 1; }
+    #status { color: var(--muted); font-size: 12px; margin-right: 8px; }
+    #status.dirty { color: var(--live); }
+
+    .view { flex: 1; min-height: 0; display: flex; }
+    .col-left { width: 220px; flex: none; border-right: 1px solid var(--line); background: var(--panel); display: flex; flex-direction: column; min-height: 0; }
+    .col-left .list { flex: 1; overflow-y: auto; padding: 10px; display: flex; flex-direction: column; gap: 8px; }
+    .col-left .acts { display: flex; flex-wrap: wrap; gap: 4px; padding: 8px 10px; border-top: 1px solid var(--line); }
+    .col-left .acts button { padding: 4px 8px; font-size: 12px; }
+    .center { flex: 1; min-width: 0; display: flex; flex-direction: column; min-height: 0; }
+    .canvas-wrap { flex: 1; min-height: 0; position: relative; margin: 14px; }
+    .col-right { width: 320px; flex: none; border-left: 1px solid var(--line); background: var(--panel); overflow-y: auto; padding: 14px; display: flex; flex-direction: column; gap: 14px; }
+    .col-right h3 { margin: 0 0 8px; font-size: 13px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
+    .row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+    .row > span:first-child { flex: 1; color: var(--muted); }
+    .row select, .row input[type=text] { width: 170px; }
+    .row input[type=number] { width: 80px; }
+    .row input[type=range] { width: 130px; }
+    .row output { min-width: 38px; text-align: right; color: var(--muted); font-size: 12px; }
+    .btns { display: flex; gap: 4px; flex-wrap: wrap; }
+    .btns button { padding: 5px 10px; min-width: 34px; }
+    .hint { color: var(--muted); font-size: 12px; line-height: 1.4; margin: 0; }
+    textarea { width: 100%; resize: vertical; line-height: 1.45; }
+    .group { border-top: 1px solid var(--line); padding-top: 12px; }
+    .empty-note { margin: auto; max-width: 420px; text-align: center; color: var(--muted); line-height: 1.6; padding: 30px; border: 2px dashed var(--line); border-radius: 10px; }
+
+    /* Сцена в редакторе: 1920×1080 (или другое), уменьшенная под окно */
+    .stage-host { position: absolute; overflow: hidden; background: #000; box-shadow: 0 0 0 1px var(--line); }
+    .stage { position: absolute; left: 0; top: 0; overflow: hidden; background: #000; transform-origin: 0 0; }
+    .overlay { position: absolute; inset: 0; }
+    .box { position: absolute; border: 1px dashed rgba(212, 201, 199, .35); cursor: move; }
+    .box:hover { border-color: rgba(212, 201, 199, .8); }
+    .box.sel { border: 1px solid var(--live); box-shadow: 0 0 0 1px var(--live); }
+    .handle { position: absolute; width: 12px; height: 12px; background: var(--live); border: 2px solid var(--ink); border-radius: 3px; }
+    .handle.nw { left: -7px; top: -7px; cursor: nwse-resize; } .handle.ne { right: -7px; top: -7px; cursor: nesw-resize; }
+    .handle.sw { left: -7px; bottom: -7px; cursor: nesw-resize; } .handle.se { right: -7px; bottom: -7px; cursor: nwse-resize; }
+    .canvas-wrap.drop .stage-host { box-shadow: 0 0 0 3px var(--live); }
+
+    .thumb { position: relative; aspect-ratio: 16 / 9; border: 2px solid var(--line); border-radius: 6px; overflow: hidden; cursor: pointer; background: #000; flex: none; }
+    .thumb.sel { border-color: var(--live); }
+    .thumb .n { position: absolute; left: 0; top: 0; background: rgba(5, 24, 34, .85); color: var(--muted); font-size: 10px; padding: 1px 6px; border-radius: 0 0 5px 0; z-index: 2; }
+    .theme-item { display: flex; flex-direction: column; gap: 4px; background: none; border: 2px solid var(--line); border-radius: 8px; padding: 0 0 6px; text-align: left; overflow: hidden; }
+    .theme-item.sel { border-color: var(--live); }
+    .theme-item .thumb { border: 0; border-radius: 0; }
+    .theme-item span { padding: 0 8px; font-size: 13px; }
+
+    /* Картинка */
+    #imgHost { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; overflow: hidden;
+      background: repeating-conic-gradient(#0d212b 0 25%, #12272f 0 50%) 0 0 / 22px 22px; border-radius: 6px; }
+    #imgCanvas { max-width: 100%; max-height: 100%; touch-action: none; }
+    .thumb.multi { outline: 2px solid var(--text); outline-offset: 1px; }
+    .thumb .k { position: absolute; right: 0; bottom: 0; background: rgba(5, 24, 34, .85); color: var(--live); font-size: 10px; padding: 1px 6px; border-radius: 5px 0 0 0; z-index: 2; }
+    .list.drop { box-shadow: inset 0 0 0 2px var(--live); }
+    .ctx-menu { position: fixed; z-index: 1000; min-width: 220px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 4px; box-shadow: 0 8px 24px rgba(0, 0, 0, .45); }
+    .ctx-menu button { display: flex; width: 100%; justify-content: space-between; gap: 18px; background: none; border: 0; border-radius: 5px; padding: 7px 10px; text-align: left; }
+    .ctx-menu button:hover { background: var(--live-soft); color: var(--live); }
+    .ctx-menu .ctx-key { color: var(--muted); font-size: 12px; }
+    .ctx-sep { height: 1px; background: var(--line); margin: 4px 6px; }
+    #cropBox { position: absolute; border: 2px dashed var(--live); background: rgba(170, 116, 82, .12); pointer-events: none; }
+  </style>
+</head>
+<body>
+  <div class="top" role="tablist">
+    <button class="tab" role="tab" data-view="slides" data-icon="slides" aria-selected="true">Слайды</button>
+    <button class="tab" role="tab" data-view="image" data-icon="image" aria-selected="false">Картинка</button>
+    <span class="spacer"></span>
+    <span id="status"></span>
+    <button id="save" class="primary" title="Сохранить (Ctrl+S)">Сохранить</button>
+  </div>
+
+  <!-- ===== Слайды ===== -->
+  <section class="view" data-view="slides">
+    <div class="col-left">
+      <div class="list" id="slideList"></div>
+      <div class="acts">
+        <button id="slAdd" title="Новый слайд: текст, свой, картинка, видео или музыка">＋ Слайд ▾</button>
+        <button id="slDup" title="Копия слайда">Копия</button>
+        <button id="slUp" title="Выше">↑</button>
+        <button id="slDown" title="Ниже">↓</button>
+        <button id="slDel" title="Удалить слайд">Удалить</button>
+      </div>
+    </div>
+    <div class="center">
+      <div class="canvas-wrap" id="slWrap">
+        <div class="stage-host" id="slHost"><div class="stage" id="slStage"></div><div class="overlay" id="slOverlay"></div></div>
+        <div class="empty-note" id="slEmpty">Откройте песню или свои слайды кнопкой ✎ в плейлисте на вкладке «Экран», или создайте их там кнопкой «＋ Слайды».</div>
+      </div>
+    </div>
+    <div class="col-right" id="slProps">
+      <div>
+        <h3>Пункт</h3>
+        <div class="row"><span>Название</span><input type="text" id="itName"></div>
+        <div class="row"><span>Тема пункта</span><select id="itTheme" class="theme-sel"></select></div>
+      </div>
+      <div class="group">
+        <h3>Слайд</h3>
+        <div class="row"><span>Подпись</span><input type="text" id="slLabel" placeholder="Куплет 1, Припев…"></div>
+        <div class="row"><span>Тема слайда</span><select id="slTheme" class="theme-sel"></select></div>
+        <div class="row" id="slTplRow"><span>Шаблон темы</span><select id="slTpl"></select></div>
+        <div class="row"><span>Вид слайда</span><b id="slKind" style="color:var(--text)"></b></div>
+        <div id="songProps">
+          <div class="row" id="slRefRow"><span>Ссылка</span><input type="text" id="slRef" placeholder="Ин 3:16"></div>
+          <textarea id="slText" rows="9" placeholder="Текст слайда"></textarea>
+          <p class="hint">Шрифт, цвет, фон, подложка и расположение текста задаются темой и её шаблоном. Чтобы расставить текст и картинки вручную, сделайте его своим слайдом:</p>
+          <div class="btns" style="margin-top:6px"><button id="slToCustom">Превратить в свой слайд</button></div>
+        </div>
+        <div id="mediaProps">
+          <p class="hint" id="slFile" style="margin-bottom:8px;word-break:break-all"></p>
+          <div class="row" id="slFitRow"><span>На экране</span><select id="slFit">
+            <option value="">как в настройках</option><option value="contain">вписать целиком</option><option value="cover">заполнить (обрезать края)</option>
+            <option value="fill">растянуть</option><option value="none">реальный размер</option>
+          </select></div>
+          <div class="btns">
+            <button id="slReplace">Заменить файл…</button>
+            <button id="slEditImage">Изменить картинку</button>
+          </div>
+          <p class="hint" id="slAudioHint" style="margin-top:8px">Музыкальный слайд не меняет экран: когда до него доходят стрелками или щёлкают по нему, включается музыка.</p>
+        </div>
+      </div>
+      <div class="group" id="customProps">
+        <h3>Добавить на слайд</h3>
+        <div class="btns">
+          <button id="addText">＋ Текст</button>
+          <button id="addImage">＋ Картинка</button>
+        </div>
+        <p class="hint" style="margin-top:8px">Картинку можно перетащить на слайд из Проводника или медиапула. Двигайте блоки мышью, угол — размер. Delete — удалить, стрелки — сдвинуть.</p>
+      </div>
+      <div class="group" id="elProps">
+        <h3>Выбранный блок</h3>
+        <div id="elText">
+          <textarea id="elValue" rows="4" placeholder="Текст"></textarea>
+          <div class="row" style="margin-top:8px"><span>Шрифт</span><select id="elFont" class="font-sel"></select></div>
+          <div class="row"><span>Размер</span><input type="number" id="elSize" min="1" max="60" step="0.5"><output>% выс.</output></div>
+          <div class="row"><span>Цвет</span><input type="color" id="elColor"></div>
+          <div class="row"><span>Начертание</span><span class="btns">
+            <button id="elBold" title="Жирный"><b>Ж</b></button>
+            <button id="elItalic" title="Курсив"><i>К</i></button>
+            <button id="elShadow" title="Тень">Тень</button>
+            <button id="elUpper" title="Заглавные">АА</button>
+          </span></div>
+          <div class="row"><span>По ширине</span><span class="btns" id="elAlign">
+            <button data-v="left" title="Слева">⇤</button><button data-v="center" title="По центру">↔</button><button data-v="right" title="Справа">⇥</button>
+          </span></div>
+          <div class="row"><span>По высоте</span><span class="btns" id="elValign">
+            <button data-v="top" title="Сверху">⤒</button><button data-v="middle" title="По центру">↕</button><button data-v="bottom" title="Снизу">⤓</button>
+          </span></div>
+          <div class="row"><span>Подложка</span><label><input type="checkbox" id="elBgOn"> есть</label><input type="color" id="elBg"></div>
+        </div>
+        <div id="elImage">
+          <div class="row"><span>Вписать</span><select id="elFit"><option value="contain">целиком</option><option value="cover">заполнить</option></select></div>
+          <div class="row"><span>Скругление</span><input type="range" id="elRadius" data-def="0" min="0" max="10" step="0.5"><output id="elRadiusVal"></output></div>
+        </div>
+        <div class="row"><span>Прозрачность</span><input type="range" id="elOpacity" data-def="100" min="10" max="100" step="5"><output id="elOpacityVal"></output></div>
+        <div class="row"><span>Поворот</span><input type="range" id="elRot" data-def="0" min="-180" max="180" step="1"><output id="elRotVal"></output></div>
+        <div class="btns">
+          <button id="elFront" title="На передний план">Вперёд</button>
+          <button id="elBack" title="На задний план">Назад</button>
+          <button id="elDup" title="Копия (Ctrl+D)">Копия</button>
+          <button id="elDel" title="Удалить (Delete)">Удалить</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== Картинка ===== -->
+  <section class="view" data-view="image" hidden>
+    <div class="center">
+      <div class="canvas-wrap">
+        <div id="imgHost"><canvas id="imgCanvas" width="10" height="10"></canvas><div id="cropBox" hidden></div></div>
+        <div class="empty-note" id="imgEmpty" style="position:absolute;inset:0;margin:auto;height:fit-content">Откройте картинку кнопкой «Открыть…» или кнопкой ✎ у картинки в программе.</div>
+      </div>
+    </div>
+    <div class="col-right">
+      <div>
+        <h3>Файл</h3>
+        <div class="btns">
+          <button id="imOpen">Открыть…</button>
+          <button id="imUndo" title="Отменить (Ctrl+Z)">↶ Отменить</button>
+          <button id="imSaveAs" title="Сохранить копию в любую папку">Сохранить как…</button>
+        </div>
+        <p class="hint" id="imInfo" style="margin-top:8px"></p>
+      </div>
+      <div class="group">
+        <h3>Инструмент</h3>
+        <div class="btns" id="imTools">
+          <button data-tool="none" title="Без инструмента">☐</button>
+          <button data-tool="crop" title="Кадрировать: выделите область мышью">✂ Кадр</button>
+          <button data-tool="brush" title="Кисть">✎ Кисть</button>
+          <button data-tool="text" title="Текст: щёлкните по картинке">T Текст</button>
+        </div>
+        <div id="imCropOpts" class="btns" style="margin-top:8px"><button id="imCropApply" class="primary">Обрезать</button><button id="imCropCancel">Отмена</button></div>
+        <div id="imBrushOpts" style="margin-top:8px">
+          <div class="row"><span>Цвет</span><input type="color" id="imBrushColor" value="#ff3b30"></div>
+          <div class="row"><span>Толщина</span><input type="range" id="imBrushSize" min="1" max="120" value="12"><output id="imBrushSizeVal"></output></div>
+        </div>
+        <div id="imTextOpts" style="margin-top:8px">
+          <textarea id="imTextValue" rows="2" placeholder="Текст, потом щёлкните по картинке"></textarea>
+          <div class="row" style="margin-top:8px"><span>Шрифт</span><select id="imTextFont" class="font-sel"></select></div>
+          <div class="row"><span>Размер</span><input type="number" id="imTextSize" min="8" max="800" value="72"></div>
+          <div class="row"><span>Цвет</span><input type="color" id="imTextColor" value="#ffffff"></div>
+          <div class="row"><span>Жирный / тень</span><span class="btns"><button id="imTextBold" aria-pressed="true"><b>Ж</b></button><button id="imTextShadow" aria-pressed="true">Тень</button></span></div>
+        </div>
+      </div>
+      <div class="group">
+        <h3>Повернуть и отразить</h3>
+        <div class="btns">
+          <button id="imRotL" title="Против часовой">↺ 90°</button>
+          <button id="imRotR" title="По часовой">↻ 90°</button>
+          <button id="imFlipH" title="Отразить по горизонтали">⇋</button>
+          <button id="imFlipV" title="Отразить по вертикали">⇵</button>
+        </div>
+      </div>
+      <div class="group">
+        <h3>Цвет и резкость</h3>
+        <div class="row"><span>Яркость</span><input type="range" class="imf" id="imBright" min="0" max="200" value="100"><output></output></div>
+        <div class="row"><span>Контраст</span><input type="range" class="imf" id="imContrast" min="0" max="200" value="100"><output></output></div>
+        <div class="row"><span>Насыщенность</span><input type="range" class="imf" id="imSat" min="0" max="200" value="100"><output></output></div>
+        <div class="row"><span>Оттенок</span><input type="range" class="imf" id="imHue" min="-180" max="180" value="0"><output></output></div>
+        <div class="row"><span>Размытие</span><input type="range" class="imf" id="imBlur" min="0" max="30" value="0"><output></output></div>
+        <div class="row"><span>Сепия</span><input type="range" class="imf" id="imSepia" min="0" max="100" value="0"><output></output></div>
+        <div class="btns"><button id="imFxApply" class="primary">Применить</button><button id="imFxReset">Сбросить</button></div>
+      </div>
+      <div class="group">
+        <h3>Размер</h3>
+        <div class="row"><span>Ширина</span><input type="number" id="imW" min="1" max="16384"></div>
+        <div class="row"><span>Высота</span><input type="number" id="imH" min="1" max="16384"></div>
+        <div class="row"><span></span><label><input type="checkbox" id="imKeep" checked> сохранять пропорции</label></div>
+        <div class="btns"><button id="imResize">Изменить размер</button></div>
+      </div>
+    </div>
+  </section>
+
+  <script src="icons.js"></script>
+  <script src="scene.js"></script>
+  <script src="slides.js"></script>
+  <script src="themes.js"></script>
+  <script src="editor.js"></script>
+</body>
+</html>

@@ -1,0 +1,57 @@
+{
+  "name": "church-presenter",
+  "productName": "multiplayerSHOW",
+  "version": "0.1.0",
+  "description": "Открытая программа для показа фото и видео на экранах в церкви",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win --publish never",
+    "release": "electron-builder --win --publish always"
+  },
+  "author": "multiplayerSHOW",
+  "repository": { "type": "git", "url": "https://github.com/tanako228/multiplayerSHOW.git" },
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^25.1.8"
+  },
+  "dependencies": {
+    "electron-updater": "^6.8.11",
+    "koffi": "^3.3.6"
+  },
+  "build": {
+    "appId": "org.multiplayershow.app",
+    "productName": "multiplayerSHOW",
+    "electronDist": "node_modules/electron/dist",
+    "npmRebuild": false,
+    "directories": { "output": "dist" },
+    "files": [
+      "**/*",
+      "!dist/**",
+      "!видео/**",
+      "!presets/**",
+      "!.claude/**",
+      "!*.md",
+      "ИНСТРУКЦИЯ-*.md",
+      "!npm",
+      "!*.cmd"
+    ],
+    "asarUnpack": ["node_modules/koffi/**"],
+    "win": {
+      "target": "nsis",
+      "icon": "brand/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "shortcutName": "multiplayerSHOW",
+      "deleteAppDataOnUninstall": false,
+      "artifactName": "multiplayerSHOW-Setup-${version}.${ext}"
+    },
+    "publish": [
+      { "provider": "github", "owner": "tanako228", "repo": "multiplayerSHOW", "releaseType": "release" }
+    ]
+  }
+}

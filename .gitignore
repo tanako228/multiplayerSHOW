@@ -1,0 +1,9 @@
+node_modules/
+dist/
+out/
+*.log
+.DS_Store
+# личное и большое — не в GitHub
+.claude/
+видео/
+npm

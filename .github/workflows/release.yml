@@ -1,0 +1,25 @@
+# Новая версия: при отправке метки v1.2.3 (её ставит «выпустить.cmd») GitHub сам собирает
+# установщик multiplayerSHOW-Setup-….exe и выкладывает его в Releases. Оттуда его берут
+# установка на других компьютерах и кнопка «Проверить обновления» в программе.
+name: Выпуск версии
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npx electron-builder --win --publish always
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
