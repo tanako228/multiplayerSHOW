@@ -748,6 +748,7 @@ function updatePlaylistLive() {
   const same = workIsView();
   document.querySelectorAll('#svcFeed .sl').forEach((el) => {
     el.classList.toggle('live', !!on && el.dataset.key === plShown.key && el.dataset.sid === plShown.sid);
+    el.classList.toggle('live-ov', Object.values(ovShown).some((o) => o.view === workKey() && o.key === el.dataset.key && o.sid === el.dataset.sid));
     el.classList.toggle('sel', isSelected(el.dataset.key, el.dataset.sid));
   });
   document.querySelectorAll('#svcFeed .svc-item').forEach((el) => {
@@ -820,6 +821,14 @@ function showSlide(key, sid, vk = workKey()) {
   const si = item.slides.findIndex((s) => s.id === sid);
   const slide = item.slides[si];
   if (!slide) return;
+  // Пункт со слоем Overlay: показ поверх, выделение и лента основной презентации не меняются
+  const ly = pickedLayer(entry);
+  if (slide.k !== 'audio' && isOverlay(ly)) {
+    present(() => contentOf(item, slide), item.name + (item.slides.length > 1 ? ` — ${slide.label || si + 1}` : ''), false, ly, ownTransition(item, slide));
+    ovShown[ly] = { view: vk, key, sid };
+    updatePlaylistLive(); // триггеры слайдов макросов не трогаем (на Overlay срабатывает «Слой»)
+    return;
+  }
   if (slide.k === 'audio') {
     // Музыкальный слайд: экран не меняется, включается музыка
     playAudioItem(slide);
@@ -1219,6 +1228,7 @@ function slideMenu(e, key, sid) {
     ...(typeof stSlideMenu === 'function' ? stSlideMenu(e, entry, slide) : []), // сценический экран (stage.js)
     // Текст, Библия, свой слайд — в редакторе тем (свой вид слайда)
     ...(['text', 'bible', 'custom'].includes(slide.k) ? [{ label: 'Изменить в редакторе' + (slide.look ? ' (свой вид)' : ''), fn: () => openSlideLook(entry.item, sid) }] : []),
+    ...(slide.k === 'audio' && slide.path ? [{ label: 'Открыть в аудиоредакторе', fn: () => openAudioEditor({ name: slide.name || entry.item.name, path: slide.path, url: slide.url }, { kind: 'item', itemId: entry.item.id, slideId: sid }) }] : []),
     ...(slide.k === 'image' ? [{ label: 'Изменить картинку…', fn: () => openImageEditor({ url: slide.url, path: slide.path, name: slide.name || entry.item.name }, { itemId: entry.item.id, slideId: sid }) }] : []),
     ...(slide.path ? [{ label: 'Показать в проводнике', fn: () => revealFile(slide.path) }] : []),
     { label: 'Удалить' + many, key: 'Delete', fn: svcDelete },
@@ -1242,6 +1252,7 @@ function presMenu(e, key, item, isPl) {
     { label: 'Копировать все слайды', fn: () => copySlides(item.slides).then((ok) => ok && flashStatus(`Скопировано слайдов: ${item.slides.length}`)) },
     '-',
     { label: 'Открыть в редакторе тем', disabled: !item.slides.some((s) => ['text', 'bible', 'custom'].includes(s.k)), fn: () => openSlideLook(item) },
+    ...((() => { const a = item.slides.find((s) => s.k === 'audio' && s.path); return a ? [{ label: 'Открыть в аудиоредакторе', fn: () => openAudioEditor({ name: item.name, path: a.path, url: a.url }, { kind: 'item', itemId: item.id, slideId: a.id }) }] : []; })()),
     // Из плейлиста — перейти к песне в её библиотеке
     ...(isPl ? itemPlaces(item).filter((p) => p.kind === 'lib').map((p) => ({ label: `Найти в библиотеке «${p.name}»`, fn: () => gotoItem('lib', p.id, item.id) })) : []),
     ...(itemPath(item) ? [{ label: 'Показать в проводнике', fn: () => revealFile(itemPath(item)) }] : []),
@@ -1251,6 +1262,7 @@ function presMenu(e, key, item, isPl) {
     { label: `Слой: ${layerById(pickedLayer(x)) ? layerName(layerById(pickedLayer(x))) : 'сам'}…`, fn: () => layerPickMenu(e, n > 1 ? selectedItems() : [x]) },
     ...(lib.macros && lib.macros.length && entryByKey(key) ? [{ label: 'Привязать макрос…', fn: () => mcAttachMenu(e, { kind: 'entry', key }) }] : []),
     ...(typeof stPresMenu === 'function' ? stPresMenu(e, item) : []), // сценический макет при показе (stage.js)
+    ...(typeof rmPresMenu === 'function' ? rmPresMenu(item) : []), // пульт с телефона (remote.js)
     { label: 'Копия презентации', fn: () => addItems([{ ...JSON.parse(JSON.stringify(item)), id: newId(), name: item.name + ' (копия)', slides: Slides.copy(item.slides) }], false) },
     '-',
     { label: 'Цвет в списке', colors: MARKS, value: item.color, fn: (c) => setMark(item, c) },
@@ -1502,13 +1514,13 @@ function addFileResult({ items, errors }, fromPool) {
 
 async function svcAddFiles() {
   if (!findView() || plNoCreate()) return;
-  addFileResult(await window.api.pickMedia({ slideWidth: settings.slideW, groupDecks: true }));
+  addFileResult(await window.api.pickMedia({ slideWidth: slideWidth(), groupDecks: true }));
 }
 
 async function svcAddPaths(paths, fromPool) {
   if (!findView()) return;
   if (!fromPool && plNoCreate()) return; // из Проводника в плейлист — нельзя, из медиапула — можно
-  const res = await window.api.describeFiles(paths, { slideWidth: settings.slideW, groupDecks: true });
+  const res = await window.api.describeFiles(paths, { slideWidth: slideWidth(), groupDecks: true });
   if (fromPool) res.items.forEach((i) => { if (i.type === 'image' || i.type === 'video') i.fit = poolFitValue(); });
   else markPoolFit(res.items);
   addFileResult(res, fromPool);

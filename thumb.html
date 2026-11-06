@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src file: data:; media-src file:; style-src 'self' 'unsafe-inline'; font-src 'self' file: data:">
+  <title>Картинки слайдов</title>
+  <!-- Скрытое окно (main.js, пульт с телефона): рисует один слайд той же сценой, что и экран, — main снимает картинку -->
+  <style>
+    html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+    #stage { position: absolute; inset: 0; overflow: hidden; background: #000; }
+  </style>
+</head>
+<body>
+  <div id="stage"></div>
+  <script src="scene.js"></script>
+  <script src="thumb.js"></script>
+</body>
+</html>

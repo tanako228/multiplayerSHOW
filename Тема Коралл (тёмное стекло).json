@@ -1,0 +1,27 @@
+{
+  "app": "church-presenter",
+  "kind": "settings-preset",
+  "version": 1,
+  "preset": {
+    "id": "coralGlass",
+    "name": "Тема Коралл (тёмное стекло)",
+    "date": 1793923200000,
+    "settings": {
+      "uiTheme": "graphite",
+      "uiColors": {
+        "--ink": "#1a1d22",
+        "--panel": "#22262c",
+        "--field": "#2b3037",
+        "--line": "#3b4149",
+        "--text": "#eef0f2",
+        "--muted": "#9aa1aa",
+        "--live": "#f2695a",
+        "--brown": "#f5a594",
+        "--warn": "#ff4d5e"
+      },
+      "uiGlow": 70,
+      "uiGlass": true,
+      "uiRadius": 12
+    }
+  }
+}

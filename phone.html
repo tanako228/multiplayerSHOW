@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#14171c">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<link rel="icon" href="/icon.png">
+<link rel="apple-touch-icon" href="/icon.png">
+<title>MP Show — пульт</title>
+<!-- Пульт с телефона (main.js: rmHandle). Своя страница, без внешних файлов: телефон видит одну презентацию -->
+<style>
+  :root { --ink: #0e1014; --panel: #181b21; --field: #232831; --line: #2e3540; --text: #e8ebf0; --muted: #8b94a3; --live: #e5484d; --ok: #3fb950; }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; background: var(--ink); color: var(--text); font: 15px/1.35 -apple-system, "Segoe UI", Roboto, sans-serif; }
+  body { padding: env(safe-area-inset-top) 0 calc(env(safe-area-inset-bottom) + 90px); }
+  header { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 10px; padding: 10px 14px; background: var(--panel); border-bottom: 1px solid var(--line); }
+  header img { width: 26px; height: 26px; border-radius: 6px; }
+  header h1 { flex: 1; margin: 0; font-size: 16px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #dot { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); flex: none; }
+  #dot.on { background: var(--ok); }
+  .now { display: grid; grid-template-columns: 3fr 2fr; gap: 10px; padding: 12px 14px 4px; }
+  @media (orientation: portrait) and (max-width: 600px) { .now { grid-template-columns: 1fr; } .now .nx { width: 60%; } }
+  .cap { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; margin-bottom: 5px; display: flex; gap: 6px; align-items: center; }
+  .cap.red { color: var(--live); }
+  .pic { position: relative; width: 100%; aspect-ratio: var(--ar, 16/9); background: #000; border-radius: 8px; overflow: hidden; border: 1px solid var(--line); }
+  .pic img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
+  .pic .empty { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); font-size: 13px; text-align: center; padding: 8px; }
+  #note { margin: 6px 14px 0; font-size: 13px; color: var(--muted); min-height: 18px; }
+  h2 { font-size: 13px; color: var(--muted); font-weight: 600; margin: 14px 14px 8px; text-transform: uppercase; letter-spacing: .05em; }
+  #grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; padding: 0 14px; }
+  .sl { background: var(--panel); border: 2px solid transparent; border-radius: 9px; overflow: hidden; position: relative; }
+  .sl.live { border-color: var(--live); }
+  .sl.next { border-color: #5b8def; }
+  .sl .pic { border: 0; border-radius: 0; }
+  .sl .txt { position: absolute; inset: 0; padding: 6px 8px; font-size: 11px; color: #cfd5de; overflow: hidden; white-space: pre-line; }
+  .sl .row { display: flex; align-items: center; gap: 6px; padding: 5px 7px; font-size: 12px; }
+  .sl .no { color: var(--muted); }
+  .sl .lbl { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .sl .ed { border: 0; background: var(--field); color: var(--text); border-radius: 6px; padding: 4px 9px; font-size: 13px; }
+  .bar { position: fixed; left: 0; right: 0; bottom: 0; z-index: 6; display: flex; gap: 10px; padding: 10px 14px calc(env(safe-area-inset-bottom) + 10px); background: var(--panel); border-top: 1px solid var(--line); }
+  .bar button { flex: 1; height: 58px; border: 0; border-radius: 12px; background: var(--field); color: var(--text); font-size: 18px; font-weight: 600; }
+  .bar button.go { background: #2f6fde; }
+  .bar button.clr { flex: .6; font-size: 14px; }
+  .bar button:active, .sl:active { filter: brightness(1.3); }
+  button:disabled { opacity: .4; }
+  #sheet { position: fixed; inset: 0; z-index: 10; background: rgba(0,0,0,.6); display: none; align-items: flex-end; }
+  #sheet.open { display: flex; }
+  #sheet .box { width: 100%; background: var(--panel); border-radius: 14px 14px 0 0; padding: 14px 14px calc(env(safe-area-inset-bottom) + 14px); }
+  #sheet h3 { margin: 0 0 8px; font-size: 16px; }
+  #sheet textarea { width: 100%; height: 40vh; background: var(--field); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 10px; font: 16px/1.4 inherit; resize: none; }
+  #sheet .btns { display: flex; gap: 10px; margin-top: 10px; }
+  #sheet .btns button { flex: 1; height: 48px; border: 0; border-radius: 10px; background: var(--field); color: var(--text); font-size: 16px; }
+  #sheet .btns .go { background: #2f6fde; }
+  #gone { display: none; padding: 40px 20px; text-align: center; color: var(--muted); font-size: 17px; }
+  body.gone #app { display: none; } body.gone #gone { display: block; }
+</style>
+</head>
+<body>
+<div id="app">
+  <header><img src="/icon.png" alt=""><h1 id="name">Загрузка…</h1><span id="dot" title="Связь с программой"></span></header>
+  <div class="now">
+    <div><div class="cap red">● Сейчас на экране</div><div class="pic" id="livePic"><div class="empty">…</div></div></div>
+    <div class="nx"><div class="cap">Далее</div><div class="pic" id="nextPic"><div class="empty">—</div></div></div>
+  </div>
+  <div id="note"></div>
+  <h2>Слайды</h2>
+  <div id="grid"></div>
+  <div class="bar" id="bar">
+    <button id="prev">◀ Назад</button>
+    <button id="clr" class="clr">Убрать</button>
+    <button id="next" class="go">Вперёд ▶</button>
+  </div>
+</div>
+<div id="gone">Доступ закрыт. Попросите оператора показать новый QR-код.</div>
+<div id="sheet"><div class="box">
+  <h3 id="shTitle">Текст слайда</h3>
+  <textarea id="shText"></textarea>
+  <div class="btns"><button id="shNo">Отмена</button><button id="shOk" class="go">Сохранить</button></div>
+</div></div>
+<script>
+const T = (location.pathname.match(/\/r\/([0-9a-z]+)/) || [])[1] || '';
+const $ = (id) => document.getElementById(id);
+let st = null;
+let rev = 0;
+let editSid = '';
+
+const thumbUrl = (s) => `/api/thumb?t=${T}&s=${encodeURIComponent(s.id)}&v=${s.v}`;
+const KIND = { audio: '♪ Музыка', live: '● Источник', video: '▶ Видео' };
+
+function picInto(box, s) {
+  box.replaceChildren();
+  if (!s) { box.append(Object.assign(document.createElement('div'), { className: 'empty', textContent: '—' })); return; }
+  if (s.v) { const im = new Image(); im.src = thumbUrl(s); im.alt = ''; box.append(im); }
+  else box.append(Object.assign(document.createElement('div'), { className: 'empty', textContent: KIND[s.k] || s.label || 'Слайд' }));
+}
+
+function nextSlide() {
+  if (!st || !st.slides.length) return null;
+  const i = st.live ? st.slides.findIndex((s) => s.id === st.live) : -1;
+  return st.slides[i + 1] || null;
+}
+
+function render() {
+  document.title = st.name + ' — пульт';
+  $('name').textContent = st.name;
+  document.documentElement.style.setProperty('--ar', String(st.aspect || 16 / 9));
+  const nx = nextSlide();
+  picInto($('nextPic'), nx);
+  $('note').textContent = st.live ? '' : st.other ? 'Сейчас на экране не ваша презентация. Нажмите на слайд, чтобы показать свой.' : 'Ваша презентация сейчас не на экране.';
+  if (!st.show) $('note').textContent += ' Листать нельзя — только смотреть.';
+  $('bar').style.display = st.show ? '' : 'none';
+  $('clr').disabled = !st.live;
+  const grid = $('grid');
+  grid.replaceChildren();
+  st.slides.forEach((s, i) => {
+    const el = Object.assign(document.createElement('div'), { className: 'sl' + (s.id === st.live ? ' live' : '') + (nx && s.id === nx.id ? ' next' : '') });
+    const pic = Object.assign(document.createElement('div'), { className: 'pic' });
+    if (s.v) { const im = new Image(); im.loading = 'lazy'; im.src = thumbUrl(s); im.alt = ''; pic.append(im); }
+    else pic.append(Object.assign(document.createElement('div'), { className: 'txt', textContent: KIND[s.k] || s.text || '' }));
+    const row = Object.assign(document.createElement('div'), { className: 'row' });
+    row.append(Object.assign(document.createElement('span'), { className: 'no', textContent: i + 1 }),
+      Object.assign(document.createElement('span'), { className: 'lbl', textContent: s.label || (s.text || '').split('\n')[0] }));
+    if (st.edit && s.k === 'text') {
+      const b = Object.assign(document.createElement('button'), { className: 'ed', textContent: '✎' });
+      b.onclick = (e) => { e.stopPropagation(); openEdit(s, i); };
+      row.append(b);
+    }
+    el.append(pic, row);
+    if (st.show) el.onclick = () => cmd({ cmd: 'show', sid: s.id });
+    grid.append(el);
+  });
+  const lv = grid.querySelector('.sl.live');
+  if (lv && !render.scrolled) { lv.scrollIntoView({ block: 'nearest' }); render.scrolled = true; }
+}
+
+function openEdit(s, i) {
+  editSid = s.id;
+  $('shTitle').textContent = `Слайд ${i + 1}${s.label ? ' — ' + s.label : ''}`;
+  $('shText').value = s.text || '';
+  $('sheet').classList.add('open');
+}
+$('shNo').onclick = () => $('sheet').classList.remove('open');
+$('shOk').onclick = () => { cmd({ cmd: 'edit', sid: editSid, text: $('shText').value }); $('sheet').classList.remove('open'); };
+
+async function cmd(m) {
+  try {
+    const r = await fetch(`/api/cmd?t=${T}`, { method: 'POST', body: JSON.stringify(m) });
+    const j = await r.json();
+    if (!j.ok) $('note').textContent = j.error || 'Не получилось';
+  } catch { $('note').textContent = 'Нет связи с программой'; }
+}
+$('prev').onclick = () => cmd({ cmd: 'prev' });
+$('next').onclick = () => cmd({ cmd: 'next' });
+$('clr').onclick = () => cmd({ cmd: 'clear' });
+
+// Состояние: долгий опрос — ответ приходит сразу, как что-то поменялось
+async function poll() {
+  for (;;) {
+    try {
+      const r = await fetch(`/api/state?t=${T}&rev=${rev}`, { cache: 'no-store' });
+      if (r.status === 403) { document.body.classList.add('gone'); return; }
+      const j = await r.json();
+      $('dot').classList.add('on');
+      if (j.rev && j.rev !== rev) { rev = j.rev; st = j; render(); }
+    } catch {
+      $('dot').classList.remove('on');
+      await new Promise((ok) => setTimeout(ok, 2000));
+    }
+  }
+}
+
+// «Сейчас на экране» — живая картинка, около раза в секунду, пока страница видна
+function liveTick() {
+  if (document.hidden || document.body.classList.contains('gone')) { setTimeout(liveTick, 1000); return; }
+  const im = new Image();
+  im.alt = '';
+  im.onload = () => { $('livePic').replaceChildren(im); setTimeout(liveTick, 700); };
+  im.onerror = () => setTimeout(liveTick, 1000);
+  im.src = `/api/live?t=${T}&n=${Date.now()}`;
+}
+
+poll();
+liveTick();
+</script>
+</body>
+</html>

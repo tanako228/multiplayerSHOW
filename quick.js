@@ -245,7 +245,7 @@ async function quickAdd() {
   let added = [];
   if (r.item) added = [r.item];
   else {
-    const res = await window.api.describeFiles([r.file.path], { slideWidth: settings.slideW, groupDecks: true });
+    const res = await window.api.describeFiles([r.file.path], { slideWidth: slideWidth(), groupDecks: true });
     res.items.forEach((i) => { if (i.type === 'image' || i.type === 'video') i.fit = poolFitValue(); });
     if (res.errors.length) showNotice('Не удалось добавить: ' + res.errors.join('; '), true);
     added = res.items.map(fromFileItem);

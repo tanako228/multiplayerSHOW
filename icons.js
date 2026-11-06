@@ -72,10 +72,17 @@ const Icons = (() => {
     sources: ['#4fd6ff', '#0f7fd6', `<circle cx="12" cy="13.4" r="2.2" fill="${W}"/>` + line('M8.6 16.8a4.8 4.8 0 0 1 0-6.8M15.4 10a4.8 4.8 0 0 1 0 6.8M6.2 19.2a8.2 8.2 0 0 1 0-11.6M17.8 7.6a8.2 8.2 0 0 1 0 11.6', 1.6)],
     camera: ['#5bd0ff', '#1d7fe0', `<rect x="4.2" y="7.6" width="11" height="8.8" rx="2" fill="${W}"/><path d="M16.2 10.8l3.6-2.2v6.8l-3.6-2.2z" fill="${W}"/><circle cx="9.7" cy="12" r="2.1" fill="{d}"/>`],
     cast: ['#7ee0a8', '#16a35a', `<rect x="7.6" y="4.4" width="8.8" height="15.2" rx="2" fill="none" stroke="${W}" stroke-width="1.7"/><rect x="9.4" y="6.8" width="5.2" height="8.6" rx=".6" fill="${W}" opacity=".4"/>` + line('M11 17.6h2', 1.5)],
+    // Пульт с телефона (remote.js): телефон и волны связи
+    phone: ['#ffb36b', '#e0571b', `<rect x="6.4" y="4.4" width="7.6" height="15.2" rx="1.8" fill="none" stroke="${W}" stroke-width="1.7"/>` + line('M9.4 17.4h1.6', 1.5) + line('M16.4 8.6a4 4 0 0 1 0 6.8M18.4 6.6a7 7 0 0 1 0 10.8', 1.4)],
     mic: ['#ff8fc0', '#d23a7a', `<rect x="9.4" y="4.6" width="5.2" height="9.4" rx="2.6" fill="${W}"/>` + line('M7 11.8a5 5 0 0 0 10 0M12 16.8v2.6M9.4 19.4h5.2', 1.6)],
     // Разделы настроек
     show: ['#5ea2ff', '#2a5fe0', `<path d="M9 6.8v10.4l8.4-5.2z" fill="${W}"/>`],
     text: ['#ffb45e', '#de731c', `<path d="M5.4 17.6L9 6.6h1.6l3.6 11" stroke="${W}" stroke-width="1.9" fill="none" stroke-linejoin="round" stroke-linecap="round"/>` + line('M6.7 14h6.2', 1.7) + `<circle cx="16.8" cy="15.6" r="2.2" fill="none" stroke="${W}" stroke-width="1.7"/>` + line('M19 13.2v4.4', 1.7)],
+    wave: ['#ffb35a', '#d9700f', line('M5.6 10.6v2.8M8.5 8.2v7.6M11.4 5.6v12.8M14.3 8.6v6.8M17.2 7.2v9.6', 1.9)],
+    pause: ['#5ea2ff', '#2a5fe0', `<rect x="7.4" y="6.6" width="3.2" height="10.8" rx="1" fill="${W}"/><rect x="13.4" y="6.6" width="3.2" height="10.8" rx="1" fill="${W}"/>`],
+    stop: ['#93a3bb', '#46566f', `<rect x="7.2" y="7.2" width="9.6" height="9.6" rx="1.6" fill="${W}"/>`],
+    loop: ['#4fd1ff', '#1a7fd0', line('M6.4 12.4v-.9a3 3 0 0 1 3-3h8M15.4 6.2l2.3 2.3-2.3 2.3M17.6 11.6v.9a3 3 0 0 1-3 3h-8M8.6 17.8l-2.3-2.3 2.3-2.3', 1.7)],
+    crop: ['#ffa04a', '#d4570c', line('M8.4 4.6v11h11M4.6 8.4h11v11', 1.9)],
     audio: ['#ff7cb2', '#d23a7a', `<path d="M5 10h3l4-3.4v10.8L8 14H5z" fill="${W}"/>` + line('M14.8 9.4a3.6 3.6 0 0 1 0 5.2M16.9 7.4a6.4 6.4 0 0 1 0 9.2', 1.6)],
     keys: ['#a0acbf', '#55627a', `<rect x="4.2" y="7.4" width="15.6" height="9.4" rx="1.8" fill="${W}"/><path d="M6.8 10h1.2M9.6 10h1.2M12.4 10h1.2M15.2 10h1.2M8.4 14.2h7.2" stroke="{d}" stroke-width="1.5" stroke-linecap="round"/>`],
     presets: ['#b991ff', '#7547e0', line('M6 7.5h12M6 12h12M6 16.5h12', 1.6) + `<circle cx="9" cy="7.5" r="1.9" fill="${W}"/><circle cx="15" cy="12" r="1.9" fill="${W}"/><circle cx="10.5" cy="16.5" r="1.9" fill="${W}"/>`],

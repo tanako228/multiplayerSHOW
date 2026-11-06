@@ -1,0 +1,30 @@
+{
+  "app": "church-presenter",
+  "kind": "settings-preset",
+  "version": 1,
+  "preset": {
+    "id": "monoOrange",
+    "name": "Тема Mono (чёрный, оранжевый, серый)",
+    "date": 1794096000000,
+    "settings": {
+      "uiTheme": "monoDeep",
+      "uiColors": {
+        "--ink": "#1c1b1a",
+        "--panel": "#252422",
+        "--field": "#2e2d2b",
+        "--line": "#403e3b",
+        "--text": "#f5f5f4",
+        "--muted": "#a9a8a6",
+        "--live": "#e85a2a",
+        "--brown": "#cccccc",
+        "--warn": "#ff5470"
+      },
+      "uiGlow": 15,
+      "uiGlass": "",
+      "uiAlpha": 16,
+      "uiRadius": 3,
+      "uiFont": "geo",
+      "uiCaps": false
+    }
+  }
+}

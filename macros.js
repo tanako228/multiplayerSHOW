@@ -438,13 +438,16 @@ R('act.showItem', {
     const slide = mcPickSlide(item, p.mode, p.n, p.label);
     if (!slide) throw new Error('В презентации нет такого слайда');
     const f = mcFindEntry(item.id);
-    if (f && p.open !== false && f.vk === workKey() && !feedAll() && openKey !== f.x.key) { openKey = f.x.key; renderFeed(); }
+    const ly = mcLayerOf(p.layer) || (f ? pickedLayer(f.x) : '');
+    const ov = isOverlay(ly); // Overlay: ленту не листаем, выделение основной презентации не трогаем
+    if (!ov && f && p.open !== false && f.vk === workKey() && !feedAll() && openKey !== f.x.key) { openKey = f.x.key; renderFeed(); }
     if (f && !p.theme && !p.layer) { showSlide(f.x.key, slide.id, f.vk); return 'out'; }
     const it = p.theme ? { ...item, theme: p.theme } : item;
-    live = -1; bShown = null;
-    present(() => contentOf(it, slide), item.name + (item.slides.length > 1 ? ` — ${slide.label || item.slides.indexOf(slide) + 1}` : ''), false, mcLayerOf(p.layer) || (f ? pickedLayer(f.x) : ''));
-    plShown = f ? { view: f.vk, key: f.x.key, sid: slide.id } : null;
-    if (f) mcSlideShown(f.x, slide, f.vk);
+    if (!ov) { live = -1; bShown = null; }
+    present(() => contentOf(it, slide), item.name + (item.slides.length > 1 ? ` — ${slide.label || item.slides.indexOf(slide) + 1}` : ''), false, ly);
+    if (ov) { if (f) ovShown[ly] = { view: f.vk, key: f.x.key, sid: slide.id }; else delete ovShown[ly]; }
+    else plShown = f ? { view: f.vk, key: f.x.key, sid: slide.id } : null;
+    if (f && !ov) mcSlideShown(f.x, slide, f.vk);
     updatePlaylistLive();
     return 'out';
   },

@@ -130,26 +130,61 @@ const Compose = (() => {
   function progShow(content, tr, layer) {
     P.on[layer || ''] = content;
     for (const p of progs) if (allowed(p, layer)) Scene.show(p.el, forP(p, content), pickTr(p, tr), layer || undefined);
+    inkRefresh();
   }
   function progClear(tr, layer) {
     if (layer) delete P.on[layer]; else P.on = {};
     for (const p of progs) Scene.clear(p.el, pickTr(p, tr), layer || undefined);
+    inkRefresh();
   }
   function progLayers(m) {
     if (!m) return;
-    if (Array.isArray(m.defs)) { P.defs = m.defs; for (const p of progs) Scene.setLayers(p.el, progDefs(p)); }
+    if (Array.isArray(m.defs)) { P.defs = m.defs; for (const p of progs) Scene.setLayers(p.el, progDefs(p)); inkRefresh(); }
     if (m.layer && (m.cmd === 'play' || m.cmd === 'pause')) for (const p of progs) Scene.layerPlay(p.el, m.layer, m.cmd === 'play');
     if (m.cmd === 'build') for (const p of progs) Scene.buildNext(p.el);
   }
+
+  /* Рисунок и крупный план — только там, где виден тот же слайд, на котором рисуют:
+     в блоке/экране программы — если в нём есть слой этого слайда (фон без «Презентаций» — без рисунка);
+     в блоке «Текущий слайд» — если он показывает тот же слайд (крупный план там не нужен — виден весь слайд) */
   const setInk = (el, d, anim) => (d && !Array.isArray(d) ? Scene.setInk(el, d.shapes, anim ? { animFrom: d.animFrom } : undefined) : Scene.setInk(el, d));
+  // Слой рисунка — верхний непустой видимый (как topLayer в renderer.js; Overlay — только если больше ничего нет)
+  function inkLayer() {
+    let ov = null;
+    for (let i = P.defs.length - 1; i >= 0; i--) {
+      const d = P.defs[i];
+      if (!P.on[d.id] || d.hidden) continue;
+      if (!d.over) return d.id;
+      if (!ov) ov = d.id;
+    }
+    return ov;
+  }
+  const slideId = (c) => (c ? [c.type, c.url || '', c.text || '', c.ref || '', c.verses ? c.verses.map((v) => v.n).join(',') : '', c.elements ? JSON.stringify(c.elements) : ''].join('|') : '');
+  function inkFits(t) {
+    if (!t.ink) return false;
+    const id = inkLayer();
+    if (t.which) return !!id && !!P.info.cur && slideId(P.on[id]) === slideId(P.info.cur);
+    return id ? allowed(t, id) : !t.mask;
+  }
+  const inkTargets = () => [...progs, ...[...infos].filter((x) => x.which === 'cur')];
+  // Подходит ли рисунок блоку — поменялось (сменился слайд, слои): показать или убрать без анимации
+  function inkRefresh() {
+    for (const t of inkTargets()) {
+      const fit = inkFits(t);
+      if (fit === !!t.inkFit) continue;
+      t.inkFit = fit;
+      setInk(t.el, fit ? P.ink : null, false);
+      if (!t.which) Scene.setView(t.el, fit ? P.view : null, 0);
+    }
+  }
   function progInk(d) {
     P.ink = d;
-    for (const p of progs) if (p.ink) setInk(p.el, d, true);
+    for (const t of inkTargets()) if (t.inkFit) setInk(t.el, d, true);
   }
   // Крупный план (Быстрая анимация): { view: { x, y, z } | null, ms } — там же, где рисунок
   function progView(m) {
     P.view = (m && m.view) || null;
-    for (const p of progs) if (p.ink) Scene.setView(p.el, P.view, m && m.ms);
+    for (const p of progs) if (p.inkFit) Scene.setView(p.el, P.view, m && m.ms);
   }
   // Проигрыватель оператора: пуск, пауза, перемотка, громкость видео (не живых источников)
   function progVideo(m) {
@@ -178,6 +213,7 @@ const Compose = (() => {
     const ch = {};
     for (const k of ['cur', 'next', 'only']) ch[k] = JSON.stringify(P.info[k]) !== JSON.stringify(old[k]);
     for (const x of infos) if (ch[x.which]) paintInfo(x, false);
+    if (ch.cur) inkRefresh();
     for (const n of stageNodes) paintStage(n);
     Scene.setTimers(P.info.st.timers); // таймеры в текстовых полях тем (scene.js)
   }
@@ -207,8 +243,9 @@ const Compose = (() => {
     if (P.sink != null) el._sink = P.sink;
     Scene.setLayers(el, progDefs(p));
     for (const [id, c] of Object.entries(P.on)) if (allowed(p, id)) Scene.show(el, forP(p, c), NONE, id || undefined);
-    if (p.ink && P.ink) setInk(el, P.ink, false);
-    if (p.ink && P.view) Scene.setView(el, P.view, 0);
+    p.inkFit = inkFits(p);
+    if (p.inkFit && P.ink) setInk(el, P.ink, false);
+    if (p.inkFit && P.view) Scene.setView(el, P.view, 0);
     progs.add(p);
     return p;
   }
@@ -401,7 +438,7 @@ const Compose = (() => {
       case 'program': return 'program|' + JSON.stringify(it.layers || null) + '|' + !!it.sound + '|' + (it.ink !== false) + mainSz;
       case 'media': return 'media|' + it.url + '|' + (it.loop !== false) + '|' + !!it.sound;
       case 'source': return 'source|' + (it.src ? it.src.type + ':' + it.src.id : '');
-      case 'cur': case 'next': return it.type + '|' + !!it.plain + mainSz;
+      case 'cur': case 'next': return it.type + '|' + !!it.plain + '|' + (it.ink !== false) + mainSz;
       case 'only': return 'only' + mainSz;
       default: return it.type;
     }
@@ -439,10 +476,11 @@ const Compose = (() => {
       n._pel = el; // fit 'native' — ширина подгоняется под рамку в applyNode
       if (type === 'program') n._prog = progMount(el, { layers: it.layers || s.layers, sound, ink: it.ink !== false, alpha: sh.opts.alpha }); // свои слои блока или слои сцены
       else {
-        n._info = { el, which: type };
+        n._info = { el, which: type, ink: type === 'cur' && it.ink !== false };
         if (type === 'only' && n._edit) { n._info.ph = make('div', 'cmp-miss'); n._info.ph.textContent = 'Только для сцены: то, что оператор отправит сюда'; c.append(n._info.ph); }
         infos.add(n._info);
         paintInfo(n._info, true);
+        if (type === 'cur') { n._info.inkFit = inkFits(n._info); if (n._info.inkFit) setInk(el, P.ink, false); }
       }
     } else if (STAGE.has(type)) {
       n._txt = make('div', 'cmp-txt');

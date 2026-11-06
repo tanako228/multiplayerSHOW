@@ -432,7 +432,7 @@ function stPanelRender() {
   el.replaceChildren();
   const head = stEl('div', 'st-head');
   head.append(Icons.el('stage'), stEl('b', '', 'Сцена — для музыкантов и ведущих'), stEl('span', 'spacer'),
-    stB('Сцены…', () => { stPanelClose(); const l = lib.scenes.find((x) => (x.outputs || []).length) || lib.scenes[0]; openScreensTab(l ? { kind: 'scene', id: l.id } : undefined); }, 'Настройки → Экран и вывод: сцены, их макеты и выходы'),
+    stB('Сцены…', () => { stPanelClose(); const l = lib.scenes.find((x) => (x.outputs || []).length) || lib.scenes[0]; openScreensTab(l ? { kind: 'scene', id: l.id } : undefined); }, 'Редактор сцен: сцены, их макеты и выходы'),
     stB('×', stPanelClose, 'Закрыть (Esc)', 'st-x'));
   el.append(head);
   el.append(stEl('div', 'st-note', 'Всё здесь видно только на сценах (мониторы музыкантов, ведущего). Зрители этого не видят.'));
@@ -773,7 +773,7 @@ if (typeof Macros === 'object') {
   // Цель: id экрана или 'scene:id' сцены
   const outTargets = () => [['', '— выберите —'], ...lib.screens.filter((s) => s.id !== 'main').map((s) => [s.id, 'Экран: ' + s.name]), ...lib.scenes.map((sc) => ['scene:' + sc.id, 'Сцена: ' + sc.name])];
   R2('act.screenShow', {
-    cat: 'action', name: 'Вывод экрана / сцены', icon: 'screens', help: 'Включить или выключить выходы экрана или сцены — как галочка в «Настройки → Экран и вывод».',
+    cat: 'action', name: 'Вывод экрана / сцены', icon: 'screens', help: 'Включить или выключить выходы экрана или сцены — как кнопка «Вывод» в Редакторе сцен.',
     params: [
       { id: 'screen', name: 'Что', t: 'select', opts: outTargets, def: '' },
       { id: 'what', name: 'Вывод', t: 'select', opts: [['on', 'Включить'], ['off', 'Выключить'], ['toggle', 'Переключить']], def: 'on' },

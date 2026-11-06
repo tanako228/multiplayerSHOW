@@ -1,0 +1,30 @@
+{
+  "app": "church-presenter",
+  "kind": "settings-preset",
+  "version": 1,
+  "preset": {
+    "id": "industrialGlass",
+    "name": "Тема Индустриал — Liquid glass",
+    "date": 1794009600000,
+    "settings": {
+      "uiTheme": "midnight",
+      "uiColors": {
+        "--ink": "#121212",
+        "--panel": "#1b1b1b",
+        "--field": "#252525",
+        "--line": "#3e3e3e",
+        "--text": "#ecebe7",
+        "--muted": "#8f8c86",
+        "--live": "#ff5a0a",
+        "--brown": "#d6d3cd",
+        "--warn": "#ff2d2d"
+      },
+      "uiGlow": 45,
+      "uiGlass": "liquid",
+      "uiAlpha": 30,
+      "uiRadius": 10,
+      "uiFont": "narrow",
+      "uiCaps": true
+    }
+  }
+}

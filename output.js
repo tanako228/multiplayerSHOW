@@ -25,7 +25,9 @@ function layout() {
   const { w: W, h: H } = Compose.screenSize(SID);
   const rot = ((Number(def.rotate) || 0) % 360 + 360) % 360;
   const side = rot === 90 || rot === 270;
-  const s = Math.min(iw / (side ? H : W), ih / (side ? W : H));
+  let s = Math.min(iw / (side ? H : W), ih / (side ? W : H));
+  // «Подгонка: пиксель в пиксель» (def.outFit 'none') — картинка своего разрешения не растягивается: меньше разрешение — меньше на мониторе
+  if (def.outFit === 'none' && !(SID === 'main' && !size.w)) s = Math.min(s, 1 / (window.devicePixelRatio || 1));
   stage.style.width = W + 'px';
   stage.style.height = H + 'px';
   stage.style.left = (iw - W) / 2 + 'px';

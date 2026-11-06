@@ -24,6 +24,8 @@
        он становится макетом с тем же id, что у сцены (старые ссылки slide.stage и макросов остаются верными). */
 
 const SC_FORMATS = [['16:9', 1920, 1080], ['9:16', 1080, 1920], ['1:1', 1080, 1080], ['4:3', 1440, 1080], ['21:9', 2560, 1080]];
+// Разрешения 16:9 — для «Основного» и сцен (больше, чем умеет монитор выхода, не предлагаются)
+const SC_RES = [['HD', 1280, 720], ['Full HD', 1920, 1080], ['2K', 2560, 1440], ['4K', 3840, 2160], ['5K', 5120, 2880], ['8K', 7680, 4320]];
 const SC_ITEMS = {
   screen: { name: 'Экран / сцена', icon: 'screens', tip: 'Картинка другого экрана или другой сцены — как они идут сейчас' },
   program: { name: 'Программа', icon: 'layers', tip: 'Слои вывода: тексты, медиа, источники — можно выбрать какие' },
@@ -176,6 +178,7 @@ function scInit() {
   }
   scLive = {};
   for (const l of scPresets()) scLive[l.id] = scClone(l); // что было при запуске — то и на выходах
+  if (typeof dispFix === 'function') dispFix(); // мониторы выходов — на подключённые сейчас (renderer.js)
   scSend();
   if (window.api.screensState) window.api.screensState().then((st) => { scOpenOuts = st || []; scRenderLists(); }, () => {});
   if (typeof stInit === 'function') stInit(); // сценический экран: таймеры, сообщения (stage.js)
@@ -191,7 +194,7 @@ const scSceneSid = (sc) => 'scene:' + sc.id;
 function scSceneScreen(sc, main) {
   return scNewScreen({
     id: scSceneSid(sc), name: sc.name || 'Сцена', w: sc.w || main.w, h: sc.h || main.h, hz: sc.hz || 0, enabled: !!sc.on, bg: sc.bg || '#000000',
-    outputs: scClone(sc.outputs || []), mode: 'scene', scene: scLayoutOf(sc), ink: false, sound: !!sc.outSound, alpha: !!sc.alpha,
+    outputs: scClone(sc.outputs || []), mode: 'scene', scene: scLayoutOf(sc), ink: false, sound: !!sc.outSound, alpha: !!sc.alpha, outFit: sc.outFit || 'fit',
   });
 }
 // Тема экрана: все тексты программы (песни, Библия, текстовые слайды) на этом экране — в её оформлении
@@ -204,7 +207,7 @@ function scConfig() {
   const main = scMainSize();
   const scenes = {}; // макеты для compose.js: применённые копии
   for (const l of scPresets()) scenes[l.id] = scLive[l.id] || l;
-  const screens = scClone(lib.screens).map((s) => ({ ...s, mode: 'program', look: scLook(s), ...(s.id === 'main' ? { w: main.w, h: main.h } : {}) }));
+  const screens = scClone(lib.screens).map((s) => ({ ...s, mode: 'program', look: scLook(s), ...(s.id === 'main' ? { w: main.w, h: main.h, outFit: settings.res === 'auto' ? 'fit' : settings.outFit || 'fit' } : {}) }));
   for (const sc of lib.scenes) screens.push(scSceneScreen(sc, main));
   return { screens, scenes: scClone(scenes), main };
 }
@@ -238,6 +241,7 @@ function scSend() {
   clearTimeout(scSendT);
   scSendT = setTimeout(() => window.api.screensConfig && window.api.screensConfig(scConfig()), 40);
   if (typeof prevScreenSync === 'function') prevScreenSync(); // экран в «Предпросмотре» (renderer.js)
+  if (typeof outGroupsSync === 'function') outGroupsSync(); // галочки «Зал» и «Сцена» над «Предпросмотром» (renderer.js)
 }
 
 // Текущий и следующий слайд и данные инфоблоков — собирает stage.js (stSend)
@@ -306,18 +310,16 @@ function scRenderLists() {
   if (!lib || !lib.screens) return;
   const sb = $('scScreens');
   sb.replaceChildren(...lib.screens.map((s) => {
-    const row = scEl('div', 'sc-row' + (scSel.kind === 'screen' && scSel.id === s.id ? ' sel' : '') + (s.enabled || s.id === 'main' ? '' : ' off'));
-    const on = scOnBox(!!s.enabled, s.id === 'main' ? 'Дополнительные выходы «Основного» (главный — галочкой вывода в «Предпросмотре»)' : 'Вывод экрана: включить или выключить его выходы',
-      (v) => scScreenSet(s, { enabled: v }));
+    const row = scEl('div', 'sc-row' + (scSel.kind === 'screen' && scSel.id === s.id ? ' sel' : '') + ((s.id === 'main' ? mainOutOn() : s.enabled) ? '' : ' off'));
     const nm = scEl('div', 'nm', s.name || 'Экран');
     const sz = s.id === 'main' ? scMainSize() : { w: s.w, h: s.h };
     const th = s.theme && typeof themeById === 'function' && themeById(s.theme);
     const ly = Array.isArray(s.layers) ? ` · слоёв: ${s.layers.length}` : '';
-    nm.append(scEl('small', '', `${sz.w}×${sz.h} · программа${ly}` + (s.alpha ? ' · прозрачный фон' : '') + (th ? ` · тема «${th.name}»` : '')));
+    nm.append(scEl('small', '', `${sz.w}×${sz.h} · программа${ly}` + scGroupTag(s, false) + (s.alpha ? ' · прозрачный фон' : '') + (th ? ` · тема «${th.name}»` : '')));
     const outs = s.id === 'main' ? outputOpen || scOutsOf(s.id).length : scOutsOf(s.id).length;
     const dot = scEl('span', 'dot' + (outs ? ' on' : ''));
     dot.title = outs ? 'Выводится' : (s.outputs || []).length ? 'Выходы закрыты' : 'Виртуальный экран (без выходов)';
-    row.append(on, Icons.el('screens'), nm, dot);
+    row.append(Icons.el('screens'), nm, dot);
     row.addEventListener('click', () => scPick({ kind: 'screen', id: s.id }));
     row.addEventListener('contextmenu', (e) => { e.preventDefault(); scScreenMenu(e, s); });
     return row;
@@ -422,16 +424,16 @@ function scTplMenu(fn) {
 }
 
 // Галочка «вывод включён» в строке списка (щелчок по ней строку не выбирает)
-function scOnBox(v, title, on) {
-  const b = scEl('input');
-  b.type = 'checkbox';
-  b.checked = v;
-  b.title = title;
-  b.addEventListener('click', (e) => e.stopPropagation());
-  b.addEventListener('change', () => on(b.checked));
-  return b;
+// Группа вывода (галочки «Зал»/«Сцена» над «Предпросмотром», renderer.js: outGroupOf) — подпись в списке и строка в свойствах
+function scGroupTag(x, scene) { const g = outGroupOf(x, scene); return OUT_GROUPS[g] ? ` · ${OUT_GROUPS[g].toLowerCase()}` : ''; }
+function scGroupRows(x, scene, set) {
+  const g = outGroupOf(x, scene);
+  return [
+    scRow('Группа', scSelect([['hall', 'Зал'], ['stage', 'Сцена'], ['none', 'Без группы']], g, (v) => set(v))),
+    scNote(OUT_GROUPS[g] ? `Галочка «${OUT_GROUPS[g]}» над «Предпросмотром» включает и выключает этот выход вместе с остальными из группы.`
+      : 'Галочки над «Предпросмотром» этот выход не трогают — только кнопка «Вывод» здесь.'),
+  ];
 }
-
 function scRenderSceneList(lb) {
   if (!lib.scenes.length) {
     lb.replaceChildren(scEl('div', 'te-empty', 'Сцен пока нет. «＋» — новая сцена (выход: монитор на сцене, окно, NDI) с макетом из «Пресетов сцен» или из шаблона.'));
@@ -443,8 +445,8 @@ function scRenderSceneList(lb) {
     const nm = scEl('div', 'nm', sc.name || 'Сцена');
     const own = scLay(sc.layout);
     const now = scLayoutOf(sc) !== (sc.layout || '') ? scLay(scLayoutOf(sc)) : null;
-    nm.append(scEl('small', '', `${sc.w}×${sc.h} · ` + (own ? `макет «${own.name}»` : 'без макета') + (has ? ` · выходов: ${sc.outputs.length}` : ' · без выхода') + (now ? ` · сейчас «${now.name}»` : '')));
-    row.append(has ? scOnBox(!!sc.on, 'Вывод сцены: включить или выключить её выходы', (v) => { sc.on = v; scSceneOutSet(sc, scSel.id === sc.id); }) : scEl('span', 'sc-nobox'), Icons.el('scene'), nm);
+    nm.append(scEl('small', '', `${sc.w}×${sc.h}` + (has ? scGroupTag(sc, true) : '') + ' · ' + (own ? `макет «${own.name}»` : 'без макета') + (has ? ` · выходов: ${sc.outputs.length}` : ' · без выхода') + (now ? ` · сейчас «${now.name}»` : '')));
+    row.append(Icons.el('scene'), nm);
     if (has) {
       const open = scOutsOf(scSceneSid(sc)).length;
       const dot = scEl('span', 'dot' + (open ? ' on' : ''));
@@ -1657,7 +1659,7 @@ function scRenderBar() {
     bar.append(scEl('b', 'sc-bar-name', s.name), scEl('span', 'te-sub', 'программа' + (scLook(s) ? ' · своя тема' : '')));
     bar.append(scEl('span', 'spacer'));
     const outs = scOutsOf(s.id);
-    if (s.id === 'main') bar.append(scEl('span', 'te-sub', outputOpen ? 'Основной вывод включён' : 'Основной вывод выключен (галочка у «Предпросмотра»)'));
+    if (s.id === 'main') bar.append(scOutBtn(mainOutOn(), () => mainOutSet(!mainOutOn())));
     for (const o of outs) {
       const b = scBtn({ display: 'Монитор', window: 'Окно', ndi: 'NDI' }[o.kind] || o.kind, '', () => window.api.screensFocus(o.key), o.kind === 'window' ? 'Показать окно экрана' : 'Выход открыт', 'sc-chip');
       bar.append(b);
@@ -1696,6 +1698,38 @@ function scNum(v, on, o = {}) {
   i.step = o.step || 1;
   i.addEventListener('input', () => { const x = Number(i.value); if (i.value !== '' && Number.isFinite(x)) on(x); });
   return i;
+}
+// Число, которое применяется только по Enter (пока печатаете — ничего не меняется и фокус не слетает); Esc или ушли из поля — как было
+function scNumEnter(v, on, o = {}) {
+  const i = scNum(v, () => {}, o);
+  let cur = i.value;
+  i.title = 'Введите число и нажмите Enter';
+  i.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      const x = Number(i.value);
+      if (i.value === '' || !Number.isFinite(x)) { i.value = cur; return; }
+      const r = on(x);
+      i.value = cur = r != null ? r : i.value;
+    } else if (e.key === 'Escape') { e.stopPropagation(); i.value = cur; i.blur(); }
+  });
+  i.addEventListener('blur', () => { i.value = cur; });
+  return i;
+}
+// Монитор выхода: самое большое разрешение, которое на него можно вывести (несколько мониторов — меньшее из них)
+function scMaxOf(outputs) {
+  const ds = (outputs || []).filter((o) => o.kind === 'display' && !o.off).map((o) => displays.find((d) => d.id === Number(o.display))).filter(Boolean);
+  if (!ds.length) return null;
+  const m = ds.map(displayMax);
+  return { W: Math.min(...m.map((x) => x.W)), H: Math.min(...m.map((x) => x.H)) };
+}
+// Строка «Подгонка» (fit mode): как картинка своего разрешения ложится на монитор
+function scFitRow(v, on) {
+  return [
+    scRow('Подгонка', scSelect([['fit', 'Вписать (на весь монитор)'], ['none', 'Пиксель в пиксель']], v || 'fit', on)),
+    scNote(v === 'none' ? 'Картинка показывается в своём размере по центру: 2K на мониторе 4K займёт половину по ширине и высоте.'
+      : 'Картинка растягивается (с сохранением пропорций) на весь монитор, даже если её разрешение меньше.'),
+  ];
 }
 // def — значение по умолчанию: двойной щелчок по ползунку (общий обработчик в icons.js)
 function scRange(v, min, max, step, on, unit = '', def) {
@@ -1767,19 +1801,75 @@ function scTitle(icon, text, sub) {
 }
 
 // Формат и разрешение: готовые пропорции или свои числа
-function scSizeRows(obj, on) {
-  const fmt = (SC_FORMATS.find((f) => f[1] === obj.w && f[2] === obj.h) || ['custom'])[0];
+// max — { W, H } монитора выхода: больше него не поставить (null — без ограничения)
+function scSizeRows(obj, on, max) {
+  const ok = (w, h) => !max || (w <= max.W && h <= max.H);
+  const list = [...SC_FORMATS, ...SC_RES.filter((r) => !SC_FORMATS.some((f) => f[1] === r[1] && f[2] === r[2]))].filter((f) => ok(f[1], f[2]));
+  if (max && !list.some((f) => f[1] === max.W && f[2] === max.H)) list.push(['монитор', max.W, max.H]);
+  const key = () => (list.find((f) => f[1] === obj.w && f[2] === obj.h) ? obj.w + 'x' + obj.h : 'custom');
+  const fmt = scSelect([...list.map((f) => [f[1] + 'x' + f[2], `${f[0]} — ${f[1]}×${f[2]}`]), ['custom', 'Своё разрешение']], key(), (v) => {
+    const f = list.find((x) => x[1] + 'x' + x[2] === v);
+    if (f) on({ w: f[1], h: f[2] }, true);
+  });
+  const lim = (v, m) => Math.max(16, Math.min(m || 16384, Math.round(v)));
+  // Enter — применить (без перерисовки свойств: фокус остаётся в поле)
+  const put = (p) => { on(p, false); fmt.value = key(); return p.w != null ? p.w : p.h; };
+  const big = max && (obj.w > max.W || obj.h > max.H);
   return [
-    scRow('Формат', scSelect([...SC_FORMATS.map((f) => [f[0], `${f[0]} — ${f[1]}×${f[2]}`]), ['custom', 'Своё разрешение']], fmt, (v) => {
-      const f = SC_FORMATS.find((x) => x[0] === v);
-      if (f) on({ w: f[1], h: f[2] }, true);
-    })),
+    scRow('Формат', fmt),
     scRow('Ширина × высота',
-      scNum(obj.w, (v) => on({ w: Math.max(16, Math.min(16384, Math.round(v))) }), { min: 16, max: 16384 }),
+      scNumEnter(obj.w, (v) => put({ w: lim(v, max && max.W) }), { min: 16, max: max ? max.W : 16384 }),
       scEl('span', 'te-sub', '×'),
-      scNum(obj.h, (v) => on({ h: Math.max(16, Math.min(16384, Math.round(v))) }), { min: 16, max: 16384 }),
+      scNumEnter(obj.h, (v) => put({ h: lim(v, max && max.H) }), { min: 16, max: max ? max.H : 16384 }),
       scBtn('⇄', '', () => on({ w: obj.h, h: obj.w }, true), 'Повернуть: поменять ширину и высоту')),
+    scNote('Ширина и высота применяются по Enter.'),
+    max ? scNote(`Монитор выхода — до ${max.W}×${max.H}: больше не поставить.`) : null,
+    big ? scRow('', scNote(`Сейчас ${obj.w}×${obj.h} — больше монитора.`, true), scBtn('Под монитор', '', () => {
+      const k = Math.min(max.W / obj.w, max.H / obj.h);
+      on({ w: Math.round(obj.w * k), h: Math.round(obj.h * k) }, true);
+    }, 'Уменьшить разрешение под монитор, пропорции те же')) : null,
+  ].filter(Boolean);
+}
+
+// «Основной»: монитор Windows, вывод, разрешение (не больше монитора) и подгонка — settings (renderer.js: outputSize)
+function scMainRows() {
+  const d = mainDisplay();
+  const max = displayMax(d);
+  const { W, H } = outputSize();
+  const changed = () => { saveSettings(); onSettingChanged('res'); scRenderInsp(); };
+  const res = settings.res || 'auto';
+  const list = SC_RES.filter((r) => r[1] <= max.W && r[2] <= max.H);
+  if (d && !list.some((r) => r[1] === max.W && r[2] === max.H)) list.push(['монитор', max.W, max.H]);
+  const opts = [['auto', d ? `Как у монитора — ${max.W}×${max.H}` : 'Как у монитора'], ...list.map((r) => [r[1] + 'x' + r[2], `${r[0]} — ${r[1]}×${r[2]}`])];
+  if (res !== 'auto' && res !== 'custom' && !opts.some((o) => o[0] === res)) opts.push([res, res.replace('x', '×') + ' — больше монитора']);
+  opts.push(['custom', 'Своё…']);
+  const rows = [
+    scRow('Монитор', scSelect(displays.length ? displays.map((x) => [String(x.id), x.label]) : [['', 'Мониторов нет']], String(displaySel.value || ''), (v) => {
+      displaySel.value = v;
+      displaySel.dispatchEvent(new Event('change'));
+      scRenderInsp();
+    })),
+    d && d.primary ? scNote('Это главный монитор — на нём окно программы. Вывод закроет его на весь экран.', true) : null,
+    scRow('Вывод', scOutBtn(mainOutOn(), () => mainOutSet(!mainOutOn()))),
+    ...scGroupRows(scScreen('main'), false, (v) => scScreenSet(scScreen('main'), { group: v }, true)),
+    scCheck('Включать вывод при запуске', !!settings.outAutoOn, (v) => { settings.outAutoOn = v; saveSettings(); },
+      'При запуске сразу включается вывод на монитор (если он не главный), а сцены — как были включены, когда программу закрыли'),
+    scRow('Разрешение', scSelect(opts, res, (v) => {
+      settings.res = v;
+      if (v === 'custom') { settings.resW = Math.min(W, max.W); settings.resH = Math.min(H, max.H); }
+      changed();
+    })),
   ];
+  if (res === 'custom') {
+    rows.push(scRow('Ширина × высота',
+      scNumEnter(settings.resW, (v) => { settings.resW = Math.max(320, Math.min(max.W, Math.round(v))); changed(); }, { min: 320, max: max.W }),
+      scEl('span', 'te-sub', '×'),
+      scNumEnter(settings.resH, (v) => { settings.resH = Math.max(240, Math.min(max.H, Math.round(v))); changed(); }, { min: 240, max: max.H })));
+    rows.push(scNote(`Введите число и нажмите Enter. Не больше монитора: ${max.W}×${max.H}.`));
+  }
+  if (res !== 'auto') rows.push(...scFitRow(settings.outFit, (v) => { settings.outFit = v; saveSettings(); sendOutputSettings(); scRenderInsp(); }));
+  rows.push(scNote(`Картинка «Основного» строится в ${W}×${H}` + (d ? `, монитор — ${max.W}×${max.H}.` : '.') + ' В этом же разрешении строятся блоки «Программа» и слайды в сценах. Разрешение самого монитора меняет Windows.'));
+  return rows;
 }
 
 // Цвет: яркость, контраст, насыщенность, оттенок, гамма, температура, размытие
@@ -1839,7 +1929,7 @@ function scOutputRows(sid, name, outs, put, added) {
     card.append(head);
     if (o.kind === 'display') {
       const opts = displays.map((d) => [String(d.id), d.label + (d.hz ? ` · ${d.hz} Гц` : '')]);
-      card.append(scRow('Монитор', scSelect(opts.length ? opts : [['', 'Мониторов нет']], String(o.display || ''), (v) => setO({ display: Number(v) }))));
+      card.append(scRow('Монитор', scSelect(opts.length ? opts : [['', 'Мониторов нет']], String(o.display || ''), (v) => setO({ display: Number(v), dkey: dispKey(displays.find((d) => d.id === Number(v))) }))));
       const busy = scDisplayBusy(Number(o.display), sid, i);
       if (busy.length) card.append(scNote('Этот монитор уже занят: ' + busy.join(', ') + '. Окна лягут друг на друга.', true));
       if ((displays.find((d) => d.id === Number(o.display)) || {}).primary) card.append(scNote('Это главный монитор — на нём окно программы. Выход закроет его на весь экран.', true));
@@ -1858,7 +1948,7 @@ function scOutputRows(sid, name, outs, put, added) {
   rows.push(scRow('', scBtn('＋ Выход', '', () => {
     // Новый выход: второй монитор (не главный), а если его нет — окно. У сцены — выключенным (у экрана есть общий «Вывод»)
     const free = displays.find((d) => !d.primary);
-    put([...outs, { kind: free ? 'display' : 'window', display: free ? free.id : undefined, ...(sid.startsWith('scene:') ? { off: true } : {}) }], true);
+    put([...outs, { kind: free ? 'display' : 'window', display: free ? free.id : undefined, dkey: free ? dispKey(free) : undefined, ...(sid.startsWith('scene:') ? { off: true } : {}) }], true);
     if (added) added();
   }, 'Добавить выход: монитор (HDMI, SDI), окно или NDI')));
   return rows;
@@ -1867,7 +1957,7 @@ function scOutputRows(sid, name, outs, put, added) {
 // Кто ещё выводит на этот монитор (кроме выхода i у sid)
 function scDisplayBusy(display, sid, i) {
   const busy = [];
-  if (outputOpen && display === Number(displaySel.value)) busy.push('«Основной» (Монитор для вывода)');
+  if (outputOpen && display === Number(displaySel.value)) busy.push('«Основной» (зал)');
   for (const z of lib.screens) (z.outputs || []).forEach((y, j) => { if (z.enabled && !y.off && y.kind === 'display' && Number(y.display) === display && !(z.id === sid && j === i)) busy.push(`«${z.name}»`); });
   for (const sc of lib.scenes) (sc.outputs || []).forEach((y, j) => { if (!y.off && y.kind === 'display' && Number(y.display) === display && !(scSceneSid(sc) === sid && j === i)) busy.push(`сцена «${sc.name}»`); });
   return busy;
@@ -1887,20 +1977,21 @@ function scScreenInsp(s) {
   const set = (patch, re) => scScreenSet(s, patch, re);
   const main = s.id === 'main';
   const out = [scTitle('screens', s.name, main ? 'основной · программа' : 'программа')];
+  if (main) out.push(scSec('Монитор и разрешение', scMainRows().filter(Boolean)));
   out.push(scSec('Экран', [
     scRow('Название', scText(s.name, (v) => v && set({ name: v }))),
-    ...(main ? [scNote('Монитор и разрешение «Основного» — выше, в «Монитор» и «Разрешение вывода». ' + `Сейчас: ${scMainSize().w}×${scMainSize().h}.`)]
-      : scSizeRows(s, (p, re) => set(p, re !== false))),
+    ...(main ? [] : scSizeRows(s, (p, re) => set(p, re !== false), scMaxOf(s.outputs))),
     scRow('Частота', scSelect([['0', 'Как у выхода'], ['24', '24 кадр/с'], ['25', '25'], ['30', '30'], ['50', '50'], ['60', '60']], String(s.hz || 0), (v) => set({ hz: Number(v) }))),
     scNote('Частоту монитора меняет Windows (Параметры → Дисплей); здесь она задаёт NDI-выход.'),
   ]));
   // Выходы
   const rows = [];
-  if (main) rows.push(scNote(`Главный выход — монитор выше («Монитор для вывода»): ${outputOpen ? 'включён' : 'выключен'} (галочка в «Предпросмотре»). Ниже — дополнительные: тот же экран ещё на проектор, в окно или NDI.`));
+  if (main) rows.push(scNote('Главный выход — монитор выше. Ниже — дополнительные: тот же экран ещё на проектор, в окно или NDI. Кнопка «Вывод» выше включает их все вместе с монитором.'));
   // Включить/выключить вывод — только вручную (новый выход экран не включает)
-  if (!main && (s.outputs || []).length) rows.push(scRow('Вывод', scOutBtn(!!s.enabled, () => set({ enabled: !s.enabled }, true))));
+  if (!main && (s.outputs || []).length) rows.push(scRow('Вывод', scOutBtn(!!s.enabled, () => set({ enabled: !s.enabled }, true))), ...scGroupRows(s, false, (v) => set({ group: v }, true)));
   rows.push(...scOutputRows(s.id, s.name, s.outputs || [], (list, re) => { s.outputs = list; set({}, re); }));
   if (!(s.outputs || []).length && !main) rows.push(scNote('Выходов нет — экран виртуальный: его можно показывать в «Предпросмотре», в отдельном окне и внутри сцен (блок «Экран»).'));
+  if (!main && (s.outputs || []).length) rows.push(...scFitRow(s.outFit, (v) => set({ outFit: v }, true)));
   out.push(scSec('Выходы', rows));
   // Что идёт: слои и тема
   const th = lib.themes || [];
@@ -1943,7 +2034,7 @@ function scSceneInsp(sc) {
     scTitle('scene', sc.name, 'сцена = выход + макет'),
     scSec('Сцена', [
       scRow('Название', scText(sc.name, (v) => v && set({ name: v }, false))),
-      ...scSizeRows(sc, (p, re) => set(p, re !== false)),
+      ...scSizeRows(sc, (p, re) => set(p, re !== false), scMaxOf(sc.outputs)),
       scRow('Фон', scSelect([['color', 'Цвет'], ['transparent', 'Прозрачный']], clear ? 'transparent' : 'color', (v) => set({ bg: v === 'transparent' ? 'transparent' : '#000000' }, true)),
         clear ? null : scColor(sc.bg || '#000000', (v) => set({ bg: v }))),
       clear && !sc.alpha ? scNote('Фон прозрачный. Чтобы прозрачность ушла в NDI или окно — включите «Альфа-канал» ниже; на мониторе прозрачное — чёрное.') : null,
@@ -1963,7 +2054,9 @@ function scSceneInsp(sc) {
     scSec('Выход', [
       scNote('Куда идёт сцена: монитор или телевизор на сцене (HDMI, SDI), окно или NDI в сеть.'),
       has ? scRow('Вывод', scOutBtn(!!sc.on, () => set({ on: !sc.on }, true))) : null,
+      ...(has ? scGroupRows(sc, true, (v) => set({ group: v }, true)) : []),
       ...scOutputRows(scSceneSid(sc), sc.name, sc.outputs || [], (list, re) => set({ outputs: list }, re)),
+      ...(has ? scFitRow(sc.outFit, (v) => set({ outFit: v }, true)) : []),
       has ? scCheck('Звук элементов сцены', !!sc.outSound, (v) => set({ outSound: v }, false), 'Обычно звук идёт только с «Основного» — иначе будет эхо') : null,
       ...scAlphaRows(!!sc.alpha, (v) => set({ alpha: v }, true), 'Альфа-канал (прозрачный фон)'),
     ].filter(Boolean)),
@@ -2127,7 +2220,7 @@ function scMultiInsp(sel, sc) {
 function scFitNote(it) {
   const z = it.type === 'screen' ? Compose.screenSize(it.ref) : ['program', 'cur', 'next', 'only'].includes(it.type) ? scMainSize() : null;
   if (!z || !it.w || !it.h || Math.abs(z.w / z.h - it.w / it.h) < 0.01 || (it.fit && it.fit !== 'contain')) return null;
-  const who = it.type === 'screen' ? 'Показанный экран' : '«Основной» (Настройки → Экран и вывод)';
+  const who = it.type === 'screen' ? 'Показанный экран' : '«Основной» (Редактор сцен → Основной → Разрешение)';
   return scNote(`${who} — ${z.w}×${z.h}, а рамка блока — ${Math.round(it.w)}×${Math.round(it.h)}: пропорции разные, поэтому ${z.w / z.h < it.w / it.h ? 'по бокам' : 'сверху и снизу'} поля. `
     + (it.type === 'screen' ? 'Без полей — «Заполнить» (края обрежутся) или «Растянуть».' : 'Без полей — «Своё разрешение», «Заполнить» (края обрежутся) или «Растянуть».'), true);
 }
@@ -2147,6 +2240,7 @@ function scItemInsp(it, sc) {
     c.push(scNote(it.type === 'cur' ? 'Слайд из слоя «Презентации», который сейчас на экране.' : 'Следующий слайд рабочего плейлиста (после того, что на экране).'));
     c.push(scCheck('Только текст — крупно, размер подбирается сам', !!it.plain, (v) => set(v ? { plain: true, size: it.size || 72, color: it.color || '#ffffff', auto: true, minSize: it.minSize || 14 } : { plain: false }, true),
       'Без фона и оформления темы: длинный текст уменьшается, чтобы влезть'));
+    if (it.type === 'cur' && !it.plain) c.push(scCheck('Рисунок поверх слайда', it.ink !== false, (v) => set({ ink: v }), 'Когда здесь тот же слайд, на котором рисуют'));
   } else if (it.type === 'only') {
     c.push(scNote('Оператор отправляет сюда слайд правой кнопкой в ленте → «Только на сцену». Зрители этого не видят. Убрать — кнопка «Сцена» под предпросмотром.'));
   } else if (SC_ITEMS[it.type] && SC_ITEMS[it.type].info) {

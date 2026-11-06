@@ -253,7 +253,7 @@ function dropZone(el, getList, rows = true) {
       }
     } else {
       const paths = [...e.dataTransfer.files].map((f) => window.api.pathForFile(f)).filter(Boolean);
-      const res = await window.api.describeFiles(paths, { slideWidth: settings.slideW });
+      const res = await window.api.describeFiles(paths, { slideWidth: slideWidth() });
       const songs = ((res && res.items) || []).filter((x) => x.type === 'audio');
       if (!songs.length) { flashStatus('Сюда можно только музыку: mp3, wav, ogg, m4a, flac'); return; }
       editList(list, () => list.splice(at, 0, ...songs.map(songOf)));
@@ -271,7 +271,9 @@ function songMenu(e, song, list, i, kind) {
   ];
   const others = musicLists.filter((l) => l.tracks !== list);
   if (others.length) items.push('-', ...others.map((l) => ({ label: `В плейлист «${l.name}»`, fn: () => { l.tracks.push(songOf(song)); listChanged(); flashStatus(`Добавлено в «${l.name}»`); } })));
-  if (song.path) items.push('-', { label: 'Показать в проводнике', fn: () => revealFile(song.path) });
+  // Аудиоредактор: из плейлиста/очереди «Сохранить» подменит песню в списке, из папки — сохранит новым файлом
+  if (song.path) items.push('-', { label: 'Открыть в аудиоредакторе', fn: () => openAudioEditor(song, kind === 'dir' ? { kind: 'file' } : { kind: 'music', list }) });
+  if (song.path) items.push({ label: 'Показать в проводнике', fn: () => revealFile(song.path) });
   if (kind !== 'dir') items.push('-', { label: 'Убрать из плейлиста', key: 'Delete', fn: () => removeSong(list, i) });
   showMenu(e, items);
 }
@@ -428,9 +430,13 @@ $('fadeOutBtn').addEventListener('click', () => toggleFadeBox('fadeOut'));
 
 /* ----- Проигрыватель под предпросмотром: видео на экране или музыка ----- */
 
+// Видео на экране и открыта музыка — два проигрывателя: верхний — музыка, второй (#vplayer) — видео
+const twoPlayers = () => !!pv && pv.isConnected && !!curSong();
+
 function playerMode() {
   const hasVideo = !!pv && pv.isConnected;
   const hasAudio = !!curSong();
+  if (hasVideo && hasAudio) return 'audio';
   if (hasVideo && (lastPlayed === 'video' || !hasAudio || audio.paused)) return 'video';
   return hasAudio ? 'audio' : hasVideo ? 'video' : '';
 }
@@ -494,7 +500,45 @@ function updateAudioUi() {
   $('muteBtn').setAttribute('aria-pressed', String(!!muted));
   $('muteBtn').title = (mode === 'audio' ? 'Музыка' : 'Видео') + (muted ? ': звук выключен — включить' : ': выключить звук (Mute)');
   $('player').classList.toggle('muted', !!muted);
+  updateVideoPlayer();
 }
+
+// Второй проигрыватель — только видео
+function updateVideoPlayer() {
+  const box = $('vplayer');
+  box.hidden = !twoPlayers();
+  if (box.hidden) return;
+  $('vName').textContent = (videoLayer() || {}).label || 'Видео';
+  $('vName').title = $('vName').textContent;
+  box.classList.toggle('idle', pv.paused);
+  $('vPlay').textContent = pv.paused ? '▶' : '❚❚';
+  $('vPlay').title = pv.paused ? 'Видео: играть' : 'Видео: пауза';
+  const d = pv.duration;
+  $('vTime').textContent = fmt(pv.currentTime);
+  $('vTimeEnd').textContent = fmt(d);
+  if (document.activeElement !== $('vSeek')) $('vSeek').value = Number.isFinite(d) && d > 0 ? String(Math.round((pv.currentTime / d) * 1000)) : '0';
+  if (document.activeElement !== $('vVolume')) $('vVolume').value = String(Math.round(videoVol * 100));
+  const muted = !!settings.videoMute;
+  $('vMute').classList.toggle('on', muted);
+  $('vMute').setAttribute('aria-pressed', String(muted));
+  $('vMute').title = 'Видео' + (muted ? ': звук выключен — включить' : ': выключить звук (Mute)');
+  box.classList.toggle('muted', muted);
+}
+
+$('vPlay').addEventListener('click', () => { if (pv) videoCtl(pv.paused ? 'play' : 'pause'); });
+$('vStop').addEventListener('click', () => { if (pv) { videoCtl('pause'); videoCtl('seek', 0); } });
+$('vSeek').addEventListener('input', (e) => {
+  if (pv && Number.isFinite(pv.duration)) videoCtl('seek', (pv.duration * e.target.value) / 1000);
+});
+$('vVolume').addEventListener('input', (e) => { settings.videoMute = false; videoCtl('volume', e.target.value / 100); });
+$('vVolume').addEventListener('change', saveSettings);
+$('vMute').addEventListener('click', () => {
+  settings.videoMute = !settings.videoMute;
+  sendVideoAudio();
+  flashStatus(settings.videoMute ? 'Звук видео выключен' : 'Звук видео включён');
+  saveSettings();
+  updateAudioUi();
+});
 
 // Mute: выключить/включить звук того, что в проигрывателе (видео — на выводе, музыка — здесь); громкость не теряется
 $('muteBtn').addEventListener('click', () => {

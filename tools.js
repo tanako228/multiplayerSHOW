@@ -904,11 +904,12 @@ const parentDir = (p) => {
 };
 let poolData = { dirs: [], files: [] };
 const poolSeen = new Map(); // папка → её список (открывается мгновенно)
+let poolWatched = null; // за какой папкой следит main.js (pool:watch)
 let poolDrag = null; // { path, until } — какой файл сейчас тянут из медиапула
 // Тянут файл из медиапула (бросок разбирает poolDrop)
 const isPoolDrag = (e) => !!poolDrag && Date.now() < poolDrag.until && e.dataTransfer.types.includes('Files');
 
-// Как показывать файлы из медиапула (Настройки → Экран и вывод → Показ); пусто — как общий «Размер картинки»
+// Как показывать файлы из медиапула (Настройки → Показ и звук); пусто — как общий «Размер картинки»
 const poolFitValue = () => settings.poolFit || settings.fit;
 
 // Если среди добавленных файлов есть тот, что перетащили из медиапула, — запомнить ему способ вписывания
@@ -968,6 +969,7 @@ async function renderPool() {
   $('poolPath').title = cur;
   // Выше закреплённой папки не поднимаемся
   $('poolUp').disabled = !cur || settings.poolFolders.some((f) => f.replace(/[\\/]+$/, '') === cur.replace(/[\\/]+$/, ''));
+  if (poolWatched !== cur && window.api.poolWatch) { poolWatched = cur; window.api.poolWatch(cur); }
   if (!cur) { poolData = { dirs: [], files: [] }; drawPoolGrid(''); return; }
   // Уже открывали эту папку — сразу показываем, что было, потом сверяем с диском
   const old = poolSeen.get(cur);
@@ -1019,7 +1021,8 @@ function drawPoolGrid(msg) {
       mediaMenu(e, f, [
         ...(vis ? [{ label: 'Предпросмотр', fn: () => poolPopup(f, e) }] : []),
         { label: f.type === 'audio' ? 'Включить музыку' : 'Показать на экране', key: 'Enter', fn: () => poolShow(f) },
-        { label: 'Добавить в открытый список', fn: () => poolAdd(f) }, '-']);
+        { label: 'Добавить в открытый список', fn: () => poolAdd(f) },
+        ...(f.type === 'audio' ? [{ label: 'Открыть в аудиоредакторе', fn: () => openAudioEditor(f, { kind: 'file' }) }] : []), '-']);
     });
     t.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.stopPropagation(); poolShow(f); } });
     grid.append(t);
@@ -1080,6 +1083,19 @@ async function poolAdd(f) {
   if (tab === 'music' || f.type === 'audio') { musicAdd([f]); return; }
   inLists(() => svcAddPaths([f.path], true))();
 }
+
+// В открытой папке появился или пропал файл — медиапул обновляется сам
+if (window.api.onPoolChanged) window.api.onPoolChanged((dir) => {
+  poolSeen.delete(dir);
+  if (dir !== (settings.poolCur || settings.poolFolders[0] || '') || $('pool').hidden) return;
+  const foc = document.activeElement && document.activeElement.closest && document.activeElement.closest('#poolGrid .pf');
+  const keep = foc && foc.dataset.path;
+  const top = $('poolGrid').scrollTop;
+  renderPool().then(() => {
+    $('poolGrid').scrollTop = top; // прокрутку не сбрасываем
+    if (keep) { const t = [...$('poolGrid').children].find((x) => x.dataset.path === keep); if (t) t.focus({ preventScroll: true }); }
+  });
+});
 
 $('poolToggle').addEventListener('click', togglePool);
 $('poolClose').addEventListener('click', togglePool);
@@ -1250,8 +1266,44 @@ function applyUiColors() {
   root.colorScheme = p.scheme;
   // Логотип: на светлом фоне программы — тёмные буквы (logo-light-…), на тёмном — светлые
   $('brandLogo').src = p.scheme === 'light' ? 'brand/logo-light-transparent.svg' : 'brand/logo-dark-transparent.svg';
+  applyUiFx(p);
   // Запасная копия оформления: если настройки когда-нибудь испортятся, тема не пропадёт
-  try { localStorage.setItem('cp.look', JSON.stringify({ uiTheme: uiTheme().id, uiColors: settings.uiColors || {} })); } catch { /* не страшно */ }
+  const fx = Object.fromEntries(UI_FX.map((k) => [k, settings[k]]));
+  try { localStorage.setItem('cp.look', JSON.stringify({ uiTheme: uiTheme().id, uiColors: settings.uiColors || {}, ...fx })); } catch { /* не страшно */ }
+}
+
+// Эффекты оформления: свечение акцента (uiGlow 0–100), панели (uiGlass: '' | 'glass' | 'liquid', старое true = 'glass'),
+// прозрачность панелей (uiAlpha 0–60 %), скругление углов (uiRadius, px у кнопок), шрифт (uiFont, UI_FONTS), заглавные (uiCaps)
+const UI_FX = ['uiGlow', 'uiGlass', 'uiRadius', 'uiAlpha', 'uiFont', 'uiCaps'];
+// Шрифты — только системные Windows (внешние подключать нельзя): Bahnschrift — техничный DIN, Cascadia Mono — моноширинный
+const UI_FONTS = [
+  ['', 'Обычный (Segoe UI)'],
+  ['tech', 'Технический (Bahnschrift)'],
+  ['narrow', 'Технический узкий'],
+  ['geo', 'Геометрический (Century Gothic)'], // есть, где стоит Office; нет — Segoe UI Variable Display
+  ['mono', 'Моноширинный (Cascadia Mono)'],
+];
+const uiGlassMode = () => (settings.uiGlass === 'liquid' ? 'liquid' : settings.uiGlass ? 'glass' : '');
+function applyUiFx(p) {
+  const html = document.documentElement;
+  const root = html.style;
+  const r = Number.isFinite(+settings.uiRadius) ? +settings.uiRadius : 6;
+  root.setProperty('--rk', String(r / 6)); // все углы в index.html — calc(Npx * var(--rk))
+  const k = Math.max(0, Math.min(100, +settings.uiGlow || 0)) / 100;
+  html.classList.toggle('ui-glow', k > 0);
+  root.setProperty('--glow', k > 0 ? `0 0 ${Math.round(4 + 16 * k)}px color-mix(in srgb, var(--live) ${Math.round(35 + 50 * k)}%, transparent)` : '0 0 0 transparent');
+  root.setProperty('--glow-px', Math.round(3 + 8 * k) + 'px');
+  // Стекло / Liquid glass: панели и поля полупрозрачные поверх мягкого градиента окна; прозрачность — uiAlpha
+  const mode = uiGlassMode();
+  html.classList.toggle('ui-glass', !!mode);
+  html.classList.toggle('ui-liquid', mode === 'liquid');
+  if (mode) {
+    const a = Math.max(0, Math.min(60, Number.isFinite(+settings.uiAlpha) ? +settings.uiAlpha : 16));
+    root.setProperty('--panel', `color-mix(in srgb, ${p['--panel']} ${100 - a}%, transparent)`);
+    root.setProperty('--field', `color-mix(in srgb, ${p['--field']} ${Math.max(20, 100 - a * 1.4)}%, transparent)`);
+  }
+  html.dataset.uiFont = UI_FONTS.some(([id]) => id === settings.uiFont) ? settings.uiFont : '';
+  html.classList.toggle('ui-caps', !!settings.uiCaps);
 }
 
 function renderUiColors() {
@@ -1284,7 +1336,29 @@ function renderUiColors() {
     row.lastChild.append(code, input);
     box.append(row);
   }
+  // Эффекты
+  $('uiGlow').value = +settings.uiGlow || 0;
+  $('uiRadius').value = Number.isFinite(+settings.uiRadius) ? +settings.uiRadius : 6;
+  $('uiGlass').value = uiGlassMode();
+  $('uiAlpha').value = Number.isFinite(+settings.uiAlpha) ? +settings.uiAlpha : 16;
+  $('uiFont').value = settings.uiFont || '';
+  $('uiCaps').checked = !!settings.uiCaps;
+  uiFxLabels();
 }
+function uiFxLabels() {
+  $('uiGlowVal').textContent = +$('uiGlow').value ? $('uiGlow').value + '%' : 'выкл.';
+  $('uiRadiusVal').textContent = $('uiRadius').value + ' px';
+  $('uiAlphaVal').textContent = $('uiAlpha').value + '%';
+  $('uiAlpha').disabled = !$('uiGlass').value; // прозрачность — только у стеклянных панелей
+}
+$('uiFont').replaceChildren(...UI_FONTS.map(([v, t]) => new Option(t, v)));
+for (const id of ['uiGlow', 'uiRadius', 'uiAlpha']) {
+  $(id).addEventListener('input', () => { settings[id] = +$(id).value; uiFxLabels(); applyUiColors(); });
+  $(id).addEventListener('change', saveSettings);
+}
+$('uiGlass').addEventListener('change', () => { settings.uiGlass = $('uiGlass').value; uiFxLabels(); applyUiColors(); saveSettings(); });
+$('uiFont').addEventListener('change', () => { settings.uiFont = $('uiFont').value; applyUiColors(); saveSettings(); });
+$('uiCaps').addEventListener('change', () => { settings.uiCaps = $('uiCaps').checked; applyUiColors(); saveSettings(); });
 
 // Выбрать готовую тему: свои поправки цветов прежней темы убираются
 function setUiTheme(id) {
@@ -1311,6 +1385,7 @@ if (!settings.uiTheme) {
     if (look && look.uiTheme) {
       settings.uiTheme = look.uiTheme;
       if (!Object.keys(settings.uiColors || {}).length && look.uiColors) settings.uiColors = look.uiColors;
+      for (const k of UI_FX) if (look[k] != null) settings[k] = look[k];
       saveSettings();
     }
   } catch { /* нет копии — стандартная тема */ }
@@ -1372,7 +1447,7 @@ async function applyPreset(p) {
   // Меняется только то, что есть в пресете: пресет «только цвета» не трогает мониторы, клавиши и прочее.
   // Оформление — только из пресетов с темой программы (uiTheme); старые пресеты тему не сбрасывают
   const ps = clone(p.settings);
-  if (!ps.uiTheme) { delete ps.uiTheme; delete ps.uiColors; }
+  if (!ps.uiTheme) for (const k of ['uiTheme', 'uiColors', ...UI_FX]) delete ps[k];
   Object.assign(settings, ps, keep);
   saveSettings();
   if (p.themes && lib) {
@@ -1485,10 +1560,22 @@ function repoTouch(kind) {
   const r = repo();
   if (!r.dir || !r.auto || r.hold) return;
   clearTimeout(repoTimer);
-  repoTimer = setTimeout(() => repoSyncNow(false), 4000);
+  repoTimer = setTimeout(() => repoSyncNow(false), 1500); // почти сразу: правки за 1,5 с — одна запись
 }
 
-// mode: '' — дополнить папку (ничего в ней не удаляется), 'replace' — очистить и записать заново (только по кнопке)
+// Перед закрытием: несохранённая библиотека — на диск, дождаться идущей записи и записать последнее
+async function repoFinal() {
+  if (typeof saveTimer !== 'undefined' && saveTimer) flushLib();
+  else if (typeof lib !== 'undefined' && lib) await window.api.libSave(lib).catch(() => {});
+  const r = repo();
+  if (!r.dir || !r.auto || r.hold) return;
+  while (repoBusy) await new Promise((ok) => setTimeout(ok, 100));
+  repoClosing = true; // beforeunload уже не нужен
+  await repoSyncNow(false);
+}
+let repoClosing = false;
+
+// mode: '' — точная копия программы (удалённое убирается и из папки), 'add' — дополнить (ничего не удаляется), 'replace' — очистить и записать заново (по кнопке)
 async function repoSyncNow(manual, mode) {
   clearTimeout(repoTimer);
   const r = repo();
@@ -1569,9 +1656,11 @@ $('repoPick').addEventListener('click', async () => {
 });
 
 $('repoNow').addEventListener('click', async () => {
+  // Папка с чужими данными (hold): первый раз — дополнить, ничего из неё не убирая; дальше — точная копия программы
+  const first = repo().hold;
   repo().hold = false;
   saveSettings();
-  const res = await repoSyncNow(true);
+  const res = await repoSyncNow(true, first ? 'add' : '');
   if (res && res.ok) savedFlash($('repoNow'), res.changed ? 'Отправлено' : 'Уже всё в папке');
 });
 // Заменить содержимое папки: всё, что в ней было от программы, удаляется, пишется только текущее
@@ -1594,11 +1683,13 @@ $('repoOff').addEventListener('click', () => {
 });
 
 // Раз в полминуты — не поменялось ли что-то, что пишется мимо saveSettings (закладки, рисунки, списки)
-setInterval(() => repoTouch(), 30000);
+setInterval(() => repoTouch(), 10000);
 setTimeout(() => repoTouch('lib'), 8000); // после запуска — догнать то, что было до него
+// Окно закрывается не через свой вопрос (перезагрузка окна и т. п.): отправить что есть, main.js дождётся записи
 window.addEventListener('beforeunload', () => {
+  if (typeof saveTimer !== 'undefined' && saveTimer) flushLib();
   const r = repo();
-  if (r.dir && r.auto && !r.hold) window.api.repoSync({ dir: r.dir, parts: r.parts, ls: lsSnapshot() }).catch(() => {});
+  if (!repoClosing && r.dir && r.auto && !r.hold) window.api.repoSync({ dir: r.dir, parts: r.parts, ls: lsSnapshot() }).catch(() => {});
 });
 
 /* ----- Восстановить из репозитория или старой резервной копии ----- */
@@ -1634,10 +1725,12 @@ async function restoreRun(mode) {
       : `Добавить в программу из папки:\n${list}\n\nВаше не удаляется: новое добавится, то же самое обновится. Окно программы обновится.`;
   if (!window.confirm(ask)) return;
   clearTimeout(saveTimer); // чтобы старая библиотека из памяти не перезаписала восстановленную
+  saveTimer = 0;
   clearTimeout(repoTimer);
+  repoClosing = true; // и при перезагрузке окна старое не ушло в репозиторий (beforeunload)
   if (restoreSrc.kind === 'backup') { await restoreOldBackup(restoreSrc.dir, parts); return; }
   const res = await window.api.repoRestore({ dir: restoreSrc.dir, parts, mode, ls: lsSnapshot() });
-  if (!res || !res.ok) { showNotice('Не удалось восстановить из этой папки', true); return; }
+  if (!res || !res.ok) { repoClosing = false; showNotice('Не удалось восстановить из этой папки', true); return; }
   const keep = settings.repo;
   Object.assign(settings, res.set || {});
   for (const k of res.dropSet || []) delete settings[k];
@@ -1662,12 +1755,13 @@ async function restoreOldBackup(dir, parts) {
   const has = (p) => parts.includes(p);
   if (has('settings') && l.settings) {
     const s = { ...l.settings };
-    for (const k of ['uiTheme', 'uiColors', 'repo']) delete s[k]; // оформление — только пунктом «Оформление»
+    for (const k of ['uiTheme', 'uiColors', ...UI_FX, 'repo']) delete s[k]; // оформление — только пунктом «Оформление»
     Object.assign(settings, s);
   }
   if (has('keys') && l.keys) settings.keys = l.keys;
   if (has('look') && l.uiColors) settings.uiColors = l.uiColors;
   if (has('look') && l.uiTheme) settings.uiTheme = l.uiTheme;
+  if (has('look')) for (const k of UI_FX) if (l[k] != null) settings[k] = l[k];
   if (has('pool') && l.poolFolders) settings.poolFolders = [...new Set([...(settings.poolFolders || []), ...l.poolFolders])];
   saveSettings();
   try {

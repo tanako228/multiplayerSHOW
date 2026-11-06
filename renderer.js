@@ -1,7 +1,8 @@
 const $ = (id) => document.getElementById(id);
 const grid = $('grid');
-const displaySel = $('display');
-const toggleBtn = $('toggleOutput');
+// Монитор «Основного» и кнопка вывода — без места в окне: выбор монитора — в Редакторе сцен (screens.js), вывод — галочка «Зал»
+const displaySel = $('display') || document.createElement('select');
+const toggleBtn = $('toggleOutput') || document.createElement('button');
 const notice = $('notice');
 const prevWrap = $('previewWrap');
 const prevStage = $('previewStage');
@@ -12,7 +13,7 @@ const peekStage = $('peekStage'); // просмотр без вывода — п
 const DEFAULTS = {
   fit: 'contain', transType: 'fade', transMs: 600,
   res: 'auto', resW: 3840, resH: 2160,
-  videoSound: false, videoLoop: true, slideW: 2560,
+  videoSound: false, videoLoop: true, outFit: 'fit', outDisplay: 0,
   textFont: 'segoe', textScale: 100, textColor: '#ffffff', textBg: '#000000', showTr: true,
   trShort: false, // переводы сокращённо: «RST» вместо «Russian Synodal Translation»
   bibleId: null,
@@ -34,7 +35,8 @@ const DEFAULTS = {
   outAutoOn: false, // при запуске: вывод на монитор и экраны/сцены — как были (выключено — всё выключено)
   inkKeep: false, poolOpen: false, poolH: 240, poolFolders: [], poolCur: '', poolFit: 'contain',
   poolSrc: false, // в медиапуле открыт раздел «Источники»
-  uiTheme: '', uiColors: {}, plFeed: true, // uiTheme — тема программы (UI_THEMES в tools.js), пусто — «Тёмно-синяя» sideFold: false, contentFold: false,
+  uiTheme: '', uiColors: {}, uiGlow: 0, uiGlass: '', uiRadius: 6, uiAlpha: 16, uiFont: '', uiCaps: false, plFeed: true, // uiGlow/uiGlass/uiRadius/uiAlpha/uiFont/uiCaps — эффекты оформления (tools.js, applyUiColors)
+  // uiTheme — тема программы (UI_THEMES в tools.js), пусто — «Тёмно-синяя» sideFold: false, contentFold: false,
   musicRoot: '', musicSrc: null, musicVol: 0.8, fadeOut: 2, fadeIn: 1, autoNext: true,
   scaleBible: 190, scaleScreen: 170, // ширина слайда-миниатюры (Scale под предпросмотром)
   sizes: {}, // ширины панелей, заданные разделителями: { aside: 420, col: 260, … }
@@ -61,10 +63,11 @@ transOptions($('transType'));
 if (!Scene.TRANS.some(([v]) => v === settings.transType)) settings.transType = 'fade';
 
 const BINDINGS = [
-  ['transType', 'str'], ['transMs', 'num'], ['res', 'str', 'resSel'], ['resW', 'num'], ['resH', 'num'],
-  ['fit', 'str'], ['videoSound', 'check'], ['videoLoop', 'check'], ['slideW', 'num'],
+  // Разрешение «Основного» (res resW resH outFit) и «Включать вывод при запуске» — в Редакторе сцен (screens.js: scMainRows)
+  ['transType', 'str'], ['transMs', 'num'],
+  ['fit', 'str'], ['videoSound', 'check'], ['videoLoop', 'check'],
   // Шрифт, размер и цвета текста Библии без темы (textFont…textBg) — только в настройках; оформление — в темах и окне «Библия»
-  ['poolFit', 'str'], ['plFeed', 'check'], ['fadeOut', 'num'], ['fadeIn', 'num'], ['autoNext', 'check'], ['outAutoOn', 'check'],
+  ['poolFit', 'str'], ['plFeed', 'check'], ['fadeOut', 'num'], ['fadeIn', 'num'], ['autoNext', 'check'],
 ];
 
 const VISUAL_KEYS = ['fit', 'videoSound', 'videoLoop', 'textFont', 'textScale', 'textColor', 'textBg', 'showTr', 'trShort'];
@@ -79,7 +82,7 @@ BINDINGS.forEach(([key, kind, id]) => {
     onSettingChanged(key);
   });
 });
-if (![...$('resSel').options].some((o) => o.value === settings.res)) { settings.res = 'auto'; $('resSel').value = 'auto'; }
+if (!/^(auto|custom|\d+x\d+)$/.test(String(settings.res))) settings.res = 'auto';
 
 function onSettingChanged(key) {
   $('transMsVal').textContent = (settings.transMs / 1000).toFixed(1) + ' с';
@@ -87,8 +90,7 @@ function onSettingChanged(key) {
   const sec = (v) => (v ? v.toFixed(1) + ' с' : 'выкл.');
   $('fadeOutVal').textContent = $('fadeOutVal2').textContent = sec(settings.fadeOut);
   $('fadeInVal').textContent = $('fadeInVal2').textContent = sec(settings.fadeIn);
-  $('resCustom').hidden = settings.res !== 'custom';
-  if (['res', 'resW', 'resH'].includes(key)) { sendOutputSettings(); layoutPreview(); }
+  if (['res', 'resW', 'resH', 'outFit'].includes(key)) { sendOutputSettings(); layoutPreview(); }
   if (VISUAL_KEYS.includes(key)) refreshLive();
   if (key === 'plFeed' && typeof renderService === 'function') renderService();
   if (key === 'trShort' && typeof renderChips === 'function' && typeof bibleIndex !== 'undefined') renderChips();
@@ -310,16 +312,26 @@ let outputOpen = false;
 
 const clampSize = (n, d) => Math.max(320, Math.min(16384, Math.round(n) || d));
 
+// Монитор «Основного» (его настоящее разрешение — pw × ph, в пикселях)
+const mainDisplay = () => displays.find((x) => x.id === Number(displaySel.value)) || displays[0];
+// Больше, чем умеет монитор, не ставим
+function displayMax(d) { return d ? { W: d.pw || d.bw, H: d.ph || d.bh } : { W: 7680, H: 4320 }; }
 function outputSize() {
-  if (settings.res === 'custom') return { W: clampSize(settings.resW, 3840), H: clampSize(settings.resH, 2160) };
-  if (settings.res !== 'auto') { const [W, H] = settings.res.split('x').map(Number); return { W, H }; }
-  const d = displays.find((x) => x.id === Number(displaySel.value)) || displays[0];
-  return d ? { W: d.bw, H: d.bh } : { W: 1920, H: 1080 };
+  const d = mainDisplay();
+  let W, H;
+  if (settings.res === 'custom') { W = clampSize(settings.resW, 3840); H = clampSize(settings.resH, 2160); }
+  else if (settings.res !== 'auto') [W, H] = settings.res.split('x').map(Number);
+  else return d ? { W: d.bw, H: d.bh } : { W: 1920, H: 1080 };
+  const m = displayMax(d);
+  return { W: Math.min(W, m.W), H: Math.min(H, m.H) };
 }
+// Слайды PowerPoint — в самом высоком качестве: не меньше 4K и не меньше самого большого монитора
+function slideWidth() { return Math.min(7680, Math.max(3840, ...displays.map((d) => d.pw || d.bw || 0))); }
 
 function sendOutputSettings() {
   const { W, H } = outputSize();
   window.api.setOutputSettings(settings.res === 'auto' ? { resW: 0, resH: 0 } : { resW: W, resH: H });
+  // «Подгонка» (settings.outFit): 'fit' — растянуть под монитор, 'none' — пиксель в пиксель (меньшее разрешение — меньше на экране) — уходит в scConfig
   if (typeof scSend === 'function') scSend(); // размер «Основного» — экранам и сценам (screens.js)
 }
 
@@ -373,7 +385,7 @@ $('prevGrip').addEventListener('pointerdown', (e) => {
 $('prevGrip').addEventListener('dblclick', () => { settings.prevH = 0; saveSettings(); layoutPreview(); });
 
 /* ---------- Что видно в «Предпросмотре»: программа (слои, как раньше), любой экран или сцена из «Экран и вывод» ----------
-   settings.prevScreen — id экрана или 'scene:id' сцены ('' — программа). Рисует compose.js (та же картинка, что на выходе), без звука;
+   settings.prevScreen — id экрана или 'scene:id' сцены ('' — «Основной»; пункта «Программа» больше нет). Рисует compose.js (та же картинка, что на выходе), без звука;
    под ним продолжает работать обычный предпросмотр (звук при выключенном выводе, рисование).
    Правая кнопка по «Предпросмотру» — то же меню + «Открыть в отдельном окне» (плавающее окно поверх остальных, main.js). */
 let prevScr = null; // { id, host, h }
@@ -386,7 +398,7 @@ function prevTarget(id) {
   return s ? { id, name: s.name || 'Экран', screen: s } : null;
 }
 function prevScreenSync() {
-  const t = prevTarget(settings.prevScreen || '');
+  const t = prevTarget(settings.prevScreen || 'main') || prevTarget('main');
   const id = t ? t.id : '';
   if ((prevScr ? prevScr.id : '') !== id) {
     if (prevScr) { Compose.unmountScreen(prevScr.h); prevScr.host.remove(); prevScr = null; }
@@ -398,10 +410,12 @@ function prevScreenSync() {
   }
   const b = $('prevPick');
   if (b) {
-    b.textContent = (t ? (t.scene ? 'Сцена: ' : '') + t.name : 'Программа') + ' ▾';
-    b.classList.toggle('on', !!t);
+    b.textContent = (t ? (t.scene ? 'Сцена: ' : '') + t.name : 'Основной') + ' ▾';
+    b.classList.toggle('on', !!t && t.id !== 'main');
     b.title = t ? `В предпросмотре — ${t.scene ? 'сцена' : 'экран'} «${t.name}». Щелчок — выбрать другое, правая кнопка по картинке — отдельное окно` : 'В предпросмотре — программа (что в слоях). Щелчок — показать здесь экран или сцену';
   }
+  // Под экраном/сценой обычный предпросмотр работает дальше (звук, рисунок), но его не видно — только один экран
+  prevStage.style.visibility = prevScr ? 'hidden' : '';
   prevScreenFit();
 }
 // Экран своего размера — целиком в окне предпросмотра (по центру, с полями)
@@ -416,7 +430,7 @@ function prevScreenFit() {
 // Меню «что показывать»: у кнопки над «Предпросмотром» или правой кнопкой по нему (at — где открыть)
 function prevScreenMenu(at) {
   const L = typeof lib !== 'undefined' && lib ? lib : null;
-  const cur = settings.prevScreen || '';
+  const cur = prevTarget(settings.prevScreen || '') ? settings.prevScreen : 'main';
   const pick = (id) => { settings.prevScreen = id; saveSettings(); prevScreenSync(); };
   const r = $('prevPick').getBoundingClientRect();
   const screens = L && Array.isArray(L.screens) ? L.screens : [];
@@ -432,10 +446,9 @@ function prevScreenMenu(at) {
       fn: () => { sc.on = !sc.on; if (typeof scSceneOutSet === 'function') scSceneOutSet(sc, true); } })),
   ];
   showMenu(at && at.clientX != null ? at : { clientX: r.left, clientY: r.bottom + 4 }, [
-    { label: 'Открыть в отдельном окне: ' + (t ? t.name : 'программа'), fn: float(cur || 'main', t ? t.name : 'Программа') },
+    { label: 'Открыть в отдельном окне: ' + (t ? t.name : 'Основной'), fn: float(cur, t ? t.name : 'Основной') },
     '-',
     { label: 'Показывать в предпросмотре', disabled: true, fn() {} },
-    { label: mark('') + 'Программа — что в слоях', fn: () => pick('') },
     ...(screens.length ? ['-', { label: 'Экраны', disabled: true, fn() {} }] : []),
     ...screens.map((s) => ({ label: mark(s.id) + s.name + off(s.enabled, s.id !== 'main' && (s.outputs || []).length), fn: () => pick(s.id) })),
     ...(scenes.length ? ['-', { label: 'Сцены', disabled: true, fn() {} }] : []),
@@ -601,15 +614,44 @@ document.querySelectorAll('.splitter').forEach((sp) => {
   });
 });
 
+// Монитор узнаётся по id, а если Windows его сменила (перезагрузка, другой разъём) — по имени и разрешению (dispKey),
+// иначе — единственный дополнительный монитор. Так выходы экранов и сцен не «слетают» при запуске
+const dispKey = (d) => (d ? `${d.name || ''}|${d.pw || d.bw}x${d.ph || d.bh}` : '');
+function dispMatch(id, key) {
+  if (!displays.length || displays.some((d) => d.id === Number(id))) return null; // на месте или мониторов нет
+  const name = String(key || '').split('|')[0];
+  const ext = displays.filter((d) => !d.primary);
+  return (key && displays.find((d) => dispKey(d) === key)) || (name && displays.find((d) => d.name === name)) || (ext.length === 1 ? ext[0] : null);
+}
+// Переписать сохранённые мониторы выходов (lib.screens, lib.scenes) на те, что подключены сейчас; запомнить имя монитора
+function dispFix() {
+  if (typeof lib === 'undefined' || !lib || !Array.isArray(lib.screens) || !displays.length) return;
+  let ch = 0;
+  for (const z of [...lib.screens, ...(lib.scenes || [])]) for (const o of z.outputs || []) {
+    if (!o || o.kind !== 'display') continue;
+    const d = dispMatch(o.display, o.dkey);
+    if (d) { o.display = d.id; ch++; }
+    const k = dispKey(displays.find((x) => x.id === Number(o.display)));
+    if (k && o.dkey !== k) { o.dkey = k; ch++; }
+  }
+  if (!ch) return;
+  // Без шага отмены: это не правка оператора
+  if (saveTimer) saveLib();
+  else { window.api.libSave(lib).catch(() => {}); if (histCur !== null) histCur = histSnap(); if (typeof repoTouch === 'function') repoTouch('lib'); }
+  if (typeof scSend === 'function') scSend();
+}
+
 function fillDisplays(list) {
   displays = list;
-  const keep = Number(displaySel.value);
+  const keep = Number(displaySel.value) || Number(settings.outDisplay);
   displaySel.replaceChildren(...list.map((d) => Object.assign(document.createElement('option'), { value: d.id, textContent: d.label })));
-  const stillThere = list.find((d) => d.id === keep);
+  const stillThere = list.find((d) => d.id === keep) || dispMatch(keep || -1, settings.outDisplayKey);
   const external = list.find((d) => !d.primary);
   displaySel.value = (stillThere || external || list[0]).id;
+  try { dispFix(); } catch { /* библиотека ещё не загружена — dispFix позовёт scInit */ }
   sendOutputSettings();
   layoutPreview();
+  if (typeof scOutputChanged === 'function') scOutputChanged(); // список мониторов в Редакторе сцен
 }
 
 function setOutputState({ open, displayId }) {
@@ -621,10 +663,7 @@ function setOutputState({ open, displayId }) {
   toggleBtn.textContent = open ? 'Выключить вывод' : 'Включить вывод';
   toggleBtn.classList.toggle('on', open);
   // Галочка в шапке «Предпросмотра»
-  const ob = $('outToggle');
-  ob.classList.toggle('on', open);
-  ob.setAttribute('aria-pressed', String(open));
-  ob.title = open ? 'Выключить вывод на внешний экран' : 'Включить вывод: показать текущее на внешнем экране';
+  if (typeof lib !== 'undefined' && lib) outGroupsSync();
   if (open && displayId != null) displaySel.value = displayId;
   const hint = $('outHint');
   hint.classList.toggle('on', open);
@@ -638,12 +677,70 @@ const toggleOutput = () => {
   else window.api.openOutput(Number(displaySel.value));
 };
 toggleBtn.addEventListener('click', toggleOutput);
-$('outToggle').addEventListener('click', toggleOutput);
 displaySel.addEventListener('change', () => {
+  settings.outDisplay = Number(displaySel.value); // монитор «Основного» запоминается
+  settings.outDisplayKey = dispKey(displays.find((d) => d.id === settings.outDisplay)); // и его имя — если Windows сменит id
+  saveSettings();
   if (outputOpen) window.api.openOutput(Number(displaySel.value));
   sendOutputSettings();
   layoutPreview();
 });
+
+/* ----- Группы вывода «Зал» и «Сцена» — галочки над «Предпросмотром» -----
+   У экрана (lib.screens) и сцены (lib.scenes) — group: 'hall' | 'stage' | 'none' (Редактор сцен → «Группа»).
+   По умолчанию экраны (и «Основной») — «Зал», сцены — «Сцена». Галочка включает/выключает выход всех из своей группы;
+   «Основной» — это его монитор (outputOpen) и дополнительные выходы (s.enabled) вместе. */
+const OUT_GROUPS = { hall: 'Зал', stage: 'Сцена' };
+function outGroupOf(x, scene) { return x.group || (scene ? 'stage' : 'hall'); }
+// Кто в группе: [{ name, on, set(v) }]; экран или сцена без выходов не в счёт («Основной» — всегда: у него есть монитор)
+function outGroupMembers(g) {
+  const L = typeof lib !== 'undefined' && lib ? lib : null;
+  if (!L || !Array.isArray(L.screens)) return [];
+  const list = [];
+  for (const s of L.screens) {
+    if (outGroupOf(s, false) !== g) continue;
+    if (s.id === 'main') list.push({ name: s.name || 'Основной', on: mainOutOn(), set: (v) => mainOutSet(v, true) });
+    else if ((s.outputs || []).length) list.push({ name: s.name || 'Экран', on: !!s.enabled, set: (v) => { s.enabled = v; } });
+  }
+  for (const sc of L.scenes || []) {
+    if (outGroupOf(sc, true) === g && (sc.outputs || []).length) list.push({ name: sc.name || 'Сцена', on: !!sc.on, set: (v) => { sc.on = v; } });
+  }
+  return list;
+}
+// «Основной»: монитор зала + его дополнительные выходы
+function mainOutOn() { const m = lib && lib.screens && lib.screens.find((s) => s.id === 'main'); return outputOpen || !!(m && m.enabled && (m.outputs || []).length); }
+function mainOutSet(on, quiet) {
+  const m = lib && lib.screens && lib.screens.find((s) => s.id === 'main');
+  if (on && !outputOpen && displays.length) window.api.openOutput(Number(displaySel.value));
+  if (!on && outputOpen) window.api.closeOutput();
+  if (m) m.enabled = on;
+  if (!quiet) { saveLib(); if (typeof scSend === 'function') scSend(); if (typeof scOutputChanged === 'function') scOutputChanged(); }
+}
+function outGroupSet(g, on) {
+  const list = outGroupMembers(g);
+  if (!list.length) return;
+  list.forEach((x) => x.set(on));
+  saveLib();
+  if (typeof scSend === 'function') scSend();
+  if (typeof scOutputChanged === 'function') scOutputChanged();
+  if (typeof stPanelRefresh === 'function') stPanelRefresh();
+  flashStatus(`${OUT_GROUPS[g]}: вывод ${on ? 'включён' : 'выключен'}`);
+}
+function outGroupsSync() {
+  for (const [g, id] of [['hall', 'outToggle'], ['stage', 'stageToggle']]) {
+    const b = $(id);
+    const list = outGroupMembers(g);
+    const on = list.some((x) => x.on);
+    b.disabled = !list.length;
+    b.classList.toggle('on', on);
+    b.setAttribute('aria-pressed', String(on));
+    const names = (l) => l.map((x) => '«' + x.name + '»').join(', ');
+    b.title = !list.length ? `${OUT_GROUPS[g]}: в группе нет экранов и сцен с выходами — назначьте группу в Редакторе сцен`
+      : on ? `${OUT_GROUPS[g]}: выключить вывод (${names(list)})` : `${OUT_GROUPS[g]}: включить вывод (${names(list)})`;
+  }
+}
+$('outToggle').addEventListener('click', () => outGroupSet('hall', !outGroupMembers('hall').some((x) => x.on)));
+$('stageToggle').addEventListener('click', () => outGroupSet('stage', !outGroupMembers('stage').some((x) => x.on)));
 
 /* ---------- Что сейчас на экране ---------- */
 
@@ -677,36 +774,53 @@ const LAYER_KINDS = {
   source: { name: 'Источники', icon: 'sources', takes: ['live'], sound: true },
   media: { name: 'Медиа', icon: 'image', takes: ['image', 'video'], sound: true },
   pres: { name: 'Презентации', icon: 'text', takes: ['text', 'custom'], sound: false },
+  // Overlay — поверх основной презентации; сам сюда ничего не идёт (только пункт/макрос с этим слоем).
+  // Показ в Overlay не сбивает выделение слайда на экране (plShown), ленту и авто-переключение основной презентации.
+  overlay: { name: 'Overlay', icon: 'layers', takes: [], sound: true, over: true },
 };
 const DEFAULT_LAYERS = [{ id: 'source', kind: 'source' }, { id: 'media', kind: 'media' }, { id: 'pres', kind: 'pres' }];
 const layerOn = {}; // слой → { build, label, content, marks } — что в нём сейчас
+const ovShown = {}; // слой Overlay → { view, key, sid } — какой слайд в нём (своя подсветка в ленте)
 
 // Слои по порядку снизу вверх (из настроек; неизвестные виды отбрасываем, пусто — три обычных)
 function layerDefs() {
   let list = Array.isArray(settings.layers) ? settings.layers.filter((l) => l && l.id && LAYER_KINDS[l.kind]) : [];
   if (!list.length) list = DEFAULT_LAYERS.map((l) => ({ ...l }));
   if (list !== settings.layers) settings.layers = list;
+  // Перенос: слой «Презентации», переименованный в «Overlay», становится слоем вида Overlay (один раз)
+  if (!settings.ovMig) {
+    settings.ovMig = true;
+    for (const l of list) if (l.kind === 'pres' && /^\s*overlay/i.test(l.name || '')) l.kind = 'overlay';
+  }
   return list;
 }
 const layerById = (id) => layerDefs().find((l) => l.id === id) || null;
 const layerName = (l) => l.name || LAYER_KINDS[l.kind].name;
-// Куда идёт содержимое само: первый слой, чей вид его принимает (иначе — верхний)
+const isOverlay = (id) => { const l = id && layerById(id); return !!(l && LAYER_KINDS[l.kind].over); };
+// Куда идёт содержимое само: первый слой, чей вид его принимает (иначе — верхний не-Overlay)
 function autoLayer(content) {
   const defs = layerDefs();
-  return (defs.find((l) => LAYER_KINDS[l.kind].takes.includes(content.type)) || defs[defs.length - 1]).id;
+  const main = defs.filter((l) => !LAYER_KINDS[l.kind].over);
+  return (defs.find((l) => LAYER_KINDS[l.kind].takes.includes(content.type)) || main[main.length - 1] || defs[defs.length - 1]).id;
 }
-// Верхний непустой видимый слой — с ним работают рисование и «что на экране»
+// Верхний непустой видимый слой — с ним работают рисование и «что на экране» (Overlay — только если больше ничего нет)
 function topLayer() {
   const defs = layerDefs();
-  for (let i = defs.length - 1; i >= 0; i--) if (layerOn[defs[i].id] && !defs[i].hidden) return defs[i].id;
-  return null;
+  let ov = null;
+  for (let i = defs.length - 1; i >= 0; i--) {
+    if (!layerOn[defs[i].id] || defs[i].hidden) continue;
+    if (!LAYER_KINDS[defs[i].kind].over) return defs[i].id;
+    if (!ov) ov = defs[i].id;
+  }
+  return ov;
 }
 const topContent = () => { const id = topLayer(); return id ? layerOn[id].content : null; };
 const videoLayer = () => layerDefs().map((l) => layerOn[l.id]).filter((x) => x && x.content.type === 'video').pop() || null;
 
 // Слои → окно вывода и предпросмотр (порядок, видимость, прозрачность, громкость)
 function sendLayers() {
-  const defs = layerDefs().map(({ id, hidden, opacity, volume }) => ({ id, hidden: !!hidden, opacity: opacity != null ? opacity : 1, volume: volume != null ? volume : 1 }));
+  // over — слой Overlay (окну вывода — чтобы знать, у какого слоя рисунок, compose.js → inkLayer)
+  const defs = layerDefs().map(({ id, kind, hidden, opacity, volume }) => ({ id, over: !!LAYER_KINDS[kind].over, hidden: !!hidden, opacity: opacity != null ? opacity : 1, volume: volume != null ? volume : 1 }));
   window.api.layers({ defs });
   prevAudio(defs);
   Compose.progLayers({ defs }); // превью экранов на вкладке «Экраны»
@@ -809,7 +923,9 @@ function present(build, label, instant, layer, trOwn) {
   Scene.show(prevStage, Compose.lookFor('main', { ...content, sound: content.type === 'video' && !!content.sound }), tr, id); // тема «Основного», если задана
   Compose.progShow({ ...content, sound: false }, tr, id);
   // Что подсвечено в списках как «на экране» — запоминаем после того, как вызвавший код это отметит
-  queueMicrotask(() => { entry.marks = { live, bShown, plShown }; });
+  // Overlay подсветку основной презентации не ставит и не снимает
+  if (isOverlay(id)) entry.marks = {};
+  else queueMicrotask(() => { entry.marks = { live, bShown, plShown }; });
   layersChanged();
   // Media Action шаблона темы: вместе со слайдом — свой фон в слой «Медиа» (если там уже не он)
   const tpl = content.style && content.style.tpls ? Scene.pickTpl(content) : null;
@@ -859,6 +975,8 @@ function clearLayer(id, instant) {
   if (m.plShown && plShown === m.plShown) plShown = null;
   if (m.bShown && bShown === m.bShown) bShown = null;
   if (m.live >= 0 && live === m.live) live = -1;
+  delete ovShown[id];
+  if (typeof updatePlaylistLive === 'function') updatePlaylistLive();
   layersChanged();
   if (typeof mcLayerEvt === 'function') mcLayerEvt('clear', id, true, x.label);
 }
@@ -868,6 +986,7 @@ function clearScreen() {
   const ids = Object.keys(layerOn);
   for (const id of ids) delete layerOn[id];
   live = -1; bShown = null; plShown = null;
+  for (const k of Object.keys(ovShown)) delete ovShown[k];
   const tr = transition();
   window.api.clear({ transition: tr });
   Scene.clear(prevStage, tr);
@@ -912,6 +1031,7 @@ const ED_KINDS = [
   ['themes', 'Редактор тем', 'theme', 'Ctrl+4', () => openThemeTab()],
   ['scenes', 'Редактор сцен', 'screens', 'Ctrl+6', () => openScreensTab()],
   ['macros', 'Редактор макросов', 'macro', 'Ctrl+5', () => openMacroTab()],
+  ['audio', 'Аудиоредактор', 'wave', 'Ctrl+7', () => openAudioTab()],
 ];
 function setTab(name) {
   if (name === 'screen') name = 'service'; // «Отдельных файлов» больше нет — всё в плейлистах и библиотеках
@@ -928,10 +1048,13 @@ function setTab(name) {
   $('themesView').hidden = name !== 'themes';
   $('macrosView').hidden = name !== 'macros';
   $('screensView').hidden = name !== 'scenes';
+  $('audioView').hidden = name !== 'audio';
   // Редакторы (темы, сцены, макросы) — во всю ширину: «Предпросмотр» справа прячется
   document.body.classList.toggle('te-mode', name === 'themes');
   document.body.classList.toggle('mc-mode', name === 'macros');
   document.body.classList.toggle('sc-mode', name === 'scenes');
+  document.body.classList.toggle('ae-mode', name === 'audio');
+  if (typeof aeTabOpen === 'function') { if (name === 'audio') aeTabOpen(); else aeTabClose(); }
   if (typeof scTabOpen === 'function') { if (name === 'scenes') scTabOpen(); else scTabClose(); }
   // Все вкладки занимают всю высоту и прокручиваются внутри своих панелей
   document.querySelector('main').classList.add('bible-mode');
@@ -969,7 +1092,7 @@ function syncViewBar(part) {
 /* ---------- Scale: размер слайдов-миниатюр на вкладке (только вид, слайды не меняются) ---------- */
 
 const SCALE = { bible: ['scaleBible', '--bible-tile', 'Библия'], screen: ['scaleScreen', '--svc-tile', 'Экран'] };
-const scalePart = () => (tab === 'bible' ? 'bible' : tab === 'music' || tab === 'themes' || tab === 'macros' || tab === 'scenes' ? null : 'screen');
+const scalePart = () => (tab === 'bible' ? 'bible' : tab === 'music' || tab === 'themes' || tab === 'macros' || tab === 'scenes' || tab === 'audio' ? null : 'screen');
 const scaleGrid = (part) => (part === 'bible' ? $('verses') : tab === 'screen' ? $('grid') : document.querySelector('#svcFeed .svc-slides'));
 
 // Сколько слайдов помещается в ряд при текущем размере и ширине панели
@@ -984,7 +1107,7 @@ function scaleCols(part) {
 function applyScale() {
   for (const [key, cssVar] of Object.values(SCALE)) document.documentElement.style.setProperty(cssVar, settings[key] + 'px');
   const part = scalePart();
-  syncViewBar(part || (tab === 'themes' || tab === 'macros' || tab === 'scenes' ? tab : 'music')); // в «Музыке» слайдов нет — там только переход, в «Темах» и «Макросах» строки нет
+  syncViewBar(part || (tab === 'themes' || tab === 'macros' || tab === 'scenes' || tab === 'audio' ? tab : 'music')); // в «Музыке» слайдов нет — там только переход, в «Темах» и «Макросах» строки нет
   if (!part) return;
   const [key, , name] = SCALE[part];
   $('scaleRange').value = settings[key];
@@ -1024,10 +1147,10 @@ const edAt = (el) => { const r = el.getBoundingClientRect(); return { clientX: r
 // Кнопка «Редактор … ▾» — первой строкой в левой колонке каждого редактора
 function edPickSync() {
   for (const [k, name, icon] of ED_KINDS) {
-    const view = $(k === 'themes' ? 'themesView' : k === 'scenes' ? 'screensView' : 'macrosView');
+    const view = $(k === 'themes' ? 'themesView' : k === 'scenes' ? 'screensView' : k === 'audio' ? 'audioView' : 'macrosView');
     const side = view && view.firstElementChild;
     if (!side || side.querySelector(':scope > .ed-pick')) continue;
-    const b = Object.assign(document.createElement('button'), { className: 'ed-pick', title: 'Переключить редактор: темы, сцены, макросы' });
+    const b = Object.assign(document.createElement('button'), { className: 'ed-pick', title: 'Переключить редактор: темы, сцены, макросы, аудио' });
     b.append(Icons.el(icon), Object.assign(document.createElement('span'), { className: 'ed-v', textContent: name }), '▾');
     b.addEventListener('click', () => edMenu(edAt(b)));
     side.prepend(b);
@@ -2649,7 +2772,7 @@ function addResult({ items, errors }) {
 async function pickFiles() {
   if (tab === 'bible') return pickBibles();
   if (tab !== 'music') return inLists(svcAddFiles)();
-  addResult(await window.api.pickMedia({ slideWidth: settings.slideW }));
+  addResult(await window.api.pickMedia({ slideWidth: slideWidth() }));
 }
 document.querySelectorAll('.addBtn').forEach((b) => b.addEventListener('click', pickFiles));
 
@@ -2671,7 +2794,7 @@ window.addEventListener('drop', async (e) => {
   if (tab === 'bible') addBibles(paths);
   else if (tab !== 'music') inLists(() => svcAddPaths(paths))();
   else {
-    const res = await window.api.describeFiles(paths, { slideWidth: settings.slideW });
+    const res = await window.api.describeFiles(paths, { slideWidth: slideWidth() });
     markPoolFit(res.items); // файл перетащили из медиапула — показывать так, как выбрано в настройках
     addResult(res);
   }
@@ -2697,7 +2820,8 @@ const ACTIONS = [
     ['clearPres', 'Очистить слой «Презентации»', ['F2'], () => clearKind('pres')],
     ['clearMedia', 'Очистить слой «Медиа»', ['F3'], () => clearKind('media')],
     ['clearSource', 'Очистить слой «Источники»', ['F4'], () => clearKind('source')],
-    ['output', 'Включить или выключить вывод', ['F9'], () => toggleBtn.click()],
+    ['clearOverlay', 'Очистить слои «Overlay»', [], () => clearKind('overlay')],
+    ['output', 'Включить или выключить вывод в зал', ['F9'], () => $('outToggle').click()],
     ['draw', 'Быстрая анимация: крупный план и рисование поверх слайда', ['Ctrl+KeyE'], () => openInk()],
     ['inkClear', 'Стереть рисунок с экрана', ['Ctrl+Shift+KeyE'], () => inkWipeLive()],
     ['animNext', 'Быстрая анимация: NEXT — следующий шаг', [], () => animNext()],
@@ -2724,6 +2848,7 @@ const ACTIONS = [
     ['tabThemes', 'Редактор тем', ['Ctrl+Digit4'], () => openThemeTab()],
     ['tabMacros', 'Редактор макросов', ['Ctrl+Digit5'], () => openMacroTab()],
     ['tabScreens', 'Редактор сцен: экраны, сцены, пресеты сцен', ['Ctrl+Digit6'], () => openScreensTab()],
+    ['tabAudio', 'Аудиоредактор', ['Ctrl+Digit7'], () => openAudioTab()],
     ['mcDock', 'Панель макросов на «Экране»', [], () => mcToggleDock()],
     ['stagePanel', 'Сценический экран: макеты, сообщение, таймеры', [], () => stPanelToggle()],
     ['stageMsgClear', 'Сценический экран: убрать сообщение', [], () => stSetMsg('')],
@@ -2789,6 +2914,8 @@ window.addEventListener('keydown', (e) => {
   if (dlgs.length) return;
   // «Редактор сцен»: стрелки, Delete, Ctrl+C/V/D/A, Ctrl+Enter — элементы сцены (screens.js)
   if (tab === 'scenes' && (!typing || ((e.ctrlKey || e.metaKey) && e.key === 'Enter')) && scKey(e)) { e.preventDefault(); return; }
+  // «Аудиоредактор»: пробел, Ctrl+Z/Y, Delete, Ctrl+A, Ctrl+S (audioeditor.js); на ползунке пробел тоже слушает
+  if (tab === 'audio' && (!typing || e.target.type === 'range' || e.target.type === 'checkbox') && aeKey(e)) { e.preventDefault(); return; }
   const combo = comboOf(e);
   if (!combo) return;
   // «Содержание» (в «Экране» и в «Библии»): Ctrl+A — выделить все пункты
@@ -2889,8 +3016,7 @@ function showSettingsSection(sec) {
   document.querySelectorAll('.set-sec').forEach((s) => { s.hidden = s.dataset.sec !== sec; });
   if (sec === 'keys') renderKeys();
   if (sec === 'output') fillAudioSinks();   // звук — в «Экран и вывод»
-  if (sec === 'look') renderUiColors();     // tools.js
-  if (sec === 'presets') renderPresets();   // tools.js
+  if (sec === 'look') { renderUiColors(); renderPresets(); } // tools.js (пресеты настроек — в «Оформлении»)
   if (sec === 'data') renderRepo();         // tools.js
   if (sec === 'update') renderUpdate();     // tools.js
 }
@@ -2907,8 +3033,6 @@ $('openSettings').addEventListener('click', () => openSettings());
 $('setClose').addEventListener('click', () => $('setDialog').close());
 $('setDialog').addEventListener('cancel', (e) => { if (keyWait) e.preventDefault(); }); // Esc при записи клавиши не закрывает окно
 $('setDialog').addEventListener('close', () => { keyWait = null; });
-// Экраны и сцены — в «Редактор → Редактор сцен»
-$('scOpenEd').addEventListener('click', () => { $('setDialog').close(); openScreensTab(); });
 
 /* ---------- Звуковой выход для музыки ---------- */
 
@@ -2957,6 +3081,19 @@ if (navigator.mediaDevices) navigator.mediaDevices.addEventListener('devicechang
 
 window.api.onDisplays(fillDisplays);
 window.api.onOutputState(setOutputState);
+// Закрыть программу (крестик окна, Alt+F4): свой вопрос без звука Windows (main.js: app:ask-close → app:close-ok)
+if (window.api.onAskClose) window.api.onAskClose(() => {
+  const dlg = $('closeDialog');
+  if (dlg.open) return;
+  dlg.returnValue = '';
+  dlg.showModal();
+  dlg.addEventListener('close', async () => {
+    if (dlg.returnValue !== 'ok') return;
+    // Последняя правка — на диск и в репозиторий, потом закрыть (не дольше 15 с, чтобы не зависнуть на отключённой флешке)
+    if (typeof repoFinal === 'function') await Promise.race([repoFinal(), new Promise((r) => setTimeout(r, 15000))]).catch(() => {});
+    window.api.closeOk();
+  }, { once: true });
+});
 window.api.getDisplays().then((list) => {
   fillDisplays(list);
   // «Включать вывод при запуске»: только на отдельный монитор — главный (где окно оператора) не закрываем

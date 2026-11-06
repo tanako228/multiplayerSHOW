@@ -2,6 +2,35 @@ const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
 const on = (channel, cb) => ipcRenderer.on(channel, (_e, data) => cb(data));
 
+// Запасная копия настроек (только окно оператора): localStorage «cp.*» ↔ settings-backup.json (main.js).
+// Хранилище пропало (нет cp.settings) — до запуска скриптов окна возвращаем всё из файла.
+if (/\/index\.html$/i.test(location.pathname)) {
+  const snap = () => {
+    const o = {};
+    for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); if (k && k.startsWith('cp.')) o[k] = localStorage.getItem(k); }
+    return o;
+  };
+  try {
+    if (!localStorage.getItem('cp.settings')) {
+      const old = ipcRenderer.sendSync('ls:restore');
+      if (old && old['cp.settings']) for (const [k, v] of Object.entries(old)) if (k.startsWith('cp.') && typeof v === 'string') localStorage.setItem(k, v);
+    }
+  } catch { /* нет копии — первый запуск */ }
+  // Пишем копию, когда что-то поменялось (проверка раз в 5 секунд) и при закрытии окна
+  let last = '';
+  const backup = (sync) => {
+    try {
+      const o = snap();
+      const s = JSON.stringify(o);
+      if (s === last || !o['cp.settings']) return;
+      last = s;
+      if (sync) ipcRenderer.sendSync('ls:backup', o); else ipcRenderer.send('ls:backup', o);
+    } catch { /* не страшно */ }
+  };
+  setInterval(() => backup(false), 5000);
+  window.addEventListener('beforeunload', () => backup(true));
+}
+
 contextBridge.exposeInMainWorld('api', {
   getDisplays: () => ipcRenderer.invoke('displays:get'),
   pickMedia: (opts) => ipcRenderer.invoke('media:pick', opts),
@@ -45,6 +74,8 @@ contextBridge.exposeInMainWorld('api', {
   pickFile: (opts) => ipcRenderer.invoke('file:pick', opts),
   saveImage: (data) => ipcRenderer.invoke('image:save', data),
   loadImage: (file) => ipcRenderer.invoke('image:load', file),
+  audioRead: (file) => ipcRenderer.invoke('audio:read', file),
+  audioSave: (data) => ipcRenderer.invoke('audio:save', data),
   onEditorLoad: (cb) => on('editor:load', cb),
   onEditorSaved: (cb) => on('editor:saved', cb),
   onEditorThemes: (cb) => on('editor:themes', cb),
@@ -83,6 +114,8 @@ contextBridge.exposeInMainWorld('api', {
 
   poolPickFolder: (title) => ipcRenderer.invoke('pool:pickFolder', title),
   poolList: (dir) => ipcRenderer.invoke('pool:list', dir),
+  poolWatch: (dir) => ipcRenderer.invoke('pool:watch', dir),
+  onPoolChanged: (cb) => on('pool:changed', cb),
   poolScan: (roots) => ipcRenderer.invoke('pool:scan', roots),
   poolThumb: (file) => ipcRenderer.invoke('pool:thumb', file),
   musicCover: (file) => ipcRenderer.invoke('music:cover', file),
@@ -105,6 +138,8 @@ contextBridge.exposeInMainWorld('api', {
 
   onDisplays: (cb) => on('displays:changed', cb),
   onOutputState: (cb) => on('output:state', cb),
+  onAskClose: (cb) => on('app:ask-close', cb), // вопрос «Закрыть программу?» — своё окно без звука
+  closeOk: () => ipcRenderer.invoke('app:close-ok'),
   onStatus: (cb) => on('media:status', cb),
   onSettings: (cb) => on('output:settings', cb),
   onShow: (cb) => on('output:show', cb),
@@ -113,4 +148,13 @@ contextBridge.exposeInMainWorld('api', {
   onInk: (cb) => on('output:ink', cb),
   onView: (cb) => on('output:view', cb),
   onVideo: (cb) => on('output:video', cb),
+  // Пульт с телефона (remote.js, main.js) и картинки слайдов для него (thumb.html)
+  remoteState: (st) => ipcRenderer.invoke('remote:state', st),
+  remoteInfo: () => ipcRenderer.invoke('remote:info'),
+  remoteFw: () => ipcRenderer.invoke('remote:fw'),
+  remoteFwFix: () => ipcRenderer.invoke('remote:fwFix'),
+  onRemoteInfo: (cb) => on('remote:info', cb),
+  onRemoteCmd: (cb) => on('remote:cmd', cb),
+  onThumbDraw: (cb) => on('thumb:draw', cb),
+  thumbReady: () => ipcRenderer.send('thumb:ready'),
 });

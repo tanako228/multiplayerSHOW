@@ -7,6 +7,8 @@ const fs = require('fs');
 const crypto = require('crypto');
 const zlib = require('zlib');
 const { execFile } = require('child_process');
+const http = require('http');
+const os = require('os');
 const { pathToFileURL, fileURLToPath } = require('url');
 
 const EXT = {
@@ -25,6 +27,33 @@ const SHORT_NAME = 'MP Show'; // короткое имя — заголовок 
 app.setName(APP_NAME);
 if (process.platform === 'win32') app.setAppUserModelId('multiplayerSHOW.app');
 app.setPath('userData', path.join(app.getPath('appData'), 'church-presenter'));
+
+// Только одна копия программы: две копии делят одно хранилище настроек (localStorage),
+// и Chromium может его стереть — пропадали папки медиапула и другие настройки.
+// Второй запуск просто показывает уже открытое окно.
+if (!app.requestSingleInstanceLock()) app.exit(0);
+app.on('second-instance', () => {
+  if (!control || control.isDestroyed()) return;
+  if (control.isMinimized()) control.restore();
+  control.show();
+  control.focus();
+});
+
+// Запасная копия настроек окна оператора (все записи localStorage «cp.*») — файл settings-backup.json.
+// Если хранилище настроек пропало, preload.js при запуске возвращает всё из этого файла.
+const lsBackupFile = () => path.join(app.getPath('userData'), 'settings-backup.json');
+ipcMain.on('ls:backup', (e, data) => {
+  try {
+    if (!data || typeof data !== 'object' || !data['cp.settings']) return; // пустое не пишем — не затереть копию
+    const f = lsBackupFile();
+    fs.writeFileSync(f + '.tmp', JSON.stringify(data));
+    fs.renameSync(f + '.tmp', f);
+  } catch { /* не страшно — запишем в следующий раз */ }
+  e.returnValue = true; // для sendSync при закрытии окна
+});
+ipcMain.on('ls:restore', (e) => {
+  try { e.returnValue = JSON.parse(fs.readFileSync(lsBackupFile(), 'utf8')); } catch { e.returnValue = null; }
+});
 
 let control = null;      // окно оператора
 let output = null;       // окно вывода на внешний монитор
@@ -52,9 +81,12 @@ function listDisplays() {
   const primaryId = screen.getPrimaryDisplay().id;
   return screen.getAllDisplays().map((d, i) => ({
     id: d.id,
+    name: d.label || '', // имя монитора из Windows («HP E232») — по нему узнаём монитор, если Windows сменила id
     primary: d.id === primaryId,
     bw: d.bounds.width,
     bh: d.bounds.height,
+    pw: Math.round(d.size.width * d.scaleFactor), // настоящее разрешение монитора (пиксели) — больше на него не выводим
+    ph: Math.round(d.size.height * d.scaleFactor),
     hz: Math.round(d.displayFrequency || 0), // частота обновления (менять её умеет только Windows)
     label: `Монитор ${i + 1}: ${Math.round(d.size.width * d.scaleFactor)}×${Math.round(d.size.height * d.scaleFactor)}` +
       (d.id === primaryId ? ' (основной)' : ''),
@@ -398,7 +430,7 @@ const videoAudio = {}; // последние команды 'volume' и 'sink' �
    остальные экраны — окна из screenWins. Все окна получают одно и то же (слои, рисунок), а что показать — решает экран. */
 
 const floatWins = new Map(); // id экрана или 'scene:id' → плавающее окно (правая кнопка по «Предпросмотру» → «Открыть в отдельном окне»)
-const outWins = () => [output, ...[...screenWins.values()].map((x) => x.win), ...floatWins.values()].filter((w) => w && !w.isDestroyed());
+const outWins = () => [output, ...[...screenWins.values()].map((x) => x.win), ...floatWins.values(), rmMirror].filter((w) => w && !w.isDestroyed());
 
 // Плавающее окно: экран или сцена в обычном окне поверх остальных, без звука; повторный вызов — показать уже открытое
 function openFloatWin({ id, name }) {
@@ -482,15 +514,29 @@ function openScreenWin({ key, s, o }) {
     // Альфа-канал (s.alpha): прозрачное окно — в кадре BGRA пустые места прозрачные (OBS, vMix видят только текст)
     const alpha = !!s.alpha;
     if (alpha) query.alpha = '1';
-    win = new BrowserWindow({ width: W, height: H, show: false, frame: false, useContentSize: true, transparent: alpha, backgroundColor: alpha ? '#00000000' : '#000000', webPreferences: { ...webPreferences, offscreen: true } });
+    // Масштаб Windows (125–175 %): невидимое окно рисует кадр в «размер окна × масштаб», а размер окна Windows урезает до экрана —
+    // при 175 % окно 1920×1080 давало кадр 2881×1717 с другими пропорциями. Поэтому окно — W/масштаб × H/масштаб (кадр ≈ W × H),
+    // размер ставится после создания (так Windows не урезает его до экрана), лишние 1–2 пикселя кадра обрезаются в put
+    const sf = screen.getPrimaryDisplay().scaleFactor || 1;
+    const cw = Math.ceil(W / sf);
+    const ch = Math.ceil(H / sf);
+    win = new BrowserWindow({ width: cw, height: ch, show: false, frame: false, useContentSize: true, transparent: alpha, backgroundColor: alpha ? '#00000000' : '#000000', webPreferences: { ...webPreferences, offscreen: true } });
+    win.setContentSize(cw, ch);
     win.webContents.setAudioMuted(true);
     win.webContents.setFrameRate(fps);
     x.ndi = ndi.sender(o.name || `MP Show — ${s.name || 'Экран'}`);
     let last = null;
     let lastAt = 0;
     const put = (img) => {
-      const sz = img.getSize();
+      let sz = img.getSize();
       if (!sz.width || !sz.height) return;
+      // Кадр в NDI — ровно разрешение экрана/сцены: больше — обрезать поровну с краёв, меньше — растянуть
+      if (sz.width !== W || sz.height !== H) {
+        img = sz.width >= W && sz.height >= H
+          ? img.crop({ x: Math.floor((sz.width - W) / 2), y: Math.floor((sz.height - H) / 2), width: W, height: H })
+          : img.resize({ width: W, height: H, quality: 'good' });
+        sz = img.getSize();
+      }
       last = { buf: img.toBitmap(), w: sz.width, h: sz.height };
       lastAt = Date.now();
       if (x.ndi) x.ndi.frame(last.buf, last.w, last.h, fps);
@@ -580,23 +626,26 @@ function createControl() {
   control.loadFile('index.html');
   // Перед выходом спрашиваем, чтобы случайно не закрыть программу посреди служения
   let confirmed = false;
+  let hung = false; // окно программы не отвечает — закрываем без вопроса
+  control.on('unresponsive', () => { hung = true; });
+  control.on('responsive', () => { hung = false; });
   control.on('close', (e) => {
     if (confirmed || skipCloseAsk) return;
+    // Окно программы зависло или не загрузилось — спросить некому, закрываем
+    const wc = control.webContents;
+    if (wc.isCrashed() || wc.isLoading() || hung) return;
     e.preventDefault();
-    dialog.showMessageBox(control, {
-      type: 'question',
-      title: APP_NAME,
-      message: 'Вы точно хотите закрыть программу?',
-      detail: 'Вывод на экран тоже будет выключен.',
-      buttons: ['Закрыть программу', 'Отмена'],
-      defaultId: 1,
-      cancelId: 1,
-      noLink: true,
-    }).then(({ response }) => {
-      if (response !== 0 || !control) return;
-      confirmed = true;
-      control.close();
-    });
+    // Свой вопрос в окне программы (renderer.js: onAskClose) — без системного звука Windows
+    if (control.isMinimized()) control.restore();
+    control.focus();
+    wc.send('app:ask-close');
+  });
+  // Ответ «Закрыть программу» из своего окна вопроса
+  ipcMain.removeHandler('app:close-ok');
+  ipcMain.handle('app:close-ok', () => {
+    if (!control || control.isDestroyed()) return;
+    confirmed = true;
+    control.close();
   });
   control.on('closed', () => {
     control = null;
@@ -755,6 +804,29 @@ app.whenReady().then(() => {
     return toItem(file, 'image');
   });
 
+  /* ---------- Аудиоредактор (audioeditor.js): прочитать файл, сохранить готовый WAV ---------- */
+  ipcMain.handle('audio:read', (_e, file) => {
+    try { return fs.readFileSync(file); } catch { return null; }
+  });
+  // Исходник не трогаем: обычное сохранение — копией в media/; saveAs — куда скажет пользователь (dir — папка по умолчанию)
+  ipcMain.handle('audio:save', async (e, { bytes, name, saveAs, dir }) => {
+    let file;
+    if (saveAs) {
+      const res = await dialog.showSaveDialog(BrowserWindow.fromWebContents(e.sender), {
+        title: 'Сохранить аудио', defaultPath: path.join(dir || app.getPath('music'), safeName(name) + '.wav'),
+        filters: [{ name: 'WAV', extensions: ['wav'] }],
+      });
+      if (res.canceled || !res.filePath) return null;
+      file = res.filePath;
+    } else {
+      const d = path.join(app.getPath('userData'), 'media');
+      fs.mkdirSync(d, { recursive: true });
+      file = path.join(d, `${safeName(name)}-${Date.now().toString(36)}.wav`);
+    }
+    try { fs.writeFileSync(file, Buffer.from(bytes)); } catch (err) { return { error: String(err.message || err) }; }
+    return toItem(file, 'audio', saveAs ? path.basename(file).replace(/\.wav$/i, '') : String(name || 'Аудио'));
+  });
+
   /* ---------- Данные: репозиторий (ниже) и старые резервные копии ----------
      Старая копия — папка «multiplayerSHOW — копия <дата>» с manifest.json, local.json, library.json,
      bibles/ и media/. Делать их больше нельзя (вместо них репозиторий), но восстановить — можно. */
@@ -823,7 +895,7 @@ app.whenReady().then(() => {
      <папка>/repo.json — опись (что хранится, дата, список файлов); data/<часть>.json — данные части:
      { lib: ключи library.json, set: ключи cp.settings, ls: другие записи localStorage (строками) };
      bibles/ — переводы; files/appdata/… — файлы из папки программы (слайды, картинки, шрифты, медиа),
-     files/other/… — файлы из других мест. Файлы только добавляются и обновляются, не удаляются.
+     files/other/… — файлы из других мест. Точная копия: лишние файлы удаляются (pruneDir); при первой отправке из чужой папки — только добавление.
      Окно оператора присылает все записи localStorage «cp.*»; library.json читаем с диска. */
 
   // Части репозитория. lib — ключи library.json, set — ключи настроек, ls — записи localStorage.
@@ -839,7 +911,7 @@ app.whenReady().then(() => {
     { id: 'bookmarks', ls: ['cp.bookmarks'] },
     { id: 'settings' },
     { id: 'layout', set: ['sizes', 'asideOrder', 'prevH', 'prevScreen', 'bmOpen', 'bmDock', 'bmSizeV', 'bmSizeH', 'lyFold', 'tmFold', 'sideFold', 'contentFold', 'poolOpen', 'poolH', 'poolSrc', 'scaleBible', 'scaleScreen'], ls: ['cp.themeEditor', 'cp.zoomPts'] },
-    { id: 'look', set: ['uiTheme', 'uiColors'], ls: ['cp.look'] },
+    { id: 'look', set: ['uiTheme', 'uiColors', 'uiGlow', 'uiGlass', 'uiRadius', 'uiAlpha', 'uiFont', 'uiCaps'], ls: ['cp.look'] },
     { id: 'keys', set: ['keys'] },
     { id: 'presets', ls: ['cp.presets'] },
     { id: 'ink', ls: ['cp.ink'] },
@@ -913,39 +985,72 @@ app.whenReady().then(() => {
     for (const x of ['data', 'files', 'bibles', 'repo.json', 'ПРОЧТИ.txt']) fs.rmSync(path.join(dir, x), { recursive: true, force: true });
   }
 
+  // Убрать из папки root/sub всё, чего нет в keep (относительные пути через «/»); пустые папки тоже
+  function pruneDir(root, sub, keep) {
+    let n = 0;
+    const walk = (abs, rel) => {
+      let list = [];
+      try { list = fs.readdirSync(abs, { withFileTypes: true }); } catch { return; }
+      for (const f of list) {
+        const a = path.join(abs, f.name);
+        const r = rel ? rel + '/' + f.name : f.name;
+        if (f.isDirectory()) { walk(a, r); try { if (!fs.readdirSync(a).length) fs.rmdirSync(a); } catch { /* занято */ } }
+        else if (!keep.has(r.toLowerCase())) { try { fs.rmSync(a, { force: true }); n += 1; } catch { /* занято */ } }
+      }
+    };
+    walk(path.join(root, sub), sub);
+    return n;
+  }
+
+  // mode: '' — точная копия программы (автосохранение: удалённое в программе убирается и из папки),
+  // 'add' — дополнить папку (ничего не удаляется; «Отправить» из папки, где уже были чужие данные), 'replace' — очистить и записать заново
   async function repoWrite(dir, parts, ls, mode) {
     if (!dir || !fs.existsSync(dir)) return { ok: false, missing: true };
     if (mode === 'replace') repoClear(dir);
+    const add = mode === 'add';
     const has = (p) => parts.includes(p);
     const split = repoSplit(readJson(libFile(), {}) || {}, ls || {});
     let changed = mode === 'replace' ? 1 : 0;
     for (const id of parts) {
       if (!split[id]) continue;
       const file = path.join(dir, 'data', id + '.json');
-      const data = mergePart(readJson(file, null), split[id]);
+      const data = add ? mergePart(readJson(file, null), split[id]) : split[id];
       changed += writeIfChanged(file, JSON.stringify(data, null, 1)) ? 1 : 0;
     }
 
     if (has('bibles')) {
-      // Файлы переводов — копией, список index.json — сливается с тем, что в папке (переводы с других компьютеров остаются)
+      // Файлы переводов — копией, список index.json — как в программе (при 'add' — слить с тем, что в папке)
       const bd = path.join(dir, 'bibles');
+      const keep = new Set(['bibles/index.json']);
       for (const f of fs.existsSync(bibleDir()) ? fs.readdirSync(bibleDir()) : []) {
-        if (f.endsWith('.json') && f !== 'index.json' && await copyIfNewer(path.join(bibleDir(), f), path.join(bd, f))) changed += 1;
+        if (!f.endsWith('.json') || f === 'index.json') continue;
+        keep.add('bibles/' + f.toLowerCase());
+        if (await copyIfNewer(path.join(bibleDir(), f), path.join(bd, f))) changed += 1;
       }
-      const index = mergeVal(readJson(path.join(bd, 'index.json'), []), readIndex());
-      if (index.length && writeIfChanged(path.join(bd, 'index.json'), JSON.stringify(index))) changed += 1;
+      const index = add ? mergeVal(readJson(path.join(bd, 'index.json'), []), readIndex()) : readIndex();
+      if (writeIfChanged(path.join(bd, 'index.json'), JSON.stringify(index))) changed += 1;
+      if (!add && fs.existsSync(bibleDir())) changed += pruneDir(dir, 'bibles', keep); // папки переводов нет — ничего не трогаем
     }
 
     // Файлы, на которые ссылаются сохраняемые части, и шрифты программы
     const old = readJson(repoFile(dir), {}) || {};
     const files = new Map((Array.isArray(old.files) ? old.files : []).map((f) => [f.str, f]));
     if (has('files')) {
+      if (!add) files.clear();
       for (const [str, p] of fileRefs(parts.map((id) => split[id]))) {
         const rel = repoRel(p);
         if (await copyIfNewer(p, path.join(dir, ...rel.split('/')))) changed += 1;
         files.set(str, { str, url: str.startsWith('file:'), rel });
       }
       changed += await mirrorDir(path.join(ud(), 'fonts'), path.join(dir, 'files', 'appdata', 'fonts'));
+      if (!add) {
+        // Точная копия: файлы, на которые больше ничего не ссылается, и удалённые шрифты — убрать
+        const keep = new Set([...files.values()].map((f) => String(f.rel).toLowerCase()));
+        let fonts = [];
+        try { fonts = fs.readdirSync(path.join(ud(), 'fonts'), { recursive: true }); } catch { fonts = []; }
+        for (const f of fonts) keep.add(('files/appdata/fonts/' + String(f).split(path.sep).join('/')).toLowerCase());
+        changed += pruneDir(dir, 'files', keep);
+      }
     }
 
     const man = { app: 'church-presenter', kind: 'repo', version: 1, name: APP_NAME, date: old.date || Date.now(), parts, files: [...files.values()] };
@@ -962,6 +1067,12 @@ app.whenReady().then(() => {
     while (repoBusy) await repoBusy.catch(() => {});
     repoBusy = repoWrite(dir, parts || [], ls, mode);
     try { return await repoBusy; } catch (err) { return { ok: false, error: String(err && err.message || err) }; } finally { repoBusy = null; }
+  });
+  // Закрытие программы: запись в репозиторий не обрывать — дождаться, потом выйти
+  app.on('before-quit', (e) => {
+    if (!repoBusy) return;
+    e.preventDefault();
+    repoBusy.catch(() => {}).finally(() => setTimeout(() => app.quit(), 50));
   });
 
   // Выбрать папку: пустая или уже репозиторий — она сама; иначе — внутри новая «multiplayerSHOW — репозиторий»
@@ -1402,6 +1513,25 @@ app.whenReady().then(() => {
     }
   });
 
+  // Следим за открытой папкой медиапула: добавили/удалили файл — окну приходит 'pool:changed'
+  let poolWatcher = null;
+  let poolWatchTimer = null;
+  ipcMain.handle('pool:watch', (e, dir) => {
+    if (poolWatcher) { try { poolWatcher.close(); } catch {} poolWatcher = null; }
+    clearTimeout(poolWatchTimer);
+    if (!dir) return false;
+    const wc = e.sender;
+    try {
+      poolWatcher = fs.watch(dir, () => {
+        // Копирование большого файла даёт много событий — ждём, пока утихнет
+        clearTimeout(poolWatchTimer);
+        poolWatchTimer = setTimeout(() => { if (!wc.isDestroyed()) wc.send('pool:changed', dir); }, 500);
+      });
+      poolWatcher.on('error', () => { try { poolWatcher.close(); } catch {} poolWatcher = null; });
+      return true;
+    } catch { return false; }
+  });
+
   // Быстрый поиск (Ctrl+S): все медиафайлы закреплённых папок со всеми подпапками, без повторов
   ipcMain.handle('pool:scan', async (_e, roots) => {
     const files = [];
@@ -1805,6 +1935,234 @@ app.whenReady().then(() => {
     writeIndex(list);
     return list;
   });
+});
+
+/* ---------- Пульт с телефона (remote.js): свой маленький веб-сервер в локальной сети ----------
+   Оператор даёт доступ к одной презентации — у доступа свой ключ (token) и QR-код со ссылкой
+   http://<адрес ПК>:<порт>/r/<ключ>. Телефон видит только эту презентацию: слайды, что на экране, что дальше,
+   листает (если разрешено) и правит текст (если разрешено). Команды идут в окно оператора (remote:cmd) —
+   показ тот же, что щелчком мыши. Картинки слайдов рисует скрытое окно thumb.html, «Сейчас на экране» —
+   скрытое окно-зеркало вывода (output.html), оба без экрана (offscreen) и только пока ими пользуются. */
+const RM_PORT = 8090;
+let rmSrv = null;
+let rmPort = 0;
+let rmErr = '';
+let rmState = { grants: [], size: { W: 1920, H: 1080 } }; // от окна оператора
+let rmRev = 1;
+const rmWait = new Set(); // долгие запросы телефонов: ждут перемен
+const rmThumbs = new Map(); // v → JPEG
+let rmMirror = null;
+let rmMirrorFrame = null;
+let rmMirrorUsed = 0;
+let rmSeen = null; // последний запрос не с этого компьютера: { ip, at } — видно в окне доступа, доходит ли телефон
+
+const rmGrant = (t) => rmState.grants.find((g) => g.token === String(t || '')) || null;
+function rmIps() {
+  const out = [];
+  for (const list of Object.values(os.networkInterfaces())) {
+    for (const a of list || []) if (a && a.family === 'IPv4' && !a.internal) out.push(a.address);
+  }
+  // Домашние сети (192.168…, 10…) — первыми
+  return out.sort((a, b) => (/^(192\.168|10\.)/.test(b) ? 1 : 0) - (/^(192\.168|10\.)/.test(a) ? 1 : 0));
+}
+const rmInfo = () => ({ running: !!rmSrv && !!rmPort, port: rmPort, ips: rmIps(), error: rmErr, seen: rmSeen });
+const rmHash = (x) => crypto.createHash('sha1').update(JSON.stringify(x)).digest('hex').slice(0, 12);
+
+function rmStart() {
+  if (rmSrv) return;
+  rmErr = '';
+  rmSrv = http.createServer(rmHandle);
+  let port = RM_PORT;
+  rmSrv.on('error', (err) => {
+    // Порт занят — пробуем следующий
+    if (err && err.code === 'EADDRINUSE' && port < RM_PORT + 20) { port++; setTimeout(() => rmSrv && rmSrv.listen(port, '0.0.0.0'), 50); return; }
+    rmErr = String((err && err.message) || err);
+    rmPort = 0;
+    rmNotify();
+  });
+  rmSrv.on('listening', () => { rmPort = port; rmNotify(); });
+  rmSrv.listen(port, '0.0.0.0');
+}
+function rmStop() {
+  if (!rmSrv) return;
+  for (const w of rmWait) { clearTimeout(w.timer); try { w.res.end('{}'); } catch {} }
+  rmWait.clear();
+  rmSrv.close();
+  rmSrv = null;
+  rmPort = 0;
+  rmMirrorClose();
+  rmNotify();
+}
+const rmNotify = () => { if (control && !control.isDestroyed()) control.webContents.send('remote:info', rmInfo()); };
+
+// Что видит телефон: только своя презентация
+function rmView(g) {
+  return {
+    rev: rmRev, name: g.name, show: !!g.show, edit: !!g.edit, live: g.live || null, other: !!g.other,
+    aspect: rmState.size.W / rmState.size.H || 16 / 9,
+    slides: g.slides.map((s) => ({ id: s.id, k: s.k, label: s.label || '', text: s.text || '', v: s.v })),
+  };
+}
+
+function rmSend(res, code, type, body, extra) {
+  res.writeHead(code, { 'Content-Type': type, 'Cache-Control': 'no-store', ...(extra || {}) });
+  res.end(body);
+}
+const rmJson = (res, x) => rmSend(res, 200, 'application/json; charset=utf-8', JSON.stringify(x));
+
+function rmHandle(req, res) {
+  // Кто стучится: телефон (не этот компьютер) — запомнить и сказать окну оператора (не чаще раза в 3 с)
+  const ip = String(req.socket.remoteAddress || '').replace(/^::ffff:/, '');
+  if (ip && ip !== '127.0.0.1' && ip !== '::1' && !rmIps().includes(ip)) {
+    const old = rmSeen;
+    rmSeen = { ip, at: Date.now() };
+    if (!old || old.ip !== ip || rmSeen.at - old.at > 3000) rmNotify();
+  }
+  const u = new URL(req.url, 'http://x');
+  const t = u.searchParams.get('t');
+  const m = /^\/r\/([0-9a-z]+)\/?$/.exec(u.pathname);
+  if (m) {
+    if (!rmGrant(m[1])) return rmSend(res, 404, 'text/html; charset=utf-8', '<meta name="viewport" content="width=device-width"><p style="font:18px sans-serif">Доступ закрыт или ссылка устарела. Попросите оператора показать новый QR-код.</p>');
+    return fs.readFile(path.join(__dirname, 'phone.html'), (err, buf) => (err ? rmSend(res, 500, 'text/plain', 'нет phone.html') : rmSend(res, 200, 'text/html; charset=utf-8', buf)));
+  }
+  if (u.pathname === '/icon.png') return fs.readFile(path.join(__dirname, 'brand', 'icon-256.png'), (err, buf) => (err ? rmSend(res, 404, 'text/plain', '') : rmSend(res, 200, 'image/png', buf)));
+  const g = rmGrant(t);
+  if (u.pathname.startsWith('/api/') && !g) return rmSend(res, 403, 'application/json', '{"gone":true}');
+  if (u.pathname === '/api/state') {
+    // Долгий опрос: ответ сразу, если что-то поменялось, иначе ждём до 20 с
+    if (Number(u.searchParams.get('rev')) !== rmRev) return rmJson(res, rmView(g));
+    const w = { res, t, timer: setTimeout(() => { rmWait.delete(w); const gg = rmGrant(t); if (gg) rmJson(res, rmView(gg)); else rmSend(res, 403, 'application/json', '{"gone":true}'); }, 20000) };
+    rmWait.add(w);
+    res.on('close', () => { clearTimeout(w.timer); rmWait.delete(w); }); // телефон ушёл — не ждать
+    return;
+  }
+  if (u.pathname === '/api/thumb') {
+    const s = g.slides.find((x) => x.id === u.searchParams.get('s'));
+    if (!s || !s.content) return rmSend(res, 404, 'text/plain', '');
+    return rmThumb(s).then((buf) => (buf ? rmSend(res, 200, 'image/jpeg', buf, { 'Cache-Control': 'max-age=3600' }) : rmSend(res, 404, 'text/plain', '')));
+  }
+  if (u.pathname === '/api/live') {
+    rmMirrorUsed = Date.now();
+    rmMirrorOpen();
+    const img = rmMirrorFrame;
+    return img && !img.isEmpty() ? rmSend(res, 200, 'image/jpeg', img.toJPEG(70)) : rmSend(res, 204, 'image/jpeg', '');
+  }
+  if (u.pathname === '/api/cmd' && req.method === 'POST') {
+    let body = '';
+    req.on('data', (c) => { body += c; if (body.length > 200000) req.destroy(); });
+    req.on('end', () => {
+      let msg = {};
+      try { msg = JSON.parse(body) || {}; } catch {}
+      const cmd = String(msg.cmd || '');
+      const okShow = g.show && ['show', 'next', 'prev', 'clear'].includes(cmd);
+      const okEdit = g.edit && cmd === 'edit' && typeof msg.text === 'string';
+      if (!okShow && !okEdit) return rmJson(res, { ok: false, error: 'Нет доступа' });
+      if (control && !control.isDestroyed()) control.webContents.send('remote:cmd', { token: g.token, cmd, sid: String(msg.sid || ''), text: okEdit ? msg.text.slice(0, 20000) : undefined });
+      rmJson(res, { ok: true });
+    });
+    return;
+  }
+  rmSend(res, 404, 'text/plain; charset=utf-8', 'нет такой страницы');
+}
+
+// Картинки слайдов: одно скрытое окно, по очереди
+let rmThumbWin = null;
+let rmThumbQ = Promise.resolve();
+let rmThumbFrame = null;
+function rmThumbSize() {
+  const { W, H } = rmState.size;
+  return { width: 480, height: Math.max(120, Math.min(960, Math.round((480 * H) / W) || 270)) };
+}
+function rmThumbOpen() {
+  if (rmThumbWin && !rmThumbWin.isDestroyed()) return Promise.resolve(rmThumbWin);
+  const sz = rmThumbSize();
+  rmThumbWin = new BrowserWindow({ ...sz, show: false, frame: false, useContentSize: true, webPreferences: { ...webPreferences, offscreen: true } });
+  rmThumbWin.webContents.setAudioMuted(true);
+  rmThumbWin.webContents.setFrameRate(10);
+  rmThumbWin.webContents.on('paint', (_e, _d, img) => { rmThumbFrame = img; });
+  rmThumbWin.on('closed', () => { rmThumbWin = null; });
+  return new Promise((ok) => { rmThumbWin.webContents.once('did-finish-load', () => ok(rmThumbWin)); rmThumbWin.loadFile('thumb.html'); });
+}
+function rmThumb(s) {
+  if (rmThumbs.has(s.v)) return Promise.resolve(rmThumbs.get(s.v));
+  const job = rmThumbQ.then(async () => {
+    if (rmThumbs.has(s.v)) return rmThumbs.get(s.v);
+    const w = await rmThumbOpen();
+    const sz = rmThumbSize();
+    const [cw, ch] = w.getContentSize();
+    if (cw !== sz.width || ch !== sz.height) w.setContentSize(sz.width, sz.height);
+    const ready = new Promise((ok) => { const f = () => ok(); ipcMain.once('thumb:ready', f); setTimeout(() => { ipcMain.removeListener('thumb:ready', f); ok(); }, 2500); });
+    w.webContents.send('thumb:draw', s.content);
+    await ready;
+    rmThumbFrame = null;
+    w.webContents.invalidate();
+    for (let i = 0; i < 80 && !rmThumbFrame; i++) { await new Promise((ok) => setTimeout(ok, 25)); if (i === 20) w.webContents.invalidate(); } // первая картинка нового окна — дольше
+    const buf = rmThumbFrame && !rmThumbFrame.isEmpty() ? rmThumbFrame.toJPEG(72) : null;
+    if (buf) {
+      rmThumbs.set(s.v, buf);
+      if (rmThumbs.size > 400) rmThumbs.delete(rmThumbs.keys().next().value);
+    }
+    return buf;
+  });
+  rmThumbQ = job.catch(() => {});
+  return job.catch(() => null);
+}
+
+// «Сейчас на экране»: зеркало вывода «Основного» экрана; закрывается само, когда телефоны не смотрят
+function rmMirrorOpen() {
+  if (rmMirror && !rmMirror.isDestroyed()) return;
+  const { W, H } = rmState.size;
+  rmMirror = new BrowserWindow({ width: 480, height: Math.round((480 * H) / W) || 270, show: false, frame: false, useContentSize: true, webPreferences: { ...webPreferences, offscreen: true } });
+  rmMirror.webContents.setAudioMuted(true);
+  rmMirror.webContents.setFrameRate(4);
+  rmMirror.webContents.on('paint', (_e, _d, img) => { rmMirrorFrame = img; });
+  rmMirror.webContents.on('did-finish-load', () => {
+    rmMirror.webContents.send('output:settings', { resW: W, resH: H });
+    replayTo(rmMirror);
+  });
+  rmMirror.on('closed', () => { rmMirror = null; rmMirrorFrame = null; });
+  rmMirror.loadFile('output.html', { query: { screen: 'main' } });
+}
+function rmMirrorClose() { if (rmMirror && !rmMirror.isDestroyed()) rmMirror.destroy(); rmMirror = null; rmMirrorFrame = null; }
+setInterval(() => { if (rmMirror && Date.now() - rmMirrorUsed > 15000) rmMirrorClose(); }, 5000);
+
+// Окно оператора: доступы и их презентации (сервер включён, пока есть хоть один доступ)
+ipcMain.handle('remote:state', (_e, st) => {
+  const grants = (st && Array.isArray(st.grants) ? st.grants : []).filter((g) => g && /^[0-9a-z]+$/.test(String(g.token || '')));
+  for (const g of grants) {
+    g.slides = Array.isArray(g.slides) ? g.slides : [];
+    for (const s of g.slides) s.v = s.content ? rmHash([s.content, st.size]) : '';
+  }
+  rmState = { grants, size: st && st.size && st.size.W > 0 && st.size.H > 0 ? st.size : { W: 1920, H: 1080 } };
+  rmRev++;
+  // Ждущим телефонам — новое состояние; доступ убрали — «закрыто»
+  for (const w of [...rmWait]) {
+    clearTimeout(w.timer);
+    rmWait.delete(w);
+    const g = rmGrant(w.t);
+    try { if (g) rmJson(w.res, rmView(g)); else rmSend(w.res, 403, 'application/json', '{"gone":true}'); } catch {}
+  }
+  if (grants.length) rmStart(); else rmStop();
+  return rmInfo();
+});
+ipcMain.handle('remote:info', () => rmInfo());
+// Брандмауэр Windows: без правила телефон не достучится (особенно в «общественной» сети Wi-Fi).
+// Правило по портам пульта (8090–8110), для любых сетей; ставит его сам владелец кнопкой — Windows спрашивает разрешение (UAC)
+const RM_FW = 'multiplayerSHOW — пульт с телефона';
+const rmPs = (cmd) => new Promise((ok) => execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', '[Console]::OutputEncoding=[Text.Encoding]::UTF8; ' + cmd],
+  { windowsHide: true, timeout: 60000 }, (err, out) => ok(err ? '' : String(out || ''))));
+async function rmFw() {
+  if (process.platform !== 'win32') return { rule: true, pub: false };
+  const out = await rmPs(`$r = @(Get-NetFirewallRule -DisplayName '${RM_FW}' -ErrorAction SilentlyContinue | Where-Object { $_.Enabled -eq 'True' -and $_.Action -eq 'Allow' }).Count; $p = @(Get-NetConnectionProfile -ErrorAction SilentlyContinue | Where-Object { $_.NetworkCategory -eq 'Public' }).Count; "$r|$p"`);
+  const [r, p] = out.trim().split('|').map(Number);
+  return { rule: r > 0, pub: p > 0 };
+}
+ipcMain.handle('remote:fw', () => rmFw());
+ipcMain.handle('remote:fwFix', async () => {
+  const inner = `Remove-NetFirewallRule -DisplayName '${RM_FW}' -ErrorAction SilentlyContinue; New-NetFirewallRule -DisplayName '${RM_FW}' -Direction Inbound -Protocol TCP -LocalPort ${RM_PORT}-${RM_PORT + 20} -Action Allow -Profile Any | Out-Null`;
+  const enc = Buffer.from(inner, 'utf16le').toString('base64');
+  await rmPs(`try { Start-Process powershell.exe -Verb RunAs -WindowStyle Hidden -Wait -ArgumentList '-NoProfile','-EncodedCommand','${enc}' } catch {}`);
+  return rmFw();
 });
 
 app.on('window-all-closed', () => app.quit());
