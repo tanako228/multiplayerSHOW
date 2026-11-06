@@ -1,0 +1,24 @@
+{
+  "app": "church-presenter",
+  "kind": "settings-preset",
+  "version": 1,
+  "preset": {
+    "id": "a83",
+    "name": "Тема A-83 (ретро-компьютер)",
+    "date": 1793923200000,
+    "settings": {
+      "uiTheme": "paper",
+      "uiColors": {
+        "--ink": "#ece4d4",
+        "--panel": "#f4eee2",
+        "--field": "#faf6ed",
+        "--line": "#cdbfa6",
+        "--text": "#1b1a18",
+        "--muted": "#6d665a",
+        "--live": "#d8391b",
+        "--brown": "#d9a03a",
+        "--warn": "#9e1b2a"
+      }
+    }
+  }
+}

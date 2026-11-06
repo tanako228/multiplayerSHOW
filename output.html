@@ -10,6 +10,8 @@
     #stage { position: absolute; overflow: hidden; background: #000; }
     /* Альфа-канал (NDI с прозрачным фоном): без чёрного фона */
     html.alpha, html.alpha body, html.alpha #stage { background: transparent; }
+    /* Прозрачное окно без рамки (main.js): переносится за любое место */
+    html.alpha body.win { -webkit-app-region: drag; }
   </style>
 </head>
 <body>

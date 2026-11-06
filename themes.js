@@ -1,5 +1,5 @@
 /* ---------- Темы с шаблонами слайдов (Theme Editor, как в ProPresenter) ----------
-   Тема: { id, name, style, templates?: [шаблон], std? }
+   Тема: { id, name, style, templates?: [шаблон], std?, aspect? — формат экрана '16:9' (нет — 16:9), '1:1'… (ASPECTS, reshape) }
      style — старое оформление (шрифт, цвет, фон…): им рисуются темы без шаблонов и миниатюры старых версий.
      std — стандартная тема из программы (BUILTIN): не хранится в library.json, править — только копию.
    Шаблон: { id, name, use, bg, objs: [объект], media?, safe?, guides?: [{ d: 'v'|'h', v: % }] — направляющие редактора }
@@ -11,7 +11,8 @@
    Объект (координаты и размеры — % экрана, толщины и размеры — % высоты экрана):
      общее: { id, kind, name, x, y, w, h, rot, flipX, flipY, opacity, blend (mix-blend-mode), hidden, locked, group,
               fill: { type: none|color|gradient|media, color, a, b, angle, radial, op, url }, stroke: { w, color, op },
-              shadow: { on, color, op, blur, angle, dist }, radius, feather,
+              shadow: { on, color, op, blur, angle, dist }, radius, feather (растушёвка, % высоты), featherRound (у картинки/видео — по овалу),
+              glow: { on, color, op, size, power 1…4 } — внешнее свечение,
               fx: { blur, invert, sat, bright } — эффекты того, что ПОД объектом (backdrop-filter),
               anim: { in: { type: none|fade|move|scale|blur, by: all|lines|words|chars, ms, delay, dir, trigger: slide|cmd, order }, out: { type, ms, delay, dir } } }
      kind: text | rect | ellipse | line | arrow | poly | image | video
@@ -58,7 +59,8 @@ const Themes = (() => {
   const COMMON = {
     name: '', x: 20, y: 20, w: 60, h: 30, rot: 0, flipX: false, flipY: false, opacity: 1, blend: 'normal', hidden: false, locked: false, group: '',
     fill: { type: 'color', color: '#ffffff', a: '#ffffff', b: '#7c5841', angle: 90, radial: false, op: 1, url: '' },
-    stroke: { w: 0, color: '#ffffff', op: 1 }, shadow: SHADOW, radius: 0, feather: 0,
+    stroke: { w: 0, color: '#ffffff', op: 1 }, shadow: SHADOW, radius: 0, feather: 0, featherRound: false,
+    glow: { on: false, color: '#ffd27a', op: 0.9, size: 1.5, power: 2 },
     fx: { blur: 0, invert: false, sat: 1, bright: 1 }, anim: ANIM,
   };
   const TEXT = {
@@ -185,5 +187,38 @@ const Themes = (() => {
     return list.filter((t) => t && typeof t === 'object').map((t) => ensure({ ...copy(t, true), name: String(t.name || 'Тема') }));
   }
 
-  return { newId, USES, BINDS, KINDS, POLYS, norm, obj, tpl, ensure, fromStyle, BUILTIN, all, find, style, templatesOf, copy, exportData, importData };
+  /* ----- Формат темы (theme.aspect): '16:9' (по умолчанию), '4:3', '1:1', '9:16'… — по нему холст редактора.
+     reshape — переделать все шаблоны под другой формат: места в % остаются (текст, полосы, фото с «заполнить» сами
+     подстраиваются), а круги, фигуры и растянутые картинки сохраняют свои пропорции — не сплющиваются. ----- */
+  const ASPECTS = { '16:9': 'Широкий 16:9', '4:3': 'Старый 4:3', '1:1': 'Квадрат 1:1', '4:5': 'Пост 4:5', '9:16': 'Вертикальный 9:16', '21:9': 'Кино 21:9' };
+  const ratio = (a) => { const [w, h] = String(a || '16:9').split(':').map(Number); return w > 0 && h > 0 ? w / h : 16 / 9; };
+  const aspectOf = (t) => (t && ASPECTS[t.aspect] ? t.aspect : '16:9');
+  // Размер холста: высота 1080, ширина по формату
+  const size = (t) => ({ w: Math.round(1080 * ratio(aspectOf(t))), h: 1080 });
+  const KEEP = (o) => o.kind === 'ellipse' || o.kind === 'poly' || ((o.kind === 'image' || o.kind === 'video') && o.fit === 'fill');
+  function reshape(t, aspect) {
+    const r0 = ratio(aspectOf(t));
+    const r1 = ratio(aspect);
+    if (Math.abs(r0 - r1) > 1e-6) {
+      const round = (v) => Math.round(v * 100) / 100;
+      for (const tp of t.templates || []) for (const o of tp.objs || []) {
+        if (!KEEP(o) || !(o.w > 0) || !(o.h > 0)) continue;
+        const a = (o.w * r0) / o.h;          // пропорции объекта на старом экране (ширина/высота в точках)
+        const W = o.w * r1;                   // то же место на новом экране, в «единицах высоты»
+        const H = o.h;
+        const nw = W / H > a ? H * a : W;     // вписать с прежними пропорциями
+        const nh = W / H > a ? H : W / a;
+        const cx = o.x + o.w / 2;
+        const cy = o.y + o.h / 2;
+        o.w = round(nw / r1);
+        o.h = round(nh);
+        o.x = round(cx - o.w / 2);
+        o.y = round(cy - o.h / 2);
+      }
+    }
+    t.aspect = aspect;
+    return t;
+  }
+
+  return { newId, ASPECTS, aspectOf, size, reshape, USES, BINDS, KINDS, POLYS, norm, obj, tpl, ensure, fromStyle, BUILTIN, all, find, style, templatesOf, copy, exportData, importData };
 })();

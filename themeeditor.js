@@ -12,8 +12,8 @@ let teTplId = '';
 let teSel = [];        // id выделенных объектов
 let teClip = null;     // скопированные объекты — вставляются в любой шаблон любой темы
 let teSysFonts = null; // шрифты Windows (main.js: fonts:system)
-const TE_W = 1920;
-const TE_H = 1080;
+// Холст — по формату темы (Themes.size: высота 1080, ширина по формату 16:9, 1:1…)
+const teSize = () => Themes.size(teTheme());
 const teOpenSecs = {}; // какие разделы свойств открыты
 const teOpt = (() => {
   const def = { snap: true, grid: false, gridStep: 5, safe: true, rulers: true, keepRatio: false, under: 'check', underUrl: '', underVideo: false, sample: '', sampleText: '', recentFonts: [] };
@@ -82,8 +82,9 @@ function teContent(t, tpl, still) {
   return { ...base, tpl: tpl.id, meta: TE_META, style: { ...THEME_DEFAULTS, ...t.style, tpls: [tpl], showTranslation: true, still } };
 }
 // Миниатюра: та же сцена, только маленькая
-function teMini(content) {
+function teMini(content, t) {
   const box = teEl('div', 'te-mini');
+  if (t && Themes.aspectOf(t) !== '16:9') box.style.aspectRatio = Themes.aspectOf(t).replace(':', ' / ');
   if (content.style) content = { ...content, style: { ...content.style, bgVideo: false, bgUrl: content.style.bgVideo ? '' : content.style.bgUrl, still: true } };
   box.append(Scene.build(content));
   return box;
@@ -377,7 +378,7 @@ function teRenderList() {
     h.title = t.std ? 'Стандартная тема: только чтение — правьте свою копию' : 'Двойной щелчок — переименовать, правая кнопка — меню';
     const nm = teEl('span', 'nm', t.name);
     const tpl0 = Themes.templatesOf(t)[0];
-    h.append(teMini(tpl0 ? teContent(t, tpl0, true) : { ...TE_SAMPLES.song, style: { ...THEME_DEFAULTS, ...t.style } }), nm);
+    h.append(teMini(tpl0 ? teContent(t, tpl0, true) : { ...TE_SAMPLES.song, style: { ...THEME_DEFAULTS, ...t.style } }, t), nm);
     if (t.std) h.append(teEl('span', 'std', 'стандартная'));
     else if (teDirty(t)) h.append(Object.assign(teEl('span', 'std dirty', 'не применена'), { title: 'Есть правки, которых ещё нет на экране — «Применить тему»' }));
     h.addEventListener('click', () => { if (teThemeId === t.id) return; teThemeId = t.id; teTplId = ''; teSel = []; teOpen(); });
@@ -391,7 +392,7 @@ function teRenderList() {
         r.title = 'Двойной щелчок — переименовать, правая кнопка — копия, порядок, удалить';
         const n = teEl('span', 'nm', tpl.name);
         n.append(teEl('small', null, Themes.USES[tpl.use] || ''));
-        r.append(teMini(teContent(t, tpl, true)), n);
+        r.append(teMini(teContent(t, tpl, true), t), n);
         r.addEventListener('click', () => { if (teTplId === tpl.id) return; teTplId = tpl.id; teSel = []; teRenderAll(); });
         r.addEventListener('dblclick', () => { if (!t.std) teRename(n, tpl.name, (v) => { tpl.name = v; }); });
         r.addEventListener('contextmenu', (e) => { e.preventDefault(); teTplMenu(e, t, tpl); });
@@ -449,8 +450,10 @@ function teNewTheme() {
   teOpen();
 }
 // Своя копия (в т.ч. стандартной): id шаблонов те же — слайды, где шаблон выбран вручную, найдут его и в копии
-function teCopyTheme(t) {
-  const c = Themes.ensure({ ...Themes.copy(t), name: t.name.replace(/ \(стандартная\)$/, '') + (t.std ? '' : ' (копия)') });
+// aspect — копия сразу под другой формат экрана (1:1, 9:16…)
+function teCopyTheme(t, aspect) {
+  const c = Themes.ensure({ ...Themes.copy(t), name: t.name.replace(/ \(стандартная\)$/, '') + (aspect ? ` ${aspect}` : t.std ? '' : ' (копия)') });
+  if (aspect) Themes.reshape(c, aspect);
   lib.themes.push(c);
   teThemeId = c.id;
   teTplId = '';
@@ -458,6 +461,14 @@ function teCopyTheme(t) {
   teSave();
   teOpen();
   flashStatus(`Создана тема «${c.name}» — её можно менять`);
+}
+// Переделать тему под другой формат экрана (все шаблоны)
+function teReshape(t, aspect) {
+  if (Themes.aspectOf(t) === aspect) return;
+  if (!teEdit(() => Themes.reshape(t, aspect), { insp: true })) { teRenderInsp(); return; }
+  teLayout();
+  teRenderList();
+  flashStatus(`Тема «${t.name}» — формат ${aspect} · Ctrl+Z — вернуть`);
 }
 function teDelTheme(t) {
   if (t.std) return;
@@ -584,8 +595,9 @@ $('teWrap').addEventListener('wheel', (e) => {
   teSetZoom(teZoom * (e.deltaY < 0 ? 1.1 : 1 / 1.1), e);
 }, { passive: false });
 
-// Сцена 1920×1080 под место (× teZoom); линейки — вдоль холста
+// Сцена (1920×1080 или по формату темы) под место (× teZoom); линейки — вдоль холста
 function teLayout() {
+  const { w: TE_W, h: TE_H } = teSize();
   const wrap = $('teWrap');
   const host = $('teHost');
   const stage = $('teStage');
@@ -723,7 +735,7 @@ function tePosInfo(p) {
   const sel = teSelObjs();
   let s = '';
   if (p) s = `X ${r1(p.x)}%  Y ${r1(p.y)}%`;
-  if (sel.length === 1) { const r = teRect(sel[0]); s = (s ? s + '   ·   ' : '') + `${sel[0].name}: ${r1(r.x)}, ${r1(r.y)} — ${r1(r.w)} × ${r1(r.h)}%  (${Math.round(r.w * TE_W / 100)} × ${Math.round(r.h * TE_H / 100)} px)`; }
+  if (sel.length === 1) { const r = teRect(sel[0]); s = (s ? s + '   ·   ' : '') + `${sel[0].name}: ${r1(r.x)}, ${r1(r.y)} — ${r1(r.w)} × ${r1(r.h)}%  (${Math.round(r.w * teSize().w / 100)} × ${Math.round(r.h * teSize().h / 100)} px)`; }
   else if (sel.length > 1) s = (s ? s + '   ·   ' : '') + `Выделено: ${sel.length}`;
   $('tePos').textContent = s;
 }
@@ -1462,7 +1474,13 @@ function teInspTemplate(fs, t, tpl) {
   if (t.slide) { teInspFonts(outer); return; }
   b = U.sec(fs, 'Тема', false);
   U.row(b, 'Название темы', U.text(t, 'name', ''));
-  U.btns(b, [['Копия темы', () => teCopyTheme(t), '', 'copy'], ['Экспорт', () => teExport([t]), 'Сохранить тему в файл', 'export']]);
+  const asp = document.createElement('select');
+  for (const [k, n] of Object.entries(Themes.ASPECTS)) asp.append(Object.assign(document.createElement('option'), { value: k, textContent: n }));
+  asp.value = Themes.aspectOf(t);
+  asp.addEventListener('change', () => teReshape(t, asp.value));
+  U.row(b, 'Формат', asp);
+  U.hint(b, 'Под какой экран тема: 16:9, квадрат 1:1… Смена формата переделывает все шаблоны: места объектов сохраняются, круги и фигуры не сплющиваются. Ctrl+Z — вернуть.');
+  U.btns(b, [['Копия темы', () => teCopyTheme(t), '', 'copy'], ['Копия под формат…', (e) => showMenu(e, Object.entries(Themes.ASPECTS).filter(([k]) => k !== Themes.aspectOf(t)).map(([k, n]) => ({ label: n, fn: () => teCopyTheme(t, k) }))), 'Новая тема — копия этой, переделанная под другой экран', 'copy'], ['Экспорт', () => teExport([t]), 'Сохранить тему в файл', 'export']]);
 
   // Не правка самой темы: можно и у стандартной (поэтому вне fieldset)
   b = U.sec(outer, 'Тема по умолчанию', false);
@@ -1568,7 +1586,6 @@ function teInspObj(fs, o) {
     }
     tePaintRows(b, o, 'fill', true);
     if (o.kind === 'rect') U.row(b, 'Скругление', U.range(o, 'radius', 0, { min: 0, max: 20, step: 0.2 }));
-    U.row(b, 'Размытие краёв', U.range(o, 'feather', 0, { min: 0, max: 5, step: 0.1 }));
     b = U.sec(fs, 'Обводка', o.stroke.w > 0, o.stroke.w > 0);
     U.row(b, 'Толщина', U.range(o, 'stroke.w', 0, { min: 0, max: 2, step: 0.05 }));
     U.row(b, 'Цвет', U.color(o, 'stroke.color', '#ffffff'));
@@ -1607,6 +1624,7 @@ function teInspObj(fs, o) {
     U.row(b, 'Ч/б', U.range(o, 'filt.gray', 0, pct));
     teShadowRows(U.sec(fs, 'Тень', !!o.shadow.on, !!o.shadow.on), o, 'shadow');
   }
+  teGlowRows(fs, o);
   if (o.kind !== 'line' && o.kind !== 'arrow') {
     b = U.sec(fs, 'Эффекты фона под объектом', false, backdropOn(o));
     U.hint(b, 'Действуют на то, что ПОД объектом: видео, фото, камеру. Например, прямоугольник без заливки с размытием — видео размыто только за текстом.');
@@ -1616,6 +1634,25 @@ function teInspObj(fs, o) {
     U.row(b, '', U.chk(o, 'fx.invert', 'инверсия цветов'));
   }
   teInspAnim(fs, o);
+}
+// Внешнее свечение (как Outer Glow в Photoshop) и растушёвка — у любого объекта
+function teGlowRows(fs, o) {
+  const U = teUi;
+  const g = o.glow || {};
+  let b = U.sec(fs, 'Внешнее свечение', !!g.on, !!g.on);
+  U.row(b, '', U.chk(o, 'glow.on', 'свечение', true));
+  if (g.on) {
+    U.row(b, 'Цвет', U.color(o, 'glow.color', '#ffd27a'));
+    U.row(b, 'Непрозрачность', U.range(o, 'glow.op', 0.9, pct));
+    U.row(b, 'Размер', U.range(o, 'glow.size', 1.5, { min: 0.1, max: 8, step: 0.1 }));
+    U.row(b, 'Сила', U.range(o, 'glow.power', 2, { min: 1, max: 4, step: 1 }));
+  }
+  const media = o.kind === 'image' || o.kind === 'video';
+  const fe = Number(o.feather) > 0;
+  b = U.sec(fs, 'Растушёвка', fe, fe);
+  U.row(b, 'Растушёвка', U.range(o, 'feather', 0, media ? { min: 0, max: 25, step: 0.5 } : { min: 0, max: 5, step: 0.1 }));
+  if (media) U.row(b, '', U.chk(o, 'featherRound', 'по овалу (виньетка)'));
+  U.hint(b, media ? 'Края картинки плавно уходят в прозрачность.' : 'Мягкие, размытые края объекта.');
 }
 const backdropOn = (o) => !!(o.fx && (o.fx.blur > 0 || o.fx.invert || o.fx.sat !== 1 || o.fx.bright !== 1));
 

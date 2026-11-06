@@ -1,23 +1,27 @@
-/* ===== Вкладка «Экраны» (Ctrl+6): экраны, выходы и экранные сцены — как Screens / Screen Scenes в ProPresenter =====
+/* ===== Редактор сцен («Редактор → Редактор сцен», Ctrl+6): экраны, сцены и макеты — как Screens / Screen Scenes в ProPresenter =====
    Модель (library.json):
    lib.screens — [{ id, name, w, h, hz, enabled, outputs: [{ kind: 'display'|'window'|'ndi', display?, name?, off? }],
-     mode: 'program'|'scene'|'blank', layers (null — все слои), fit, ink, sound, scene, sceneTrans, trans, fx, rotate, flipX, flipY }].
+     mode: 'program', layers (null — все слои), fit, ink, sound, trans, fx, rotate, flipX, flipY, alpha }].
      Экран 'main' — «Основной»: его монитор и разрешение — в Настройках (как было); здесь — что он показывает и доп. выходы.
      enabled у экрана включает его выходы (у «Основного» — только дополнительные, главный — галочкой вывода).
-   lib.scenes — [{ id, name, w, h, bg, trans, items, outputs?, hz?, outSound? }], элемент — см. SC_ITEMS и compose.js.
-     outputs у сцены — свои выходы (как у экрана): для main.js это экран 'scene:id' с mode 'scene' (scSceneScreen).
-   Всё это — в «Настройки → Экран и вывод» (раньше вкладка «Экраны»).
-   Правка сцены — черновик; на экраны идёт применённая копия scLive[id] («Применить», Ctrl+Enter), как у тем.
+     alpha — «Прозрачный фон»: без фона темы и шаблонов (видно только текст и элементы; в сцене — просвечивает, NDI — альфа).
+   lib.scenes — [{ id, name, w, h, bg, hz, alpha, outputs, outSound, on, layout, follow }] — СЦЕНА = ВЫХОД + применённый макет.
+     bg — цвет или 'transparent'; layout — id макета; для main.js сцена — экран 'scene:id' с mode 'scene' (scSceneScreen).
+     Свойства сцены правятся сразу (без «Применить»).
+   lib.scenePresets — МАКЕТЫ («Пресеты сцен»): [{ id, name, w, h, bg?, trans, items, guides, layers? }], элемент — см. SC_ITEMS и compose.js.
+     Макет правится на холсте; правка — черновик, на выходы идёт применённая копия scLive[id макета] («Применить», Ctrl+Enter), как у тем.
+     Один макет может стоять в нескольких сценах; размер макета вписывается в размер сцены.
    Отрисовка — compose.js (общая с окнами вывода), окна выходов — main.js (screens:config).
    Схема (решение владельца, ноябрь 2026):
      Экран — всегда программа: свои выходы, какие слои идут (layers), своя тема для текстов (theme, themeTpl → look),
-       вписывание, переход, поворот, цвет. Сцен на экранах больше нет.
-     Сцена — свой макет (редактор) и свои выходы (outputs, hz, outSound, on), слои программы для её блоков (layers).
-       Сценических макетов отдельно нет: инфоблоки (SC_ITEMS с info: true) есть в любой сцене.
-       follow — макет меняется по слайдам (slide.stage / item.stage, stage.js); scAuto[id сцены] — какой макет сейчас
+       вписывание, переход, поворот, цвет, прозрачный фон.
+     Сцена — только выход: разрешение, фон, выходы (on), альфа-канал, частота, какой макет. Сам макет — в «Пресетах сцен».
+       Сценических макетов отдельно нет: инфоблоки (SC_ITEMS с info: true) есть в любом макете.
+       follow — макет меняется по слайдам (slide.stage / item.stage — id макета, stage.js); scAuto[id сцены] — какой макет сейчас
        на её выходах вместо своего (слайд, панель «Сцена», макрос; не в library.json и не в отмене).
      Выходы экранов и сцен включаются только вручную (enabled / on), при запуске все выключены.
-     Старые данные (экран со сценой, сценический экран, kind 'stage') переносит scMigrate. */
+     Старые данные переносит scMigrate: экран со сценой, сценический экран, kind 'stage'; у старой сцены макет был внутри —
+       он становится макетом с тем же id, что у сцены (старые ссылки slide.stage и макросов остаются верными). */
 
 const SC_FORMATS = [['16:9', 1920, 1080], ['9:16', 1080, 1920], ['1:1', 1080, 1080], ['4:3', 1440, 1080], ['21:9', 2560, 1080]];
 const SC_ITEMS = {
@@ -57,28 +61,33 @@ const SC_NATIVE = ['screen', 'program', 'cur', 'next', 'media', 'source', 'only'
 const SC_TEXTY = ['text', 'clock', 'curText', 'nextText', 'notes', 'opnote', 'msg', 'plist', 'count', 'chords', 'timer', 'countdown', 'vcd', 'cap']; // у них шрифт и цвет текста
 const SC_TRANS = Scene.TRANS; // все переходы — список в scene.js
 
-let scSel = { kind: 'screen', id: 'main' }; // что открыто: экран или сцена
-let scIt = null;      // id выделенного элемента сцены
-let scLive = {};      // применённые сцены: id → копия (на экраны идёт она)
+let scSel = { kind: 'screen', id: 'main' }; // что открыто: экран ('screen'), сцена ('scene') или макет ('layout')
+let scIt = null;      // id выделенного элемента макета
+let scLive = {};      // применённые макеты: id → копия (на выходы идёт она)
 let scOpenOuts = [];  // открытые окна выходов (main.js): [{ key, screen, kind }]
 let scTabOn = false;
-let scH = null;       // что смонтировано в холсте: { kind, id, h }
+let scH = null;       // что смонтировано в холсте: { kind: 'screen' (экран или сцена 'scene:id') | 'scene' (редактор макета), id, h }
 let scK = 1;          // масштаб холста
 const scSecOpen = {}; // какие разделы свойств раскрыты
 
 const scClone = (x) => JSON.parse(JSON.stringify(x));
 const scScreen = (id) => (lib && lib.screens ? lib.screens.find((s) => s.id === id) : null) || null;
 const scScene = (id) => (lib && lib.scenes ? lib.scenes.find((s) => s.id === id) : null) || null;
-const scCurScene = () => (scSel.kind === 'scene' ? scScene(scSel.id) : null);
+// Макеты — «Пресеты сцен» (lib.scenePresets)
+const scPresets = () => (Array.isArray(lib.scenePresets) ? lib.scenePresets : (lib.scenePresets = []));
+const scLay = (id) => (id && lib ? scPresets().find((p) => p.id === id) : null) || null;
+const scCurSc = () => (scSel.kind === 'scene' ? scScene(scSel.id) : null); // открытая сцена (свойства выхода)
+// Открытый на холсте макет (весь редактор элементов работает с ним; имя осталось с тех пор, когда макет был внутри сцены)
+const scCurScene = () => (scSel.kind === 'layout' ? scLay(scSel.id) : null);
 const scCurItem = () => { const s = scCurScene(); return s && scIt ? s.items.find((i) => i.id === scIt) || null : null; };
-// Настройки выхода сцены (не макет): идут на выходы сразу, без «Применить», в «есть правки» не считаются
-const SC_OUTK = ['outputs', 'hz', 'outSound', 'on', 'follow', 'layers', 'guides', 'alpha'];
-const scBody = (sc) => (sc ? { ...sc, ...Object.fromEntries(SC_OUTK.map((k) => [k, undefined])) } : null);
-const scDirty = (sc) => !!sc && JSON.stringify(scBody(sc)) !== JSON.stringify(scBody(scLive[sc.id]));
+// «Есть правки» у макета: направляющие и название на выход не влияют
+const scBody = (l) => (l ? { ...l, guides: undefined, name: undefined } : null);
+const scDirty = (l) => !!l && JSON.stringify(scBody(l)) !== JSON.stringify(scBody(scLive[l.id]));
 const scMainSize = () => { const { W, H } = outputSize(); return { w: W, h: H }; };
-// Какой макет сейчас на выходах сцены: свой или другой сцены (scAuto — слайд, панель «Сцена», макрос)
+// Какой макет сейчас на выходах сцены: свой (sc.layout) или временно другой (scAuto — слайд, панель «Сцена», макрос)
 let scAuto = {};
-const scLayoutOf = (sc) => (scAuto[sc.id] && scAuto[sc.id] !== sc.id && scScene(scAuto[sc.id]) ? scAuto[sc.id] : sc.id);
+const scLayoutOf = (sc) => (scAuto[sc.id] && scLay(scAuto[sc.id]) ? scAuto[sc.id] : sc.layout || '');
+const scUsers = (l) => lib.scenes.filter((sc) => sc.layout === l.id); // в каких сценах стоит макет
 
 function scNewScreen(over) {
   return {
@@ -86,8 +95,24 @@ function scNewScreen(over) {
     theme: '', themeTpl: '', ink: true, sound: false, trans: null, fx: {}, rotate: 0, flipX: false, flipY: false, ...over,
   };
 }
+// Сцена = выход + макет: из макета берутся размер и фон (фон уходит сцене — макет без своего фона)
+function scNewScene(l, over) {
+  return {
+    id: newId(), name: (l && l.name) || 'Сцена', w: (l && l.w) || 1920, h: (l && l.h) || 1080, bg: (l && l.bg) || '#000000',
+    hz: 0, alpha: false, outputs: [], outSound: false, on: false, layout: l ? l.id : '', ...over,
+  };
+}
+// Макет из шаблона или файла: только то, что относится к макету
+const SC_LAY_K = ['w', 'h', 'bg', 'trans', 'items', 'guides', 'layers', 'fitV'];
+function scLayoutFrom(src, over) {
+  const l = { id: newId(), name: src.name || 'Макет' };
+  for (const k of SC_LAY_K) if (src[k] !== undefined) l[k] = scClone(src[k]);
+  if (!Array.isArray(l.items)) l.items = [];
+  return Object.assign(l, over);
+}
 
-// Перенос старой схемы: экран со сценой → его выходы уходят сцене; сценический экран без макета → новая сцена с его выходами
+// Перенос старой схемы: экран со сценой → его выходы уходят сцене; сценический экран без макета → новая сцена с его выходами;
+// макет внутри сцены (items…) → отдельный макет в «Пресетах сцен» с тем же id, сцена ссылается на него (sc.layout)
 function scMigrate() {
   let ch = false;
   for (const s of [...lib.screens]) {
@@ -96,7 +121,12 @@ function scMigrate() {
     ch = true;
     if (s.id === 'main') { Object.assign(s, { mode: 'program' }); delete s.kind; continue; }
     let sc = s.mode === 'scene' ? scScene(s.scene) : null;
-    if (!sc && stage && (s.outputs || []).length) { sc = scTemplate('st-empty'); sc.name = s.name || 'Сцена'; sc.w = s.w || 1920; sc.h = s.h || 1080; lib.scenes.push(sc); }
+    if (!sc && stage && (s.outputs || []).length) {
+      const l = scLayoutFrom(scTemplate('st-empty'), { w: s.w || 1920, h: s.h || 1080 });
+      scPresets().push(l);
+      sc = scNewScene(l, { name: s.name || 'Сцена' });
+      lib.scenes.push(sc);
+    }
     if (sc) {
       sc.outputs = [...(sc.outputs || []), ...(s.outputs || [])];
       if (s.hz && !sc.hz) sc.hz = s.hz;
@@ -107,15 +137,37 @@ function scMigrate() {
   }
   for (const sc of lib.scenes) if (sc.kind) { delete sc.kind; ch = true; }
   for (const s of lib.screens) for (const k of ['scene', 'sceneTrans', 'follow']) delete s[k];
-  if (ch) { saveLib(); flashStatus('Экраны и сцены — по новой схеме: экраны показывают программу, у сцен свои выходы'); }
+  // Макет внутри сцены → «Пресеты сцен»; id тот же, что у сцены, — slide.stage, item.stage и макросы, где стоял id сцены, ведут на её макет
+  let moved = 0;
+  for (const sc of lib.scenes) {
+    if ('layout' in sc) continue;
+    ch = true;
+    const id = scLay(sc.id) ? newId() : sc.id;
+    scPresets().push(scLayoutFrom(sc, { id, name: sc.name || 'Макет', bg: undefined }));
+    sc.layout = id;
+    if (!sc.bg) sc.bg = '#000000';
+    for (const k of ['items', 'trans', 'guides', 'layers']) delete sc[k];
+    moved++;
+  }
+  // У старых пресетов «следить за слайдами» было в макете — теперь это свойство сцены
+  for (const p of scPresets()) if ('follow' in p) { delete p.follow; ch = true; }
+  // Блок «Программа» раньше всегда вписывался «целиком» в разрешении монитора «Основного» — при мониторе 16:10 в сцене 16:9
+  // по бокам были поля. Один раз (fitV) ставим ему «Своё разрешение» — без полей; дальше выбор оператора не трогаем
+  for (const p of scPresets()) {
+    if (p.fitV) continue;
+    for (const it of p.items || []) if (it.type === 'program' && (!it.fit || it.fit === 'contain')) it.fit = 'native';
+    p.fitV = 2;
+    ch = true;
+  }
+  if (ch) { saveLib(); flashStatus(moved ? `Сцены — по новой схеме: макеты (${moved}) перенесены в «Пресеты сцен», сцена — выход и выбранный макет` : 'Экраны и сцены — по новой схеме: экраны показывают программу, у сцен свои выходы'); }
 }
 
 function scInit() {
   if (!Array.isArray(lib.screens)) lib.screens = [];
   if (!lib.screens.some((s) => s.id === 'main')) lib.screens.unshift(scNewScreen({ id: 'main', name: 'Основной', outputs: [] }));
   if (!Array.isArray(lib.scenes)) lib.scenes = [];
-  for (const sc of lib.scenes) if (!Array.isArray(sc.items)) sc.items = [];
   scMigrate();
+  for (const l of scPresets()) if (!Array.isArray(l.items)) l.items = [];
   // При запуске выходы экранов и сцен закрыты — оператор включает их сам;
   // «Включать вывод при запуске» (settings.outAutoOn) — остаются как были, когда программу закрыли
   if (!settings.outAutoOn) {
@@ -123,7 +175,7 @@ function scInit() {
     for (const sc of lib.scenes) sc.on = false;
   }
   scLive = {};
-  for (const sc of lib.scenes) scLive[sc.id] = scClone(sc); // что было при запуске — то и на экранах
+  for (const l of scPresets()) scLive[l.id] = scClone(l); // что было при запуске — то и на выходах
   scSend();
   if (window.api.screensState) window.api.screensState().then((st) => { scOpenOuts = st || []; scRenderLists(); }, () => {});
   if (typeof stInit === 'function') stInit(); // сценический экран: таймеры, сообщения (stage.js)
@@ -134,12 +186,11 @@ if (window.api.onScreensState) window.api.onScreensState((st) => { scOpenOuts = 
 /* ----- Отправка настроек: окнам выходов (main.js) и превью здесь ----- */
 
 let scSendT = 0;
-// Каждая сцена для окон вывода — экран 'scene:id' (её выходы, предпросмотр, плавающее окно); показывает свой или выбранный макет
+// Каждая сцена для окон вывода — экран 'scene:id' (её выходы, предпросмотр, плавающее окно): свой размер и фон, макет — свой или выбранный
 const scSceneSid = (sc) => 'scene:' + sc.id;
 function scSceneScreen(sc, main) {
-  const l = scLive[sc.id] || sc; // размер — применённой сцены
   return scNewScreen({
-    id: scSceneSid(sc), name: sc.name || 'Сцена', w: l.w || main.w, h: l.h || main.h, hz: sc.hz || 0, enabled: !!sc.on,
+    id: scSceneSid(sc), name: sc.name || 'Сцена', w: sc.w || main.w, h: sc.h || main.h, hz: sc.hz || 0, enabled: !!sc.on, bg: sc.bg || '#000000',
     outputs: scClone(sc.outputs || []), mode: 'scene', scene: scLayoutOf(sc), ink: false, sound: !!sc.outSound, alpha: !!sc.alpha,
   });
 }
@@ -151,16 +202,14 @@ function scLook(s) {
 }
 function scConfig() {
   const main = scMainSize();
-  const scenes = {};
-  for (const sc of lib.scenes) scenes[sc.id] = scLive[sc.id] || sc;
+  const scenes = {}; // макеты для compose.js: применённые копии
+  for (const l of scPresets()) scenes[l.id] = scLive[l.id] || l;
   const screens = scClone(lib.screens).map((s) => ({ ...s, mode: 'program', look: scLook(s), ...(s.id === 'main' ? { w: main.w, h: main.h } : {}) }));
   for (const sc of lib.scenes) screens.push(scSceneScreen(sc, main));
   return { screens, scenes: scClone(scenes), main };
 }
-// Настройки выхода сцены (SC_OUTK) поменялись — сразу на выходы, без «Применить»
+// Свойства сцены (выход, размер, фон, макет) поменялись — сразу на выходы, без «Применить»
 function scSceneOutSet(sc, rerenderInsp) {
-  const live = scLive[sc.id];
-  if (live) for (const k of SC_OUTK) { if (sc[k] === undefined) delete live[k]; else live[k] = scClone(sc[k]); }
   saveLib();
   scSend();
   if (typeof stPanelRefresh === 'function') stPanelRefresh();
@@ -168,12 +217,13 @@ function scSceneOutSet(sc, rerenderInsp) {
   scRenderLists();
   scRenderBar();
   if (rerenderInsp) scRenderInsp();
+  if (scSel.kind === 'scene' && scSel.id === sc.id) scLayout();
 }
-// Макет на выходах сцены: свой (layoutId = её id или '') или другой сцены; quiet — без строки состояния
+// Макет на выходах сцены: свой (layoutId — её sc.layout или '') или временно другой; quiet — без строки состояния
 function scSetLayout(sceneId, layoutId, quiet) {
   const sc = scScene(sceneId);
   if (!sc) return;
-  const l = layoutId && layoutId !== sc.id ? scScene(layoutId) : null;
+  const l = layoutId && layoutId !== sc.layout ? scLay(layoutId) : null;
   if (l) { scAuto[sc.id] = l.id; if (!scLive[l.id]) scLive[l.id] = scClone(l); } else delete scAuto[sc.id];
   scSend();
   if (scTabOn) { scRenderLists(); if (scSel.id === sc.id) scRenderInsp(); }
@@ -184,6 +234,7 @@ function scSend() {
   if (!lib || !lib.screens) return;
   const cfg = scConfig();
   Compose.setConfig(cfg); // превью — сразу
+  if (scTabOn && scH && scH.kind === 'scene' && scCurScene()) Compose.updateScene(scH.h, scCurScene()); // макет в редакторе (размер «Основного» мог смениться)
   clearTimeout(scSendT);
   scSendT = setTimeout(() => window.api.screensConfig && window.api.screensConfig(scConfig()), 40);
   if (typeof prevScreenSync === 'function') prevScreenSync(); // экран в «Предпросмотре» (renderer.js)
@@ -195,8 +246,11 @@ function scStage() { clearTimeout(scStageT); scStageT = setTimeout(() => { if (l
 
 function scAfterUndo() {
   if (!Array.isArray(lib.screens) || !lib.screens.some((s) => s.id === 'main')) scInitKeepLive();
+  if (!Array.isArray(lib.scenes)) lib.scenes = [];
   if (scSel.kind === 'screen' && !scScreen(scSel.id)) scSel = { kind: 'screen', id: 'main' };
   if (scSel.kind === 'scene' && !scScene(scSel.id)) scSel = { kind: 'screen', id: 'main' };
+  if (scSel.kind === 'layout' && !scLay(scSel.id)) scSel = { kind: 'screen', id: 'main' };
+  for (const k of Object.keys(scAuto)) if (!scLay(scAuto[k])) delete scAuto[k];
   if (!scCurItem()) scIt = null;
   scSend();
   if (scTabOn) scRenderAll(true);
@@ -259,7 +313,7 @@ function scRenderLists() {
     const sz = s.id === 'main' ? scMainSize() : { w: s.w, h: s.h };
     const th = s.theme && typeof themeById === 'function' && themeById(s.theme);
     const ly = Array.isArray(s.layers) ? ` · слоёв: ${s.layers.length}` : '';
-    nm.append(scEl('small', '', `${sz.w}×${sz.h} · программа${ly}` + (th ? ` · тема «${th.name}»` : '')));
+    nm.append(scEl('small', '', `${sz.w}×${sz.h} · программа${ly}` + (s.alpha ? ' · прозрачный фон' : '') + (th ? ` · тема «${th.name}»` : '')));
     const outs = s.id === 'main' ? outputOpen || scOutsOf(s.id).length : scOutsOf(s.id).length;
     const dot = scEl('span', 'dot' + (outs ? ' on' : ''));
     dot.title = outs ? 'Выводится' : (s.outputs || []).length ? 'Выходы закрыты' : 'Виртуальный экран (без выходов)';
@@ -273,76 +327,99 @@ function scRenderLists() {
   scRenderItems();
 }
 
-/* ----- Пресеты сцен (lib.scenePresets): сохранённый макет — как тема, но только для сцен -----
-   Пресет: { id, name, w, h, bg, trans, items, guides, follow }. Применить к сцене — её макет заменяется копией пресета,
-   а название, выходы, слои, альфа и вкл/выкл остаются. В отмене (HIST_KEYS) — Ctrl+Z. */
-const SC_PRESET_K = ['w', 'h', 'bg', 'trans', 'items', 'guides', 'follow'];
-const scPresets = () => (Array.isArray(lib.scenePresets) ? lib.scenePresets : (lib.scenePresets = []));
-const scPresetOf = (sc) => ({ ...Object.fromEntries(SC_PRESET_K.filter((k) => sc[k] !== undefined).map((k) => [k, scClone(sc[k])])), items: scClone(sc.items || []) });
+/* ----- Макеты — «Пресеты сцен» (lib.scenePresets) -----
+   Макет: { id, name, w, h, bg?, trans, items, guides, layers? }. Щелчок — открыть на холсте и править (черновик до «Применить»),
+   правая кнопка — меню: поставить в сцену, новая сцена с макетом, переименовать, дублировать, файл, удалить. В отмене (HIST_KEYS) — Ctrl+Z. */
 const scFreshItems = (items) => (items || []).map((x) => ({ ...scClone(x), id: newId() }));
 
-async function scSavePreset(sc = scCurScene()) {
-  if (!sc) { flashStatus('Откройте сцену — её макет сохранится как пресет'); return; }
-  const name = await askName('Название пресета сцены', sc.name);
-  if (!name) return;
-  scPresets().push({ id: newId(), name, ...scPresetOf(sc) });
+// Новый макет (пустой, из шаблона или файла); open — сразу открыть на холсте
+function scAddLayout(l, open = true) {
+  if (!l.fitV) l.fitV = 2; // новый макет — перенос «Программы» (scMigrate) ему не нужен
+  scPresets().push(l);
+  scLive[l.id] = scClone(l);
   saveLib();
-  scRenderLists();
-  flashStatus(`Пресет «${name}» сохранён — его можно применить к любой сцене`);
+  scSend();
+  if (open) scPick({ kind: 'layout', id: l.id }); else scRenderLists();
+  return l;
 }
-function scApplyPreset(p, sc = scCurScene()) {
-  if (!sc) { flashStatus('Сначала откройте сцену, к которой применить пресет'); return; }
-  for (const k of SC_PRESET_K) { if (p[k] === undefined) delete sc[k]; else sc[k] = scClone(p[k]); }
-  sc.items = scFreshItems(p.items);
-  scIt = null;
-  scMore = [];
-  scSceneTouch(true, sc);
-  scMountView();
-  flashStatus(`К сцене «${sc.name}» применён пресет «${p.name}» — на выходы по «Применить» (Ctrl+Enter) · Ctrl+Z — вернуть`);
-}
-function scSceneFromPreset(p) {
-  const base = scTemplate('empty');
-  const sc = { ...base, ...scClone(p), id: newId(), name: p.name, items: scFreshItems(p.items) };
-  scAddScene(sc);
+// Поставить макет в сцену (сразу на её выходы)
+function scUseLayout(l, sc) {
+  if (!sc || !l) return;
+  sc.layout = l.id;
+  delete scAuto[sc.id];
+  scSceneOutSet(sc, scSel.id === sc.id);
+  flashStatus(`В сцене «${sc.name}» — макет «${l.name}» · Ctrl+Z — вернуть`);
 }
 function scRenderPresets() {
   const box = $('scPresets');
   if (!box) return;
   const list = scPresets();
-  const cur = scCurScene();
   if (!list.length) {
-    box.replaceChildren(scEl('div', 'te-empty', 'Пресетов пока нет. Откройте сцену и нажмите «＋» — её макет сохранится, и его можно будет применить к любой сцене.'));
+    box.replaceChildren(scEl('div', 'te-empty', 'Макетов пока нет. «＋» — новый макет: пустой или из шаблона. Макет ставится в сцену в её свойствах.'));
     return;
   }
   box.replaceChildren(...list.map((p) => {
-    const row = scEl('div', 'sc-row');
-    const nm = scEl('div', 'nm', p.name || 'Пресет');
-    nm.append(scEl('small', '', `${p.w || 1920}×${p.h || 1080} · ${(p.items || []).length} эл.`));
+    const row = scEl('div', 'sc-row' + (scSel.kind === 'layout' && scSel.id === p.id ? ' sel' : ''));
+    const nm = scEl('div', 'nm', p.name || 'Макет');
+    const users = scUsers(p);
+    nm.append(scEl('small', '', `${p.w || 1920}×${p.h || 1080} · ${(p.items || []).length} эл.` + (users.length ? ' · в сценах: ' + users.map((x) => x.name).join(', ') : '')));
     row.append(Icons.el('presets'), nm);
-    row.title = cur ? `Щелчок — меню. Двойной щелчок — применить к сцене «${cur.name}»` : 'Щелчок — меню';
-    const menu = (e) => scPresetMenu(e, p);
-    row.addEventListener('click', menu);
-    row.addEventListener('contextmenu', (e) => { e.preventDefault(); menu(e); });
-    row.addEventListener('dblclick', () => { document.querySelectorAll('.ctx-menu').forEach((m) => m.remove()); scApplyPreset(p); });
+    if (scDirty(p)) { const d = scEl('span', 'dirty', 'изменён'); d.title = 'Есть неприменённые правки — «Применить» (Ctrl+Enter)'; row.append(d); }
+    row.title = 'Щелчок — править макет. Правая кнопка — поставить в сцену и другое';
+    row.addEventListener('click', () => scPick({ kind: 'layout', id: p.id }));
+    row.addEventListener('contextmenu', (e) => { e.preventDefault(); scPresetMenu(e, p); });
     return row;
   }));
 }
 function scPresetMenu(e, p) {
-  const sc = scCurScene();
   const list = scPresets();
+  const i = list.indexOf(p);
   showMenu(e, [
-    { label: sc ? `Применить к сцене «${sc.name}»` : 'Применить (сначала откройте сцену)', disabled: !sc, fn: () => scApplyPreset(p, sc) },
-    { label: 'Новая сцена из пресета', fn: () => scSceneFromPreset(p) },
-    { label: sc ? `Обновить из сцены «${sc.name}»` : 'Обновить из сцены', disabled: !sc, fn: () => { Object.assign(p, scPresetOf(sc)); saveLib(); scRenderLists(); flashStatus(`Пресет «${p.name}» обновлён · Ctrl+Z — вернуть`); } },
+    { label: 'Править макет', fn: () => scPick({ kind: 'layout', id: p.id }) },
+    { label: 'Применить правки', disabled: !scDirty(p), key: 'Ctrl+Enter', fn: () => scApply(p) },
+    ...(lib.scenes.length ? ['-', { label: 'Поставить в сцену', disabled: true, fn() {} },
+      ...lib.scenes.map((sc) => ({ label: (sc.layout === p.id ? '   ● ' : '      ') + sc.name, fn: () => scUseLayout(p, sc) }))] : []),
+    { label: 'Новая сцена с этим макетом', fn: () => scAddScene(scNewScene(p)) },
     '-',
-    { label: 'Переименовать…', fn: async () => { const n = await askName('Название пресета', p.name); if (n) { p.name = n; saveLib(); scRenderLists(); } } },
-    { label: 'Дублировать', fn: () => { list.splice(list.indexOf(p) + 1, 0, { ...scClone(p), id: newId(), name: p.name + ' (копия)' }); saveLib(); scRenderLists(); } },
-    { label: 'Сохранить в файл…', fn: () => scExport({ ...scClone(p), outputs: [] }) },
+    { label: 'Переименовать…', fn: async () => { const n = await askName('Название макета', p.name); if (n) { p.name = n; saveLib(); scRenderAll(); } } },
+    { label: 'Дублировать', fn: () => { const c = { ...scClone(p), id: newId(), name: p.name + ' (копия)', items: scFreshItems(p.items) }; list.splice(i + 1, 0, c); scLive[c.id] = scClone(c); saveLib(); scPick({ kind: 'layout', id: c.id }); } },
+    { label: 'Сохранить в файл…', fn: () => scExport(p) },
     '-',
-    { label: 'Удалить пресет', fn: () => { lib.scenePresets = list.filter((x) => x !== p); saveLib(); scRenderLists(); flashStatus(`Пресет «${p.name}» удалён · Ctrl+Z — вернуть`); } },
+    { label: 'Выше', disabled: i <= 0, fn: () => { list.splice(i - 1, 0, list.splice(i, 1)[0]); saveLib(); scRenderLists(); } },
+    { label: 'Ниже', disabled: i >= list.length - 1, fn: () => { list.splice(i + 1, 0, list.splice(i, 1)[0]); saveLib(); scRenderLists(); } },
+    '-',
+    { label: 'Удалить макет', fn: () => {
+      const used = scUsers(p).length;
+      lib.scenePresets = list.filter((x) => x !== p);
+      delete scLive[p.id];
+      for (const k of Object.keys(scAuto)) if (scAuto[k] === p.id) delete scAuto[k];
+      saveLib(); scSend();
+      if (scSel.kind === 'layout' && scSel.id === p.id) scSel = { kind: 'screen', id: 'main' };
+      scRenderAll(true);
+      flashStatus(`Макет «${p.name}» удалён` + (used ? ` (в сценах: ${used} — там теперь пусто)` : '') + ' · Ctrl+Z — вернуть');
+    } },
   ]);
 }
-$('scAddPreset').addEventListener('click', () => scSavePreset());
+// «＋» у «Пресетов сцен»: новый макет
+$('scAddPreset').addEventListener('click', (e) => {
+  const r = e.currentTarget.getBoundingClientRect();
+  showMenu({ clientX: r.left, clientY: r.bottom + 2 }, scTplMenu((kind) => scAddLayout(scLayoutFrom(scTemplate(kind)))));
+});
+// Шаблоны макетов — одно меню для «＋» у макетов и у сцен
+function scTplMenu(fn) {
+  return [
+    { label: 'Пустой 16:9', fn: () => fn('empty') },
+    { label: 'Пустой 9:16 (вертикальный)', fn: () => fn('vertical') },
+    '-',
+    { label: 'Для сцены (музыкантам, ведущим)', disabled: true, fn() {} },
+    ...SC_STAGE_TPL.map(([k, name]) => ({ label: '   ' + name, fn: () => fn(k) })),
+    '-',
+    { label: 'Для зрителей и трансляции', disabled: true, fn() {} },
+    { label: '   Мультиэкран: слайды, следующий, камера', fn: () => fn('multi') },
+    { label: '   Три экрана: 1:1 · 16:9 · 9:16', fn: () => fn('three') },
+    { label: '   Трансляция: камера + текст песни', fn: () => fn('broadcast') },
+  ];
+}
 
 // Галочка «вывод включён» в строке списка (щелчок по ней строку не выбирает)
 function scOnBox(v, title, on) {
@@ -357,15 +434,16 @@ function scOnBox(v, title, on) {
 
 function scRenderSceneList(lb) {
   if (!lib.scenes.length) {
-    lb.replaceChildren(scEl('div', 'te-empty', 'Сцен пока нет. «＋» — новая сцена: пустая или из шаблона (для сцены: текущий и следующий слайд, таймер, аккорды; для зрителей: мультиэкран, трансляция).'));
+    lb.replaceChildren(scEl('div', 'te-empty', 'Сцен пока нет. «＋» — новая сцена (выход: монитор на сцене, окно, NDI) с макетом из «Пресетов сцен» или из шаблона.'));
     return;
   }
   lb.replaceChildren(...lib.scenes.map((sc) => {
     const has = (sc.outputs || []).length > 0;
     const row = scEl('div', 'sc-row' + (scSel.kind === 'scene' && scSel.id === sc.id ? ' sel' : '') + (has && !sc.on ? ' off' : ''));
     const nm = scEl('div', 'nm', sc.name || 'Сцена');
-    const lay = scLayoutOf(sc) !== sc.id ? scScene(scLayoutOf(sc)) : null;
-    nm.append(scEl('small', '', `${sc.w}×${sc.h} · ${sc.items.length} эл.` + (has ? ` · выходов: ${sc.outputs.length}` : ' · без выхода') + (lay ? ` · сейчас макет «${lay.name}»` : '')));
+    const own = scLay(sc.layout);
+    const now = scLayoutOf(sc) !== (sc.layout || '') ? scLay(scLayoutOf(sc)) : null;
+    nm.append(scEl('small', '', `${sc.w}×${sc.h} · ` + (own ? `макет «${own.name}»` : 'без макета') + (has ? ` · выходов: ${sc.outputs.length}` : ' · без выхода') + (now ? ` · сейчас «${now.name}»` : '')));
     row.append(has ? scOnBox(!!sc.on, 'Вывод сцены: включить или выключить её выходы', (v) => { sc.on = v; scSceneOutSet(sc, scSel.id === sc.id); }) : scEl('span', 'sc-nobox'), Icons.el('scene'), nm);
     if (has) {
       const open = scOutsOf(scSceneSid(sc)).length;
@@ -373,7 +451,6 @@ function scRenderSceneList(lb) {
       dot.title = open ? 'Сцена выводится' : 'Выходы сцены закрыты';
       row.append(dot);
     }
-    if (scDirty(sc)) { const d = scEl('span', 'dirty', 'изменена'); d.title = 'Есть неприменённые правки — «Применить» (Ctrl+Enter)'; row.append(d); }
     row.addEventListener('click', () => scPick({ kind: 'scene', id: sc.id }));
     row.addEventListener('contextmenu', (e) => { e.preventDefault(); scSceneMenu(e, sc); });
     return row;
@@ -455,29 +532,26 @@ function scScreenMenu(e, s) {
 
 function scSceneMenu(e, sc) {
   const i = lib.scenes.indexOf(sc);
+  const l = scLay(sc.layout);
   showMenu(e, [
     { label: sc.on ? 'Выключить вывод' : 'Включить вывод', disabled: !(sc.outputs || []).length, fn: () => { sc.on = !sc.on; scSceneOutSet(sc, true); } },
     { label: 'Показать в «Предпросмотре»', fn: () => scPreviewOn(scSceneSid(sc)) },
     { label: 'Открыть в отдельном окне', fn: () => scFloat(scSceneSid(sc)) },
     '-',
-    { label: 'Применить правки', disabled: !scDirty(sc), key: 'Ctrl+Enter', fn: () => scApply(sc) },
-    { label: 'Переименовать…', fn: async () => { const n = await askName('Название сцены', sc.name); if (n) { sc.name = n; scSceneTouch(true, sc); } } },
-    { label: 'Дублировать', fn: () => { const c = { ...scClone(sc), id: newId(), name: sc.name + ' (копия)', outputs: [], on: false }; c.items.forEach((x) => { x.id = newId(); }); scAddScene(c); } },
-    { label: 'Сохранить как пресет сцены…', fn: () => scSavePreset(sc) },
-    { label: 'Сохранить в файл…', fn: () => scExport(sc) },
+    { label: l ? `Править макет «${l.name}»` : 'Править макет (не выбран)', disabled: !l, fn: () => scPick({ kind: 'layout', id: l.id }) },
+    { label: 'Переименовать…', fn: async () => { const n = await askName('Название сцены', sc.name); if (n) { sc.name = n; scSceneOutSet(sc, true); } } },
+    { label: 'Дублировать', fn: () => scAddScene({ ...scClone(sc), id: newId(), name: sc.name + ' (копия)', outputs: [], on: false }) },
     '-',
     { label: 'Выше', disabled: i <= 0, fn: () => { lib.scenes.splice(i - 1, 0, lib.scenes.splice(i, 1)[0]); saveLib(); scRenderLists(); } },
     { label: 'Ниже', disabled: i >= lib.scenes.length - 1, fn: () => { lib.scenes.splice(i + 1, 0, lib.scenes.splice(i, 1)[0]); saveLib(); scRenderLists(); } },
     '-',
     { label: 'Удалить сцену', fn: () => {
       lib.scenes = lib.scenes.filter((x) => x !== sc);
-      delete scLive[sc.id];
       delete scAuto[sc.id];
-      for (const k of Object.keys(scAuto)) if (scAuto[k] === sc.id) delete scAuto[k];
       saveLib(); scSend();
       if (scSel.id === sc.id) scSel = { kind: 'screen', id: 'main' };
       scRenderAll(true);
-      flashStatus(`Сцена «${sc.name}» удалена · Ctrl+Z — вернуть`);
+      flashStatus(`Сцена «${sc.name}» удалена (макет остался в «Пресетах сцен») · Ctrl+Z — вернуть`);
     } },
   ]);
 }
@@ -532,21 +606,22 @@ function scItemSet(it, patch, rerenderInsp) {
 }
 const scSub = (obj, key, sub, v) => { obj[key] = { ...(obj[key] || {}), [sub]: v }; };
 
-function scApply(sc = scCurScene()) {
-  if (!sc) return;
-  scLive[sc.id] = scClone(sc);
+function scApply(l = scCurScene()) {
+  if (!l) return;
+  scLive[l.id] = scClone(l);
   scSend();
   scRenderLists();
   scRenderBar();
-  flashStatus(`Сцена «${sc.name}» применена` + ((sc.outputs || []).length ? (sc.on ? ' — на выходах' : ' (вывод выключен)') : ' (выходов нет)'));
+  const users = scUsers(l);
+  flashStatus(`Макет «${l.name}» применён` + (users.length ? ' — в сценах: ' + users.map((x) => x.name).join(', ') : ' (пока ни в одной сцене)'));
 }
-function scRevert(sc = scCurScene()) {
-  if (!sc || !scLive[sc.id]) return;
-  Object.assign(sc, scClone(scLive[sc.id]));
+function scRevert(l = scCurScene()) {
+  if (!l || !scLive[l.id]) return;
+  Object.assign(l, scClone(scLive[l.id]));
   if (!scCurItem()) scIt = null;
-  scSceneTouch(true, sc);
+  scSceneTouch(true, l);
   if (scH && scH.kind === 'scene') scMountView();
-  flashStatus('Правки сцены сброшены · Ctrl+Z — вернуть');
+  flashStatus('Правки макета сброшены · Ctrl+Z — вернуть');
 }
 
 function scAddScreen(fmt) {
@@ -568,12 +643,18 @@ $('scAddScreen').addEventListener('click', (e) => {
 
 function scAddScene(sc) {
   lib.scenes.push(sc);
-  scLive[sc.id] = scClone(sc);
   saveLib();
   scSend();
   scPick({ kind: 'scene', id: sc.id });
 }
-// Готовые сцены для сцены (музыкантам, ведущим) — как Stage Layouts в ProPresenter
+// Новая сцена из шаблона: шаблон становится новым макетом в «Пресетах сцен», фон шаблона — фон сцены
+function scSceneFromTpl(kind) {
+  const t = scTemplate(kind);
+  const l = scAddLayout(scLayoutFrom(t, { bg: undefined }), false);
+  scAddScene(scNewScene(l, { bg: t.bg || '#000000', follow: !!t.follow }));
+  flashStatus(`Новая сцена «${l.name}» — её макет в «Пресетах сцен». Выход — справа в «Выходах»`);
+}
+// Готовые макеты для сцены (музыкантам, ведущим) — как Stage Layouts в ProPresenter
 const SC_STAGE_TPL = [
   ['st-curnext', 'Текущий и следующий слайд'],
   ['st-timer', 'Текущий + следующий слайд + таймер'],
@@ -582,33 +663,30 @@ const SC_STAGE_TPL = [
   ['st-multi', 'Мониторинг всех экранов'],
   ['st-host', 'Ведущему: заметки и таймер'],
 ];
+// «＋» у «Сцен»: сцена с готовым макетом из «Пресетов сцен» или с новым — из шаблона
 $('scAddScene').addEventListener('click', (e) => {
   const r = e.currentTarget.getBoundingClientRect();
+  const list = scPresets();
   showMenu({ clientX: r.left, clientY: r.bottom + 2 }, [
-    { label: 'Пустая 16:9', fn: () => scAddScene(scTemplate('empty')) },
-    { label: 'Пустая 9:16 (вертикальная)', fn: () => scAddScene(scTemplate('vertical')) },
-    '-',
-    { label: 'Для сцены (музыкантам, ведущим)', disabled: true, fn() {} },
-    ...SC_STAGE_TPL.map(([k, name]) => ({ label: '   ' + name, fn: () => scAddScene(scTemplate(k)) })),
-    '-',
-    { label: 'Для зрителей и трансляции', disabled: true, fn() {} },
-    { label: '   Мультиэкран: слайды, следующий, камера', fn: () => scAddScene(scTemplate('multi')) },
-    { label: '   Три экрана: 1:1 · 16:9 · 9:16', fn: () => scAddScene(scTemplate('three')) },
-    { label: '   Трансляция: камера + текст песни', fn: () => scAddScene(scTemplate('broadcast')) },
-    ...(scPresets().length ? ['-', { label: 'Из пресета', disabled: true, fn() {} }, ...scPresets().map((p) => ({ label: '   ' + p.name, fn: () => scSceneFromPreset(p) }))] : []),
+    ...(list.length ? [{ label: 'С макетом из «Пресетов сцен»', disabled: true, fn() {} }, ...list.map((p) => ({ label: '   ' + p.name, fn: () => scAddScene(scNewScene(p)) })), '-',
+      { label: 'С новым макетом', disabled: true, fn() {} }] : []),
+    ...scTplMenu(scSceneFromTpl),
   ]);
 });
 $('scImport').addEventListener('click', scImport);
 
-// Какой макет сейчас на выходах сцены: свой или другой сцены (как смена макета на сценическом экране)
+// Какой макет сейчас на выходах сцены: свой или временно другой (как смена макета на сценическом экране)
 function scLayoutPick(sc) {
-  return scSelect(lib.scenes.map((x) => [x.id, x.id === sc.id ? 'Свой (эта сцена)' : x.name]), scLayoutOf(sc), (v) => scSetLayout(sc.id, v));
+  const own = scLay(sc.layout);
+  return scSelect([['', own ? `Свой: «${own.name}»` : 'Свой (не выбран)'], ...scPresets().filter((x) => x !== own).map((x) => [x.id, x.name])],
+    scLayoutOf(sc) === (sc.layout || '') ? '' : scLayoutOf(sc), (v) => scSetLayout(sc.id, v));
 }
 
 /* ----- Примеры сцен ----- */
 
 function scItem(type, x, y, w, h, over) {
-  return { id: newId(), type, name: '', x, y, w, h, rot: 0, opacity: 100, fit: 'contain', ...over };
+  // Блок «Программа» по умолчанию — своё разрешение (без полей при любом мониторе «Основного»)
+  return { id: newId(), type, name: '', x, y, w, h, rot: 0, opacity: 100, fit: type === 'program' ? 'native' : 'contain', ...over };
 }
 function scTemplate(kind) {
   const pres = layerDefs().filter((l) => l.kind === 'pres').map((l) => l.id);
@@ -730,22 +808,22 @@ function scStageTemplate(kind, base0, t) {
   return { ...base, name: 'Пустой макет' };
 }
 
-async function scExport(sc) {
-  const file = await window.api.saveJson({ name: sc.name, data: { app: 'church-presenter', kind: 'screen-scene', version: 1, scene: sc }, title: 'Сохранить сцену', label: 'Экранная сцена MP Show' });
+// Макет в файл: формат тот же, что у старых сцен ('screen-scene', поле scene) — старые файлы открываются как макеты
+async function scExport(l) {
+  const data = scLayoutFrom(l, { id: l.id, name: l.name });
+  const file = await window.api.saveJson({ name: l.name, data: { app: 'church-presenter', kind: 'screen-scene', version: 2, scene: data }, title: 'Сохранить макет сцены', label: 'Макет сцены MP Show' });
   if (file) flashStatus('Сохранено: ' + file.split(/[\\/]/).pop());
 }
 async function scImport() {
-  const res = await window.api.openJson({ title: 'Загрузить сцену', label: 'Экранная сцена (JSON)' });
+  const res = await window.api.openJson({ title: 'Загрузить макет сцены', label: 'Макет сцены (JSON)' });
   if (!res) return;
   const sc = res.ok && res.data && res.data.kind === 'screen-scene' && res.data.scene;
-  if (!sc || !Array.isArray(sc.items)) { showNotice('В файле нет экранной сцены', true); return; }
-  const c = scClone(sc);
-  c.id = newId();
-  c.outputs = []; // мониторы другого компьютера — свои выходы настраиваются здесь
-  c.items = c.items.filter((x) => x && SC_ITEMS[x.type]).map((x) => ({ ...x, id: newId() }));
-  // ссылки на экраны и слои другого компьютера — что не нашлось, остаётся пустым
-  scAddScene(c);
-  flashStatus(`Сцена «${c.name}» загружена`);
+  if (!sc || !Array.isArray(sc.items)) { showNotice('В файле нет макета сцены', true); return; }
+  // выходы и мониторы другого компьютера не берём — только макет; ссылки на чужие экраны и слои остаются пустыми
+  const l = scLayoutFrom(sc);
+  l.items = l.items.filter((x) => x && SC_ITEMS[x.type]).map((x) => ({ ...x, id: newId() }));
+  scAddLayout(l);
+  flashStatus(`Макет «${l.name}» загружен — поставьте его в сцену (правая кнопка по макету или свойства сцены)`);
 }
 
 /* ----- Холст: превью экрана или редактор сцены ----- */
@@ -761,6 +839,8 @@ function scMountView() {
   if (!scTabOn) return;
   const view = $('scView');
   if (scSel.kind === 'screen' && scScreen(scSel.id)) scH = { kind: 'screen', id: scSel.id, h: Compose.mountScreen(view, scSel.id, { preview: true }) };
+  // Сцена — как она идёт на выходы: применённый макет в её размере и фоне
+  else if (scCurSc()) scH = { kind: 'screen', id: scSceneSid(scCurSc()), h: Compose.mountScreen(view, scSceneSid(scCurSc()), { preview: true }) };
   else if (scCurScene()) scH = { kind: 'scene', id: scSel.id, h: Compose.mountScene(view, scCurScene(), { preview: true, chain: [], edit: true }) };
   scLayout();
 }
@@ -772,23 +852,70 @@ function scUpdateView() {
 function scViewSize() {
   const sc = scCurScene();
   if (sc) return { W: Math.max(16, sc.w), H: Math.max(16, sc.h) };
-  const { w, h } = Compose.screenSize(scSel.id);
+  const { w, h } = Compose.screenSize(scSel.kind === 'scene' ? 'scene:' + scSel.id : scSel.id);
   return { W: w, H: h };
 }
+// Масштаб холста (как в редакторе тем): 1 — вписать в окно, меньше — мельче, больше — крупнее (холст прокручивается).
+// Кнопки «−»/«+» под холстом, Ctrl + колёсико над холстом, щелчок по процентам — вписать. Один на все холсты редактора сцен
+const SC_ZOOM_MIN = 0.1;
+const SC_ZOOM_MAX = 6;
+let scZoom = Math.max(SC_ZOOM_MIN, Math.min(SC_ZOOM_MAX, Number(settings.scZoom) || 1));
+function scSetZoom(z, at) {
+  const cv = $('scCanvas');
+  z = Math.max(SC_ZOOM_MIN, Math.min(SC_ZOOM_MAX, Math.round(z * 100) / 100));
+  if (Math.abs(z - 1) < 0.04) z = 1; // рядом с «вписать» — прилипает
+  // точка под курсором (доля холста) остаётся под курсором
+  const R = $('scHost').getBoundingClientRect();
+  const C = cv.getBoundingClientRect();
+  const px = at ? at.clientX : C.left + C.width / 2;
+  const py = at ? at.clientY : C.top + C.height / 2;
+  const fx = R.width ? (px - R.left) / R.width : 0.5;
+  const fy = R.height ? (py - R.top) / R.height : 0.5;
+  scZoom = z;
+  settings.scZoom = z;
+  saveSettings();
+  scLayout();
+  const R2 = $('scHost').getBoundingClientRect();
+  cv.scrollLeft += R2.left + fx * R2.width - px;
+  cv.scrollTop += R2.top + fy * R2.height - py;
+}
+$('scZoomOut').addEventListener('click', () => scSetZoom(scZoom / 1.25));
+$('scZoomIn').addEventListener('click', () => scSetZoom(scZoom * 1.25));
+$('scZoomFit').addEventListener('click', () => scSetZoom(1));
+$('scCanvas').addEventListener('wheel', (e) => {
+  if (!e.ctrlKey) return;
+  e.preventDefault();
+  scSetZoom(scZoom * (e.deltaY < 0 ? 1.1 : 1 / 1.1), e);
+}, { passive: false });
+
 function scLayout() {
   if (!scTabOn) return;
   const cv = $('scCanvas');
   const host = $('scHost');
   const view = $('scView');
   const { W, H } = scViewSize();
-  const cw = cv.clientWidth;
-  const ch = cv.clientHeight;
+  // размер места — без полос прокрутки (иначе масштаб «прыгает», когда они появляются)
+  const cw = cv.offsetWidth;
+  const ch = cv.offsetHeight;
   if (!cw || !ch) return;
-  scK = Math.min(cw / W, ch / H);
+  const zoomed = scZoom > 1;
+  cv.classList.toggle('zoomed', zoomed);
+  scK = Math.min(cw / W, ch / H) * scZoom;
+  const pad = zoomed ? 24 : 0; // крупнее места — поля и прокрутка
+  const left = Math.max(pad, (cw - W * scK) / 2);
+  const top = Math.max(pad, (ch - H * scK) / 2);
   host.style.width = W * scK + 'px';
   host.style.height = H * scK + 'px';
-  host.style.left = (cw - W * scK) / 2 + 'px';
-  host.style.top = (ch - H * scK) / 2 + 'px';
+  host.style.left = left + 'px';
+  host.style.top = top + 'px';
+  let sp = cv.querySelector(':scope > .sc-space');
+  if (!sp) { sp = scEl('div', 'sc-space'); cv.append(sp); }
+  sp.style.left = left + W * scK + pad - 1 + 'px';
+  sp.style.top = top + H * scK + pad - 1 + 'px';
+  if (!zoomed) { cv.scrollLeft = 0; cv.scrollTop = 0; }
+  $('scZoomFit').textContent = Math.round(scZoom * 100) + '%';
+  $('scZoomOut').disabled = scZoom <= SC_ZOOM_MIN;
+  $('scZoomIn').disabled = scZoom >= SC_ZOOM_MAX;
   view.style.width = W + 'px';
   view.style.height = H + 'px';
   view.style.transform = `scale(${scK})`;
@@ -796,6 +923,7 @@ function scLayout() {
   const it = scCurItem();
   $('scFoot').textContent = scCurScene()
     ? `${W}×${H} · ${Math.round(scK * 100)}%` + (it ? ` · ${it.name || SC_ITEMS[it.type].name}: ${Math.round(it.x)}, ${Math.round(it.y)} · ${Math.round(it.w)}×${Math.round(it.h)}` : '') + ' · Стрелки — сдвиг (Shift — ×10), Delete, Ctrl+D, Ctrl+Enter — применить'
+    : scSel.kind === 'scene' ? `${W}×${H} · Так сцена выглядит сейчас на выходе (без звука). Макет правится в «Пресетах сцен» слева`
     : `${W}×${H} · Так экран выглядит сейчас на выходе (без звука)`;
 }
 new ResizeObserver(() => scLayout()).observe($('scCanvas'));
@@ -1508,13 +1636,21 @@ function scRenderBar() {
     );
     const ap = scEl('span', 'te-apply');
     const dirty = scDirty(sc);
-    const rv = scBtn('Сбросить', '', () => scRevert(sc), 'Вернуть сцену как на выходе');
+    const rv = scBtn('Сбросить', '', () => scRevert(sc), 'Вернуть макет как на выходах');
     rv.disabled = !dirty;
-    const ok = scBtn('Применить', 'done', () => scApply(sc), 'Отправить правки на выходы сцены (Ctrl+Enter)');
+    const ok = scBtn('Применить', 'done', () => scApply(sc), 'Отправить правки макета на выходы всех сцен с ним (Ctrl+Enter)');
     ok.disabled = !dirty;
     ap.append(rv, ok);
-    if ((sc.outputs || []).length) ap.append(scOutBtn(!!sc.on, () => { sc.on = !sc.on; scSceneOutSet(sc, true); }));
     bar.append(add, scEl('span', 'te-sep'), ed, scEl('span', 'te-sep'), help, ap);
+  } else if (scCurSc()) {
+    // Сцена: превью выхода; макет — кнопкой «Править макет»
+    const c = scCurSc();
+    const l = scLay(scLayoutOf(c));
+    bar.append(scEl('b', 'sc-bar-name', c.name), scEl('span', 'te-sub', 'сцена' + (l ? ` · макет «${l.name}»` : ' · макет не выбран')));
+    if (scLay(c.layout)) bar.append(scBtn('Править макет', 'pen', () => scPick({ kind: 'layout', id: c.layout }), 'Открыть макет этой сцены в «Пресетах сцен»'));
+    bar.append(scEl('span', 'spacer'));
+    for (const o of scOutsOf(scSceneSid(c))) bar.append(scBtn({ display: 'Монитор', window: 'Окно', ndi: 'NDI' }[o.kind] || o.kind, '', () => window.api.screensFocus(o.key), o.kind === 'window' ? 'Показать окно сцены' : 'Выход открыт', 'sc-chip'));
+    if ((c.outputs || []).length) bar.append(scOutBtn(!!c.on, () => { c.on = !c.on; scSceneOutSet(c, true); }));
   } else {
     const s = scScreen(scSel.id);
     if (!s) return;
@@ -1616,8 +1752,9 @@ function scRenderInsp() {
   const sc = scCurScene();
   if (scSelItems().length > 1) box.append(...scMultiInsp(scSelItems(), sc).filter(Boolean));
   else if (it) box.append(...scItemInsp(it, sc).filter(Boolean));
-  else if (sc) box.append(...scSceneInsp(sc).filter(Boolean));
-  else if (scScreen(scSel.id)) box.append(...scScreenInsp(scScreen(scSel.id)).filter(Boolean));
+  else if (sc) box.append(...scLayoutInsp(sc).filter(Boolean));
+  else if (scCurSc()) box.append(...scSceneInsp(scCurSc()).filter(Boolean));
+  else if (scSel.kind === 'screen' && scScreen(scSel.id)) box.append(...scScreenInsp(scScreen(scSel.id)).filter(Boolean));
   Icons.apply(box);
   box.scrollTop = keep;
 }
@@ -1736,11 +1873,13 @@ function scDisplayBusy(display, sid, i) {
   return busy;
 }
 
-// Альфа-канал: прозрачный фон в NDI (OBS, vMix видят только текст и элементы); на мониторе прозрачности нет — там чёрный
-function scAlphaRows(on, fn) {
+// Прозрачный фон экрана / альфа-канал сцены (s.alpha): фона темы, шаблонов и сцены нет — остаются текст, фигуры, фото и видео.
+// В «Предпросмотре» — шахматка, внутри сцены (блок «Экран») — просвечивает, NDI — с альфой, окно — прозрачное без рамки, монитор — чёрный
+function scAlphaRows(on, fn, label = 'Прозрачный фон') {
   return [
-    scCheck('Альфа-канал (прозрачный фон)', on, fn, 'Для NDI в OBS, vMix: фон прозрачный — видно только текст и элементы'),
-    ...(on ? [scNote('NDI-выход отдаёт картинку с прозрачным фоном: фон темы, шаблона и сцены убирается, остаются текст, фигуры, фото и видео. В «Предпросмотре» прозрачное — шахматкой. На мониторе и в окне прозрачности нет (там чёрный).')] : []),
+    scCheck(label, on, fn, 'Видно только текст и элементы, остальное прозрачное: для наложения на другой экран, NDI в OBS / vMix'),
+    ...(on ? [scNote('Фон темы, шаблона и сцены убран — остаются текст, фигуры, фото и видео. В «Предпросмотре» прозрачное — шахматкой; внутри сцены (блок «Экран») сквозь него видно то, что ниже. '
+      + 'NDI-выход — с альфа-каналом. Выход «Окно» — прозрачное окно без рамки (переносится мышью за любое место, размер не меняется). На мониторе прозрачности нет — там чёрный.')] : []),
   ];
 }
 
@@ -1762,7 +1901,6 @@ function scScreenInsp(s) {
   if (!main && (s.outputs || []).length) rows.push(scRow('Вывод', scOutBtn(!!s.enabled, () => set({ enabled: !s.enabled }, true))));
   rows.push(...scOutputRows(s.id, s.name, s.outputs || [], (list, re) => { s.outputs = list; set({}, re); }));
   if (!(s.outputs || []).length && !main) rows.push(scNote('Выходов нет — экран виртуальный: его можно показывать в «Предпросмотре», в отдельном окне и внутри сцен (блок «Экран»).'));
-  rows.push(...scAlphaRows(!!s.alpha, (v) => set({ alpha: v }, true)));
   out.push(scSec('Выходы', rows));
   // Что идёт: слои и тема
   const th = lib.themes || [];
@@ -1771,6 +1909,7 @@ function scScreenInsp(s) {
   const cont = [
     scRow('Слои', scLayerChecks(s.layers, (v) => set({ layers: v }, true))),
     scNote('Какие слои программы идут на этот экран. Например, на трансляцию — только «Презентации» (текст без фона).'),
+    ...scAlphaRows(!!s.alpha, (v) => set({ alpha: v }, true)),
     scRow('Тема', scSelect([['', 'Как у слайдов (обычные темы)'], ...th.map((x) => [x.id, x.name || 'Тема'])], s.theme || '', (v) => set({ theme: v, themeTpl: '' }, true))),
     t && tpls.length > 1 ? scRow('Шаблон', scSelect([['', 'По виду: песня, Библия…'], ...tpls.map((x) => [x.id, x.name || 'Шаблон'])], s.themeTpl || '', (v) => set({ themeTpl: v }))) : null,
     scNote(t ? `Все тексты на этом экране — песни, Библия, текстовые слайды — в оформлении темы «${t.name}», в её текстовом окне. Фото, видео и PowerPoint — как есть.`
@@ -1792,43 +1931,68 @@ function scScreenInsp(s) {
   return out;
 }
 
+// Свойства СЦЕНЫ — только выход: разрешение, фон, выходы, альфа-канал, частота и какой макет. Всё — сразу на выходы
 function scSceneInsp(sc) {
-  const set = (patch, re) => { Object.assign(sc, patch); scSceneTouch(re); };
-  const outSet = (patch, re) => { Object.assign(sc, patch); scSceneOutSet(sc, re); };
+  const set = (patch, re) => { Object.assign(sc, patch); scSceneOutSet(sc, re); };
   const has = (sc.outputs || []).length > 0;
-  const lay = scLayoutOf(sc);
+  const own = scLay(sc.layout);
+  const now = scLayoutOf(sc);
+  const clear = sc.bg === 'transparent';
+  const newLay = (k) => scUseLayout(scAddLayout(scLayoutFrom(scTemplate(k)), false), sc);
   return [
-    scTitle('scene', sc.name, scDirty(sc) ? 'есть правки' : 'сцена'),
+    scTitle('scene', sc.name, 'сцена = выход + макет'),
     scSec('Сцена', [
-      scRow('Название', scText(sc.name, (v) => v && set({ name: v }))),
-      ...scSizeRows(sc, (p, re) => set(p, re)),
-      scRow('Фон', scColor(sc.bg || '#000000', (v) => set({ bg: v }))),
-      ...scTransRows(sc.trans, (v, re) => set({ trans: v }, re)),
-      scNote('Макет сцены правится на холсте: элементы — кнопками над ним. На выходы идёт после «Применить» (Ctrl+Enter).'),
-    ]),
-    scSec('Выходы сцены', [
+      scRow('Название', scText(sc.name, (v) => v && set({ name: v }, false))),
+      ...scSizeRows(sc, (p, re) => set(p, re !== false)),
+      scRow('Фон', scSelect([['color', 'Цвет'], ['transparent', 'Прозрачный']], clear ? 'transparent' : 'color', (v) => set({ bg: v === 'transparent' ? 'transparent' : '#000000' }, true)),
+        clear ? null : scColor(sc.bg || '#000000', (v) => set({ bg: v }))),
+      clear && !sc.alpha ? scNote('Фон прозрачный. Чтобы прозрачность ушла в NDI или окно — включите «Альфа-канал» ниже; на мониторе прозрачное — чёрное.') : null,
+      scRow('Частота', scSelect([['0', '30 кадр/с'], ['24', '24'], ['25', '25'], ['50', '50'], ['60', '60']], String(sc.hz || 0), (v) => set({ hz: Number(v) }, false))),
+      scNote('Частота — для NDI-выхода; частоту монитора меняет Windows (Параметры → Дисплей).'),
+    ].filter(Boolean)),
+    scSec('Макет', [
+      scRow('Макет', scSelect([['', '— не выбран —'], ...scPresets().map((p) => [p.id, p.name || 'Макет'])], own ? own.id : '', (v) => { delete scAuto[sc.id]; set({ layout: v }, true); })),
+      scRow('', own ? scBtn('Править макет', 'pen', () => scPick({ kind: 'layout', id: own.id }), 'Открыть макет в «Пресетах сцен»') : null,
+        scBtn(own ? 'Новый…' : 'Новый макет…', 'add', (e) => scMenuAt(e, scTplMenu(newLay)), 'Новый макет из шаблона — сразу в эту сцену')),
+      scNote('Макеты (что и где на экране) настраиваются в «Пресетах сцен» слева. Один макет можно поставить в несколько сцен; если его размер другой — он впишется.'),
+      scCheck('Менять макет по слайдам', !!sc.follow, (v) => { if (!v) delete scAuto[sc.id]; set({ follow: v }, true); },
+        'Слайд или презентация с выбранным макетом (правая кнопка в ленте → «Макет сцены…») включает его на выходах этой сцены'),
+      sc.follow || now !== (sc.layout || '') ? scRow('Сейчас', scLayoutPick(sc)) : null,
+      now !== (sc.layout || '') ? scNote(`На выходах сейчас макет «${(scLay(now) || {}).name}» (по слайду, панели «Сцена» или макросу). Вернуть свой — выберите «Свой».`) : null,
+    ].filter(Boolean)),
+    scSec('Выход', [
       scNote('Куда идёт сцена: монитор или телевизор на сцене (HDMI, SDI), окно или NDI в сеть.'),
-      has ? scRow('Вывод', scOutBtn(!!sc.on, () => outSet({ on: !sc.on }, true))) : null,
-      ...scOutputRows(scSceneSid(sc), sc.name, sc.outputs || [], (list, re) => outSet({ outputs: list }, re)),
-      ...(has ? [
-        scRow('Частота', scSelect([['0', '30 кадр/с'], ['24', '24'], ['25', '25'], ['50', '50'], ['60', '60']], String(sc.hz || 0), (v) => outSet({ hz: Number(v) }, false))),
-        scCheck('Звук элементов сцены', !!sc.outSound, (v) => outSet({ outSound: v }, false), 'Обычно звук идёт только с «Основного» — иначе будет эхо'),
-      ] : []),
-      ...scAlphaRows(!!sc.alpha, (v) => outSet({ alpha: v }, true)),
+      has ? scRow('Вывод', scOutBtn(!!sc.on, () => set({ on: !sc.on }, true))) : null,
+      ...scOutputRows(scSceneSid(sc), sc.name, sc.outputs || [], (list, re) => set({ outputs: list }, re)),
+      has ? scCheck('Звук элементов сцены', !!sc.outSound, (v) => set({ outSound: v }, false), 'Обычно звук идёт только с «Основного» — иначе будет эхо') : null,
+      ...scAlphaRows(!!sc.alpha, (v) => set({ alpha: v }, true), 'Альфа-канал (прозрачный фон)'),
     ].filter(Boolean)),
-    scSec('Что идёт в сцену', [
-      scRow('Слои', scLayerChecks(sc.layers, (v) => outSet({ layers: v }, true))),
-      scNote('Какие слои программы видны в блоках «Программа» этой сцены (если у блока не выбраны свои).'),
-      scRow('Макет сейчас', scLayoutPick(sc)),
-      lay !== sc.id ? scNote(`На выходах сейчас макет сцены «${(scScene(lay) || {}).name}». Вернуть свой — выберите «Свой».`) : null,
-      scCheck('Менять макет по слайдам', !!sc.follow, (v) => { if (!v) delete scAuto[sc.id]; outSet({ follow: v }, true); },
-        'Слайд или презентация с выбранным макетом сцены (правая кнопка в ленте → «Макет сцены…») включает его на выходах этой сцены'),
+  ];
+}
+
+// Свойства МАКЕТА («Пресеты сцен»): размер, фон, переход, слои; элементы — на холсте. Черновик до «Применить»
+function scLayoutInsp(l) {
+  const set = (patch, re) => { Object.assign(l, patch); scSceneTouch(re); };
+  const users = scUsers(l);
+  return [
+    scTitle('presets', l.name, scDirty(l) ? 'есть правки' : 'макет'),
+    scSec('Макет', [
+      scRow('Название', scText(l.name, (v) => { if (v) { l.name = v; saveLib(); scRenderLists(); scRenderBar(); } })),
+      ...scSizeRows(l, (p, re) => set(p, re)),
+      scRow('Фон', scSelect([['', 'Нет — фон сцены'], ['color', 'Свой цвет']], l.bg ? 'color' : '', (v) => set({ bg: v ? '#000000' : undefined }, true)),
+        l.bg ? scColor(l.bg, (v) => set({ bg: v })) : null),
+      ...scTransRows(l.trans, (v, re) => set({ trans: v }, re)),
+      scRow('Слои', scLayerChecks(l.layers, (v) => set({ layers: v }, true))),
+      scNote('Какие слои программы видны в блоках «Программа» этого макета (если у блока не выбраны свои).'),
+      scNote('Элементы — кнопками над холстом или перетащите файл из Проводника. На выходы — после «Применить» (Ctrl+Enter).'),
     ].filter(Boolean)),
-    scSec('Пресет сцены', [
-      scNote('Пресет — сохранённый макет (как тема, но для сцен): его можно применить к любой сцене. Список — слева, «Пресеты сцен».'),
-      scRow('', scBtn('Сохранить как пресет', 'presets', () => scSavePreset(sc))),
-      ...(scPresets().length ? [scRow('Применить', scSelect([['', '— выберите пресет —'], ...scPresets().map((p) => [p.id, p.name])], '', (v) => { const p = scPresets().find((x) => x.id === v); if (p) scApplyPreset(p, sc); }))] : []),
-      scRow('Файл', scBtn('Сохранить…', 'export', () => scExport(sc)), scBtn('Загрузить…', 'import', scImport)),
+    scSec('Где стоит', [
+      users.length ? scNote('В сценах: ' + users.map((x) => `«${x.name}»`).join(', ') + '.') : scNote('Пока ни в одной сцене. Поставить — правая кнопка по макету слева или «Макет» в свойствах сцены.'),
+      ...users.map((x) => scRow('', scBtn(`Сцена «${x.name}»`, 'scene', () => scPick({ kind: 'scene', id: x.id }), 'Открыть свойства сцены'))),
+      scRow('', scBtn('Новая сцена с этим макетом', 'add', () => scAddScene(scNewScene(l)))),
+    ]),
+    scSec('Файл', [
+      scRow('Файл', scBtn('Сохранить…', 'export', () => scExport(l)), scBtn('Загрузить…', 'import', scImport)),
     ], false),
   ];
 }
@@ -1959,13 +2123,22 @@ function scMultiInsp(sel, sc) {
   return out;
 }
 
+// Пропорции содержимого блока (программа, слайды — разрешение «Основного»; экран — свой размер) не как у рамки — объяснить поля
+function scFitNote(it) {
+  const z = it.type === 'screen' ? Compose.screenSize(it.ref) : ['program', 'cur', 'next', 'only'].includes(it.type) ? scMainSize() : null;
+  if (!z || !it.w || !it.h || Math.abs(z.w / z.h - it.w / it.h) < 0.01 || (it.fit && it.fit !== 'contain')) return null;
+  const who = it.type === 'screen' ? 'Показанный экран' : '«Основной» (Настройки → Экран и вывод)';
+  return scNote(`${who} — ${z.w}×${z.h}, а рамка блока — ${Math.round(it.w)}×${Math.round(it.h)}: пропорции разные, поэтому ${z.w / z.h < it.w / it.h ? 'по бокам' : 'сверху и снизу'} поля. `
+    + (it.type === 'screen' ? 'Без полей — «Заполнить» (края обрежутся) или «Растянуть».' : 'Без полей — «Своё разрешение», «Заполнить» (края обрежутся) или «Растянуть».'), true);
+}
+
 function scItemInsp(it, sc) {
   const set = (patch, re) => scItemSet(it, patch, re);
   const out = [scTitle(SC_ITEMS[it.type].icon, it.name || SC_ITEMS[it.type].name, SC_ITEMS[it.type].name)];
   const c = [scRow('Название', scText(it.name, (v) => set({ name: v }, true), SC_ITEMS[it.type].name))];
   if (it.type === 'screen') {
     // Любой экран или другая сцена (как она идёт на свои выходы)
-    c.push(scRow('Показывает', scSelect([...lib.screens.map((s) => [s.id, 'Экран: ' + s.name]), ...lib.scenes.filter((x) => x !== sc).map((x) => [scSceneSid(x), 'Сцена: ' + x.name])], it.ref, (v) => set({ ref: v }, true))));
+    c.push(scRow('Показывает', scSelect([...lib.screens.map((s) => [s.id, 'Экран: ' + s.name]), ...lib.scenes.filter((x) => x.layout !== sc.id).map((x) => [scSceneSid(x), 'Сцена: ' + x.name])], it.ref, (v) => set({ ref: v }, true))));
   } else if (it.type === 'program') {
     c.push(scRow('Слои', scLayerChecks(it.layers, (v) => set({ layers: v }, true))));
     c.push(scCheck('Рисунок поверх слайда', it.ink !== false, (v) => set({ ink: v })));
@@ -2013,7 +2186,10 @@ function scItemInsp(it, sc) {
     const cr = it.crop || {};
     const cset = (k, v) => { scSub(it, 'crop', k, Math.max(0, Math.min(45, v))); scSceneTouch(false); };
     out.push(scSec('Вписывание и обрезка', [
-      scRow('Вписать', scSelect([['contain', 'Целиком (поля)'], ['cover', 'Заполнить (обрезать)'], ['stretch', 'Растянуть']], it.fit || 'contain', (v) => set({ fit: v }))),
+      scRow('Вписать', scSelect([
+        ...(['program', 'cur', 'next', 'only'].includes(it.type) ? [['native', 'Своё разрешение (без полей, текст подстроится)']] : []),
+        ['contain', 'Целиком (поля)'], ['cover', 'Заполнить (обрезать)'], ['stretch', 'Растянуть']], it.fit || 'contain', (v) => set({ fit: v }, true))),
+      scFitNote(it),
       scRow('Слева, справа', scNum(cr.l || 0, (v) => cset('l', v), { min: 0, max: 45 }), scNum(cr.r || 0, (v) => cset('r', v), { min: 0, max: 45 }), scEl('span', 'te-sub', '%')),
       scRow('Сверху, снизу', scNum(cr.t || 0, (v) => cset('t', v), { min: 0, max: 45 }), scNum(cr.b || 0, (v) => cset('b', v), { min: 0, max: 45 }), scEl('span', 'te-sub', '%')),
       scRow('', scBtn('Без обрезки', '', () => set({ crop: {} }, true))),

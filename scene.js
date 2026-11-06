@@ -665,7 +665,7 @@ const Scene = (() => {
     if (o.blend && o.blend !== 'normal') el.style.mixBlendMode = o.blend; // наложение на то, что под объектом
     return el;
   }
-  // Заливка, обводка, тень, скругление, эффекты фона, размытие краёв
+  // Заливка, обводка, тень, скругление, эффекты фона (растушёвка и свечение — в objFx)
   function decorate(el, o, round) {
     const bg = paint(o.fill);
     if (bg) el.style.background = bg;
@@ -677,7 +677,29 @@ const Scene = (() => {
     else if (num(o.radius, 0) > 0) el.style.borderRadius = cq(o.radius);
     const bd = backdrop(o.fx);
     if (bd) el.style.backdropFilter = bd;
-    if (num(o.feather, 0) > 0) el.style.filter = `blur(${cq(o.feather)})`;
+  }
+
+  // Растушёвка и внешнее свечение — у любого объекта.
+  // Растушёвка: у картинки и видео — края плавно уходят в прозрачность (маска), у остальных — мягкие края (размытие).
+  // Свечение (как Outer Glow в Photoshop) — тень без смещения вокруг всего, что нарисовано; «сила» — сколько раз наложить.
+  const fade = (f, dir) => `linear-gradient(${dir}, transparent, #000 ${f}, #000 calc(100% - ${f}), transparent)`;
+  function objFx(el, o) {
+    const fl = el.style.filter ? [el.style.filter] : [];
+    const fe = num(o.feather, 0);
+    if (fe > 0) {
+      const m = el.querySelector(':scope > .m');
+      if (m) {
+        const f = cq(fe);
+        m.style.maskImage = o.featherRound ? `radial-gradient(closest-side, #000 calc(100% - ${f} * 2), transparent)` : `${fade(f, 'to right')}, ${fade(f, 'to bottom')}`;
+        m.style.maskComposite = 'intersect';
+      } else fl.push(`blur(${cq(fe)})`);
+    }
+    const g = o.glow;
+    if (g && g.on && num(g.size, 0) > 0) {
+      const one = `drop-shadow(0 0 ${cq(g.size)} ${rgba(g.color, g.op)})`;
+      for (let i = 0; i < Math.max(1, Math.min(4, Math.round(num(g.power, 1)))); i++) fl.push(one);
+    }
+    el.style.filter = fl.join(' ');
   }
 
   // Подложка под текстом: цвет, прозрачность, размытие того, что за ней, поля, скругление, обводка, тень
@@ -885,7 +907,7 @@ const Scene = (() => {
         el.append(svg);
       }
       const ds = dropShadow(o.shadow);
-      if (ds) el.style.filter = ds + (num(o.feather, 0) > 0 ? ` blur(${cq(o.feather)})` : '');
+      if (ds) el.style.filter = ds;
     } else if (o.kind === 'line' || o.kind === 'arrow') {
       const s = o.stroke || {};
       const w = Math.max(0.05, num(s.w, 0.5));
@@ -954,6 +976,7 @@ const Scene = (() => {
     for (const o of objs) {
       const el = o.kind === 'text' ? buildTextObj(o, c, B, st) : o.kind === 'image' || o.kind === 'video' ? buildMediaObj(o, st.still) : buildShape(o);
       if (!el) continue;
+      objFx(el, o);
       const a = o.anim || {};
       if (a.in && a.in.type && a.in.type !== 'none') {
         el._in = a.in;

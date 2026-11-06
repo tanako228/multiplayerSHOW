@@ -291,7 +291,7 @@ function stShowOnly(content, label) {
   stOnly = content ? { content: { ...content, sound: false }, label: label || '' } : null;
   stSend();
   stPanelRefresh();
-  if (!lib.scenes.some((sc) => sc.items.some((it) => it.type === 'only'))) flashStatus(content ? 'Отправлено на сцену. Чтобы видеть его, добавьте в макет блок «Только для сцены»' : 'Со сцены убрано');
+  if (!scPresets().some((l) => (l.items || []).some((it) => it.type === 'only'))) flashStatus(content ? 'Отправлено на сцену. Чтобы видеть его, добавьте в макет блок «Только для сцены»' : 'Со сцены убрано');
   else flashStatus(content ? 'Только на сцене: ' + (label || 'слайд') : '«Только для сцены» убрано');
 }
 function stToggleCap(k) {
@@ -307,12 +307,12 @@ const stFollowers = () => lib.scenes.filter((sc) => sc.follow);
 // Показан слайд (playlist.js showSlide): у слайда или презентации свой макет — включить его в сценах «по слайду»
 function stSlideShown(entry, slide) {
   const lay = (slide && slide.stage) || (entry && entry.item.stage) || '';
-  const l = lay && scScene(lay);
+  const l = lay && scLay(lay);
   if (!l) return;
   if (!scLive[l.id]) scLive[l.id] = scClone(l);
   let changed = false;
   for (const sc of stFollowers()) {
-    const want = l.id === sc.id ? undefined : l.id;
+    const want = l.id === sc.layout ? undefined : l.id;
     if (scAuto[sc.id] === want) continue;
     if (want) scAuto[sc.id] = want; else delete scAuto[sc.id];
     changed = true;
@@ -328,20 +328,20 @@ function stSlideMenu(e, entry, slide) {
   const out = [];
   if (slide.k !== 'audio') out.push({ label: 'Только на сцену', fn: () => stShowOnly(contentOf(entry.item, slide), entry.item.name + (slide.label ? ' — ' + slide.label : '')) });
   out.push({ label: 'Заметка к слайду…' + (slide.notes ? ' ✓' : ''), fn: () => stNoteEdit(e, slide) });
-  if (stFollowers().length) out.push({ label: 'Макет сцены…' + (slide.stage && scScene(slide.stage) ? ` (${scScene(slide.stage).name})` : ''), fn: () => stLayoutPick(e, slide, 'этого слайда') });
+  if (stFollowers().length) out.push({ label: 'Макет сцены…' + (scLay(slide.stage) ? ` (${scLay(slide.stage).name})` : ''), fn: () => stLayoutPick(e, slide, 'этого слайда') });
   return out;
 }
 // Пункт в меню презентации (playlist.js presMenu)
 function stPresMenu(e, item) {
   if (!stFollowers().length) return [];
-  return [{ label: 'Макет сцены…' + (item.stage && scScene(item.stage) ? ` (${scScene(item.stage).name})` : ''), fn: () => stLayoutPick(e, item, 'всех слайдов презентации') }];
+  return [{ label: 'Макет сцены…' + (scLay(item.stage) ? ` (${scLay(item.stage).name})` : ''), fn: () => stLayoutPick(e, item, 'всех слайдов презентации') }];
 }
 // Какой макет включить в сценах «по слайду», когда показан этот слайд / презентация
 function stLayoutPick(e, obj, what) {
   showMenu(e, [
     { label: `Макет сцены при показе ${what}`, disabled: true, fn() {} },
     { label: (!obj.stage ? '● ' : '   ') + 'Не менять', fn: () => { delete obj.stage; saveLib(); flashStatus('Макет сцены не меняется'); } },
-    ...lib.scenes.map((l) => ({ label: (obj.stage === l.id ? '● ' : '   ') + l.name, fn: () => { obj.stage = l.id; saveLib(); flashStatus(`При показе — макет «${l.name}»`); } })),
+    ...scPresets().map((l) => ({ label: (obj.stage === l.id ? '● ' : '   ') + l.name, fn: () => { obj.stage = l.id; saveLib(); flashStatus(`При показе — макет «${l.name}»`); } })),
   ]);
 }
 
@@ -443,7 +443,7 @@ function stPanelRender() {
   const outs = lib.scenes.filter((sc) => (sc.outputs || []).length);
   if (!outs.length) {
     scr.append(stEl('div', 'st-note', 'Пока ни у одной сцены нет выхода. Добавьте сцену (например «Текущий и следующий слайд») и укажите ей монитор или NDI.'));
-    scr.append(stB('＋ Сцена для музыкантов', () => { stPanelClose(); openScreensTab(); scAddScene(scTemplate('st-timer')); }));
+    scr.append(stB('＋ Сцена для музыкантов', () => { stPanelClose(); openScreensTab(); scSceneFromTpl('st-timer'); }));
   }
   for (const sc of outs) {
     const row = stEl('div', 'st-row');
@@ -453,8 +453,10 @@ function stPanelRender() {
     const on = stB(sc.on ? 'Вкл' : 'Выкл', () => { sc.on = !sc.on; scSceneOutSet(sc, true); }, sc.on ? 'Выключить вывод этой сцены' : 'Включить вывод этой сцены', sc.on ? 'on' : '');
     const sel = document.createElement('select');
     sel.title = 'Макет, который сейчас на этой сцене';
-    for (const l of lib.scenes) sel.append(Object.assign(stEl('option', '', l.id === sc.id ? 'Свой макет' : l.name), { value: l.id }));
-    sel.value = scLayoutOf(sc);
+    const own = scLay(sc.layout);
+    sel.append(Object.assign(stEl('option', '', own ? `Свой: ${own.name}` : 'Свой (не выбран)'), { value: '' }));
+    for (const l of scPresets()) if (l !== own) sel.append(Object.assign(stEl('option', '', l.name), { value: l.id }));
+    sel.value = scLayoutOf(sc) === (sc.layout || '') ? '' : scLayoutOf(sc);
     sel.addEventListener('change', () => scSetLayout(sc.id, sel.value));
     const nm = stEl('span', 'st-name', sc.name);
     nm.title = sc.name + (sc.follow ? ' · макет может менять слайд (меню слайда → «Макет сцены…»)' : '');
@@ -477,7 +479,7 @@ function stPanelRender() {
   mr.append(stB('Показать', () => stSetMsg(ta.value), 'Ctrl+Enter', 'primary'), stB('Убрать', () => stSetMsg(''), 'Убрать сообщение со сцены'));
   if (stMsg.text) mr.append(stEl('span', 'st-now', '● ' + stMsg.text));
   ms.append(mr);
-  if (stages.length && !lib.scenes.some((sc) => sc.items.some((it) => it.type === 'msg'))) ms.append(stEl('div', 'st-note warn', 'В макетах нет блока «Сообщение» — сообщение некуда показать.'));
+  if (stages.length && !scPresets().some((l) => (l.items || []).some((it) => it.type === 'msg'))) ms.append(stEl('div', 'st-note warn', 'В макетах нет блока «Сообщение» — сообщение некуда показать.'));
 
   // Таймеры
   const tm = sec('Таймеры');
@@ -743,25 +745,25 @@ const stApi = {
 if (typeof Macros === 'object') {
   const R2 = Macros.register;
   const sceneOpts = () => [['', 'Все, где «макет меняют слайды»'], ...lib.scenes.map((s) => [s.id, s.name])];
-  const layoutOpts = () => [['', '— выберите —'], ...lib.scenes.map((x) => [x.id, x.name])];
+  const layoutOpts = () => [['', '— выберите —'], ...scPresets().map((x) => [x.id, x.name])]; // макеты — «Пресеты сцен»
   const timerOpts = () => [['', '— выберите —'], ...(lib.timers || []).map((t) => [t.id, t.name])];
   R2('act.stageLayout', {
-    cat: 'action', name: 'Макет сцены', icon: 'stage', help: 'Поставить на выходы сцены макет другой сцены (или на все сцены «по слайду»). «Переключать» — каждое нажатие меняет макет: первый ↔ второй. Экраны зрителей не меняются.',
+    cat: 'action', name: 'Макет сцены', icon: 'stage', help: 'Поставить на выходы сцены другой макет из «Пресетов сцен» (или на все сцены «по слайду»). «Переключать» — каждое нажатие меняет макет: первый ↔ второй. Экраны зрителей не меняются.',
     params: [
       { id: 'screen', name: 'Сцена (выход)', t: 'select', opts: sceneOpts, def: '' },
       { id: 'mode', name: 'Что делать', t: 'select', opts: [['set', 'Поставить макет'], ['toggle', 'Переключать между двумя']], def: 'set' },
       { id: 'layout', name: 'Макет', t: 'select', opts: layoutOpts, def: '' },
-      { id: 'layout2', name: 'Второй макет', t: 'select', opts: () => [['', 'Свой макет этой сцены'], ...lib.scenes.map((x) => [x.id, x.name])], def: '', show: (p) => p.mode === 'toggle' },
+      { id: 'layout2', name: 'Второй макет', t: 'select', opts: () => [['', 'Свой макет этой сцены'], ...scPresets().map((x) => [x.id, x.name])], def: '', show: (p) => p.mode === 'toggle' },
     ],
     ins: EXEC_IN, outs: EXEC_OUT,
     run(c, p) {
-      const l = scScene(p.layout);
+      const l = scLay(p.layout);
       if (!l) throw new Error('Макет не выбран');
       const list = p.screen ? [scScene(p.screen)].filter(Boolean) : stFollowers();
       if (!list.length) throw new Error('Нет такой сцены');
       list.forEach((sc) => {
         // Переключать: сейчас первый — ставим второй ('' — свой макет сцены), иначе — первый
-        const to = p.mode === 'toggle' && scLayoutOf(sc) === l.id ? p.layout2 || sc.id : l.id;
+        const to = p.mode === 'toggle' && scLayoutOf(sc) === l.id ? p.layout2 || sc.layout : l.id;
         scSetLayout(sc.id, to, true);
       });
       return 'out';

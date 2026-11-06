@@ -433,7 +433,7 @@ function wantedOutputs() {
       if (!o || o.off) return;
       if (o.kind === 'display' && !disp.some((d) => d.id === Number(o.display))) return; // монитор не подключён — подождём
       if (o.kind === 'ndi' && !ndi.available()) return;
-      const extra = o.kind === 'ndi' ? `|${o.name || s.name}|${s.w}x${s.h}|${s.hz || 30}|${s.alpha ? 'a' : ''}` : o.kind === 'display' ? '|' + o.display : '';
+      const extra = o.kind === 'ndi' ? `|${o.name || s.name}|${s.w}x${s.h}|${s.hz || 30}|${s.alpha ? 'a' : ''}` : o.kind === 'display' ? '|' + o.display : s.alpha ? '|a' : '';
       list.push({ key: `${s.id}|${i}|${o.kind}${extra}`, s, o });
     });
   }
@@ -498,6 +498,18 @@ function openScreenWin({ key, s, o }) {
     win.webContents.on('paint', (_e, _dirty, img) => put(img));
     // Картинка не меняется — окно не рисует; приёмникам NDI нужен поток, повторяем последний кадр
     x.timer = setInterval(() => { if (last && x.ndi && Date.now() - lastAt > 400) { lastAt = Date.now(); x.ndi.frame(last.buf, last.w, last.h, fps); } }, 200);
+  } else if (s.alpha) {
+    // Прозрачный фон: окно без рамки и без фона — сквозь него видно рабочий стол и другие окна, остаются текст и элементы.
+    // Прозрачное окно в Windows нельзя растянуть мышью — переносится за любое место (html.alpha.win в output.html)
+    const W = Number(s.w) || 1920;
+    const H = Number(s.h) || 1080;
+    const k = Math.min(960 / W, 720 / H, 1);
+    win = new BrowserWindow({
+      width: Math.round(W * k), height: Math.round(H * k), useContentSize: true, title: `${s.name || 'Экран'} — ${SHORT_NAME}`, icon: APP_ICON,
+      frame: false, transparent: true, resizable: false, hasShadow: false, backgroundColor: '#00000000', webPreferences,
+    });
+    query.win = '1';
+    query.alpha = '1';
   } else {
     // Обычное окно: можно растянуть, перенести на любой монитор, захватить в OBS
     const W = Number(s.w) || 1920;

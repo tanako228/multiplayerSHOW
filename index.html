@@ -1297,6 +1297,9 @@
     .sc-bar-name { font-size: 13px; padding: 0 4px; }
     .sc-chip { border-color: #34c759 !important; color: #34c759; }
     .sc-canvas { flex: 1; min-height: 0; position: relative; margin: 14px; }
+    .sc-canvas.zoomed { overflow: auto; }
+    .sc-space { position: absolute; width: 1px; height: 1px; pointer-events: none; }
+    #scZoomFit { min-width: 54px; }
     .sc-canvas.drop .sc-host { box-shadow: 0 0 0 3px var(--live); }
     .sc-host { position: absolute; box-shadow: 0 0 0 1px var(--line), 0 10px 30px rgba(0, 0, 0, .45); background: #000; }
     .sc-view { position: absolute; left: 0; top: 0; transform-origin: 0 0; overflow: hidden; }
@@ -1372,8 +1375,9 @@
     .te-obj button:not(.on) .mp-icon { filter: grayscale(1); }
     .te-empty { color: var(--muted); font-size: 12px; line-height: 1.5; padding: 8px 6px; }
 
-    .te-center { flex: 1; min-width: 0; display: flex; flex-direction: column; min-height: 0; }
-    .te-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; padding: 6px 10px; border-bottom: 1px solid var(--line); background: var(--panel); }
+    /* Холст обрезается своей колонкой: рамки и подписи объектов за краем слайда не лезут на панели и кнопки */
+    .te-center { flex: 1; min-width: 0; display: flex; flex-direction: column; min-height: 0; overflow: hidden; position: relative; }
+    .te-bar { position: relative; z-index: 5; display: flex; flex-wrap: wrap; align-items: center; gap: 4px; padding: 6px 10px; border-bottom: 1px solid var(--line); background: var(--panel); }
     .te-grp { display: inline-flex; gap: 2px; align-items: center; }
     .te-grp button { background: none; border-color: transparent; }
     .te-grp button:hover:not(:disabled) { border-color: var(--line); background: var(--field); }
@@ -1417,12 +1421,12 @@
     .te-ov .sc-stretch { position: absolute; left: calc(50% - 30px); bottom: -9px; width: 60px; height: 10px; border-radius: 5px; background: var(--live); border: 2px solid #fff; cursor: ns-resize; z-index: 4; opacity: .85; }
     .te-ov .sc-stretch:hover { opacity: 1; }
     .te-ov .marq { position: absolute; border: 1px solid var(--live); background: rgba(170, 116, 82, .12); pointer-events: none; }
-    .te-ruler { position: absolute; background: var(--panel); color: var(--muted); font-size: 9px; overflow: hidden; user-select: none; }
+    .te-ruler { position: absolute; z-index: 3; background: var(--panel); color: var(--muted); font-size: 9px; overflow: hidden; user-select: none; }
     .te-ruler.h { height: 16px; cursor: s-resize; } .te-ruler.v { width: 16px; cursor: e-resize; }
     .te-ruler span { position: absolute; }
     .te-ruler.h span { top: 0; bottom: 0; border-left: 1px solid var(--line); padding-left: 2px; }
     .te-ruler.v span { left: 0; right: 0; border-top: 1px solid var(--line); writing-mode: vertical-rl; padding-top: 2px; }
-    .te-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 4px 14px 8px 34px; font-size: 12px; }
+    .te-foot { position: relative; z-index: 5; background: var(--ink); display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 4px 14px 8px 34px; font-size: 12px; }
     .te-foot label { gap: 6px; font-size: 12px; }
     .te-foot #teSampleText { width: 260px; }
     .te-foot .te-sub { color: var(--muted); font-variant-numeric: tabular-nums; }
@@ -1781,14 +1785,14 @@
           </div>
           <div class="sc-list" id="scScreens"></div>
           <div class="te-head te-objs-head">
-            <b>Сцены</b><span class="te-sub">свой макет и выходы</span>
-            <button id="scAddScene" class="icon-only" data-icon="add" title="Новая сцена: пустая, из шаблона или из пресета"></button>
-            <button id="scImport" class="icon-only" data-icon="import" title="Загрузить сцену из файла (.json)"></button>
+            <b>Сцены</b><span class="te-sub">выход + макет</span>
+            <button id="scAddScene" class="icon-only" data-icon="add" title="Новая сцена: с макетом из «Пресетов сцен» или с новым из шаблона"></button>
           </div>
           <div class="sc-list" id="scScenes"></div>
           <div class="te-head te-objs-head">
-            <b>Пресеты сцен</b><span class="te-sub">как темы, но для сцен</span>
-            <button id="scAddPreset" class="icon-only" data-icon="add" title="Сохранить открытую сцену как пресет"></button>
+            <b>Пресеты сцен</b><span class="te-sub">макеты</span>
+            <button id="scAddPreset" class="icon-only" data-icon="add" title="Новый макет: пустой или из шаблона"></button>
+            <button id="scImport" class="icon-only" data-icon="import" title="Загрузить макет из файла (.json)"></button>
           </div>
           <div class="sc-list" id="scPresets"></div>
           <div class="te-head te-objs-head" id="scItemsHead" hidden><b>Элементы</b><span class="te-sub">верхний — поверх</span></div>
@@ -1800,7 +1804,13 @@
           <div class="sc-canvas" id="scCanvas">
             <div class="sc-host" id="scHost"><div class="sc-view" id="scView"></div><div class="te-ov" id="scOv"></div></div>
           </div>
-          <div class="te-foot"><span class="te-sub" id="scFoot"></span></div>
+          <div class="te-foot"><span class="te-sub" id="scFoot"></span><span class="spacer"></span>
+            <span class="te-zoom" title="Масштаб холста (только вид, на выход не влияет). Ещё — Ctrl + колёсико над холстом">
+              <button id="scZoomOut" class="icon-only" title="Мельче">−</button>
+              <button id="scZoomFit" title="Щелчок — вписать в окно">100%</button>
+              <button id="scZoomIn" class="icon-only" title="Крупнее">+</button>
+            </span>
+          </div>
         </div>
         <div class="splitter" data-split="scInsp" data-t="next" data-min="260" data-max="520"></div>
         <div class="te-insp" id="scInsp"></div>

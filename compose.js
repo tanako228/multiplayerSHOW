@@ -5,7 +5,11 @@
      'blank'   — ничего (чёрный).
    Поверх — цвет (яркость, контраст, насыщенность, гамма, температура, размытие). Поворот и отражение — у окна вывода.
    Выход (screen.outputs) — куда идёт картинка: монитор, окно, NDI (окна открывает main.js); экран без выходов — виртуальный.
-   Сцена (lib.scenes): { id, name, w, h, bg, trans, items }, элемент: { id, type, name, x, y, w, h, rot, … } — см. ITEM_TYPES.
+   Макет (lib.scenePresets, «Пресеты сцен»): { id, name, w, h, bg?, trans, items, layers? }, элемент: { id, type, name, x, y, w, h, rot, … } — см. ITEM_TYPES.
+   Сцена (lib.scenes) для окон — экран 'scene:id' с mode 'scene': свой размер и фон (s.bg, 'transparent' — прозрачный),
+   s.scene — id макета (C.scenes[id]); макет вписывается в сцену, без своего фона — виден фон сцены.
+   Прозрачный фон (s.alpha): у экрана-программы и сцены нет фона — видно только текст и элементы
+   (в «Предпросмотре» — шахматка, внутри другой сцены — просвечивает, в NDI — альфа).
    Программа (что в слоях) у окна одна: Compose.progShow/progClear/progLayers/progInk/progVideo/progInfo;
    каждый «экран-программа» и элемент 'program' получает свою копию слоёв (с маской слоёв). */
 const Compose = (() => {
@@ -279,9 +283,13 @@ const Compose = (() => {
       return;
     }
     h.el.style.filter = fxFilter(s.fx);
-    // Альфа-канал: прозрачно в NDI-окне с альфой (opts.alpha); в «Предпросмотре» оператора — шахматка, чтобы видно было, что прозрачно
-    const alpha = !!s.alpha && (!!h.opts.alpha || (!!h.opts.preview && !(h.opts.chain || []).length));
-    h.el.style.background = !alpha ? '' : h.opts.alpha ? 'transparent' : 'repeating-conic-gradient(#2a2f37 0 25%, #1b1f25 0 50%) 0 0 / 40px 40px';
+    // Прозрачный фон (s.alpha, у сцены ещё фон 'transparent'): без фона темы и шаблонов — видно только текст и элементы.
+    // В «Предпросмотре» оператора — шахматка (видно, что прозрачно); внутри другой сцены — просвечивает; в NDI с альфой — прозрачно
+    const alpha = !!s.alpha;
+    const clear = alpha || (s.mode === 'scene' && s.bg === 'transparent');
+    const top = !!h.opts.preview && !h.opts.nested && !(h.opts.chain || []).length;
+    h.el.style.background = clear ? (top ? 'repeating-conic-gradient(#2a2f37 0 25%, #1b1f25 0 50%) 0 0 / 40px 40px' : 'transparent')
+      : s.mode === 'scene' ? s.bg || '#000' : '';
     const sound = !h.opts.preview && !!(s.sound || (h.id === 'main' && h.root));
     const mode = s.mode === 'scene' || s.mode === 'blank' ? s.mode : 'program';
     if (mode === 'blank') {
@@ -310,7 +318,7 @@ const Compose = (() => {
     if (key === h.key && h.body && h.body.scene && sc) { updateScene(h.body.scene, sc); fitScene(h.body.scene, w, H); return; }
     const old = h.body;
     h.key = key;
-    if (!sc) { disposeBody(old); h.body = missing(h.el, 'Сцена не выбрана'); return; }
+    if (!sc) { disposeBody(old); h.body = missing(h.el, s.scene ? 'Макет удалён — выберите другой' : 'Макет не выбран'); return; }
     const box = make('div', 'cmp-fill');
     box.style.width = w + 'px';
     box.style.height = H + 'px';
@@ -369,7 +377,8 @@ const Compose = (() => {
     h.scene = s;
     h.el.style.width = s.w + 'px';
     h.el.style.height = s.h + 'px';
-    h.el.style.background = h.opts.alpha ? 'transparent' : s.bg || '#000'; // альфа-канал — без фона сцены
+    // Фон макета; без своего фона — прозрачный (виден фон сцены), в редакторе — чёрный. Прозрачный фон сцены — без фона макета
+    h.el.style.background = h.opts.alpha ? 'transparent' : s.bg || (h.opts.edit ? '#000' : 'transparent');
     const items = Array.isArray(s.items) ? s.items : [];
     const keep = new Set(items.map((it) => it.id));
     for (const [id, n] of h.nodes) if (!keep.has(id)) { disposeNode(n); h.nodes.delete(id); }
@@ -384,13 +393,16 @@ const Compose = (() => {
   }
 
   // Что требует пересоздать элемент (остальное — правится на месте)
+  // Размер «Основного» и показанного экрана — тоже: блок программы строится в разрешении «Основного» и вписывается в рамку
   function contentKey(it) {
+    const mainSz = '|' + C.main.w + 'x' + C.main.h;
     switch (it.type) {
-      case 'screen': return 'screen|' + it.ref;
-      case 'program': return 'program|' + JSON.stringify(it.layers || null) + '|' + !!it.sound + '|' + (it.ink !== false);
+      case 'screen': { const z = screenSize(it.ref); return 'screen|' + it.ref + '|' + z.w + 'x' + z.h; }
+      case 'program': return 'program|' + JSON.stringify(it.layers || null) + '|' + !!it.sound + '|' + (it.ink !== false) + mainSz;
       case 'media': return 'media|' + it.url + '|' + (it.loop !== false) + '|' + !!it.sound;
       case 'source': return 'source|' + (it.src ? it.src.type + ':' + it.src.id : '');
-      case 'cur': case 'next': return it.type + '|' + !!it.plain;
+      case 'cur': case 'next': return it.type + '|' + !!it.plain + mainSz;
+      case 'only': return 'only' + mainSz;
       default: return it.type;
     }
   }
@@ -417,13 +429,14 @@ const Compose = (() => {
     if (type === 'screen') {
       const sz = screenSize(it.ref);
       n._W = sz.w; n._H = sz.h;
-      n._screen = mountScreen(c, it.ref, { preview: true, chain });
+      n._screen = mountScreen(c, it.ref, { preview: true, chain, nested: true });
     } else if (type === 'program' || type === 'cur' || type === 'next' || type === 'only') {
       n._W = C.main.w || 1920; n._H = C.main.h || 1080;
       const el = make('div', 'cmp-prog');
       el.style.width = n._W + 'px';
       el.style.height = n._H + 'px';
       c.append(el);
+      n._pel = el; // fit 'native' — ширина подгоняется под рамку в applyNode
       if (type === 'program') n._prog = progMount(el, { layers: it.layers || s.layers, sound, ink: it.ink !== false, alpha: sh.opts.alpha }); // свои слои блока или слои сцены
       else {
         n._info = { el, which: type };
@@ -531,6 +544,13 @@ const Compose = (() => {
     const c = n._c;
     c.style.filter = fxFilter(it.fx);
     // Своё содержимое: обрезка (crop) и вписывание в рамку
+    // «Своё разрешение» (fit 'native') у блоков программы и слайдов: высота — как у «Основного», ширина — по пропорциям рамки,
+    // поэтому полей нет при любом разрешении монитора «Основного» (текст подстраивается сам, как у экрана «Своё разрешение»)
+    if (n._pel) {
+      const MH = C.main.h || 1080;
+      const PW = it.fit === 'native' && w > 0 && h > 0 ? Math.max(16, Math.round((MH * w) / h)) : C.main.w || 1920;
+      if (n._W !== PW || n._H !== MH) { n._W = PW; n._H = MH; n._pel.style.width = PW + 'px'; n._pel.style.height = MH + 'px'; }
+    }
     if (n._W && n._H) {
       c.style.width = n._W + 'px';
       c.style.height = n._H + 'px';
