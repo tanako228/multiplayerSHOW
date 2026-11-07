@@ -42,6 +42,7 @@ contextBridge.exposeInMainWorld('api', {
   setOutputSettings: (s) => ipcRenderer.invoke('output:settings', s),
   saverSet: (cfg) => ipcRenderer.invoke('saver:set', cfg), // заставка от выгорания OLED
   saverTest: () => ipcRenderer.invoke('saver:test'),
+  guardSet: (cfg) => ipcRenderer.invoke('guard:set', cfg), // защита экранов показа: курсор не уходит на мониторы вывода
   show: (payload) => ipcRenderer.invoke('output:show', payload),
   clear: (payload) => ipcRenderer.invoke('output:clear', payload),
   layers: (msg) => ipcRenderer.invoke('output:layers', msg),
@@ -142,6 +143,7 @@ contextBridge.exposeInMainWorld('api', {
   onOutputState: (cb) => on('output:state', cb),
   onAskClose: (cb) => on('app:ask-close', cb), // вопрос «Закрыть программу?» — своё окно без звука
   closeOk: () => ipcRenderer.invoke('app:close-ok'),
+  refocus: (strong) => ipcRenderer.send('win:refocus', !!strong), // вернуть клавиатуру окну (icons.js, main.js: fixFocus)
   onStatus: (cb) => on('media:status', cb),
   onSettings: (cb) => on('output:settings', cb),
   onShow: (cb) => on('output:show', cb),

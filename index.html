@@ -2412,6 +2412,12 @@
             <div class="btns-row"><button id="ssTest">Проверить</button></div>
             <p class="hint">Заставка закрывает только монитор, где открыто окно программы, — чтобы OLED не выгорал от неподвижной картинки. Экраны показа (зал, сцена, NDI) она не трогает и ничего не перекрывает; если вывод открыт на том же мониторе — заставки нет. Пошевелили мышью или нажали клавишу — заставка исчезает.</p>
           </div>
+          <div class="set-group">
+            <h2>Защита показа</h2>
+            <div class="field"><label class="check"><input type="checkbox" id="guardCursor"> Не пускать курсор на экраны показа</label></div>
+            <p class="hint">Пока включён «Зал» или «Сцена», курсор не заходит на их мониторы, а если был там — возвращается в центр монитора программы. Выключили показ — курсор снова ходит везде. Монитор с окном программы не закрывается никогда.</p>
+            <p class="hint">Win+D и «Свернуть всё» сворачивают только программу — экраны показа остаются на месте (всегда, без настройки).</p>
+          </div>
           </div>
           <h2 class="set-part" data-icon="audio">Звук</h2>
           <div class="out-top">
@@ -2694,6 +2700,20 @@
         <span class="spacer"></span>
         <button value="cancel" autofocus>Отмена</button>
         <button value="ok" class="danger-btn">Закрыть программу</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Вопрос «Да / Отмена» — своё окно вместо window.confirm (playlist.js: askYes).
+       После системного окна Electron в Windows поля ввода переставали принимать буквы — не возвращать confirm -->
+  <dialog id="askDialog" style="width:min(560px, 92vw)">
+    <form method="dialog">
+      <div class="dlg-head"><h2 id="askTitle"></h2></div>
+      <div class="dlg-body" id="askBody"><p class="hint" id="askText" style="white-space:pre-line;overflow-wrap:anywhere;margin:0"></p></div>
+      <div class="dlg-foot">
+        <span class="spacer"></span>
+        <button value="cancel" id="askNo">Отмена</button>
+        <button value="ok" id="askOk" class="primary">Да</button>
       </div>
     </form>
   </dialog>

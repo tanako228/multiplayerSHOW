@@ -1184,8 +1184,8 @@ function openRefList() {
 }
 
 $('bmImport').addEventListener('click', openRefList);
-$('bmClearAll').addEventListener('click', () => {
-  if (!bookmarks.length || !window.confirm(`Удалить все закладки (${bookmarks.length})?`)) return;
+$('bmClearAll').addEventListener('click', async () => {
+  if (!bookmarks.length || !(await askYes(`Удалить все закладки (${bookmarks.length})?`, 'Удалить все', true))) return;
   bookmarks = [];
   saveBookmarks();
   renderBookmarks();
@@ -1546,8 +1546,8 @@ function renderPresets() {
     row.append(name,
       b('Включить', () => applyPreset(p), 'primary'),
       b('В файл…', () => exportPreset(p)),
-      b('Удалить', () => {
-        if (!window.confirm(`Удалить пресет «${p.name}»?`)) return;
+      b('Удалить', async () => {
+        if (!(await askYes(`Удалить пресет «${p.name}»?`, 'Удалить', true))) return;
         presets = presets.filter((x) => x !== p);
         savePresets();
         renderPresets();
@@ -1568,7 +1568,7 @@ $('presetSave').addEventListener('click', async () => {
 });
 
 async function applyPreset(p) {
-  if (!window.confirm(`Включить пресет «${p.name}»? Текущие настройки заменятся, окно программы обновится.`)) return;
+  if (!(await askYes(`Включить пресет «${p.name}»? Текущие настройки заменятся, окно программы обновится.`, 'Включить'))) return;
   const keep = {};
   for (const k of PRESET_SKIP) keep[k] = settings[k];
   // Меняется только то, что есть в пресете: пресет «только цвета» не трогает мониторы, клавиши и прочее.
@@ -1794,7 +1794,7 @@ $('repoNow').addEventListener('click', async () => {
 $('repoReplace').addEventListener('click', async () => {
   const r = repo();
   if (!r.dir) return;
-  if (!window.confirm(`Вы точно хотите заменить содержимое репозитория?\n\n${r.dir}\n\nВсё, что сейчас лежит в этой папке (песни, темы, файлы — в том числе с других компьютеров), будет удалено, и туда запишется только то, что есть в программе сейчас. Вернуть удалённое из папки будет нельзя.`)) return;
+  if (!(await askYes(`Вы точно хотите заменить содержимое репозитория?\n\n${r.dir}\n\nВсё, что сейчас лежит в этой папке (песни, темы, файлы — в том числе с других компьютеров), будет удалено, и туда запишется только то, что есть в программе сейчас. Вернуть удалённое из папки будет нельзя.`, 'Заменить', true))) return;
   r.hold = false;
   saveSettings();
   const res = await repoSyncNow(true, 'replace');
@@ -1850,7 +1850,8 @@ async function restoreRun(mode) {
     : mode === 'replace'
       ? `Вы точно хотите ЗАМЕНИТЬ данные программы?\n\n${list}\n\nУ этих пунктов в программе останется только то, что есть в папке репозитория, — всё остальное уберётся. Прежние данные программа отложит в папку «прежние данные <дата>» рядом со своими данными. Окно программы обновится.`
       : `Добавить в программу из папки:\n${list}\n\nВаше не удаляется: новое добавится, то же самое обновится. Окно программы обновится.`;
-  if (!window.confirm(ask)) return;
+  if (!(await askYes(ask, restoreSrc.kind === 'backup' ? 'Восстановить' : mode === 'replace' ? 'Заменить' : 'Добавить', mode === 'replace'))) return;
+  if (!restoreSrc) return; // пока спрашивали, источник сбросили
   clearTimeout(saveTimer); // чтобы старая библиотека из памяти не перезаписала восстановленную
   saveTimer = 0;
   clearTimeout(repoTimer);

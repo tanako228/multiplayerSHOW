@@ -265,7 +265,7 @@ function aeTabClose() { aeStop(); }
 // file: { name, path, url }; src — откуда открыли: { kind: 'item', itemId, slideId } | { kind: 'music', list } | { kind: 'file' }
 async function openAudioEditor(file, src) {
   if (!file || !file.path) { showNotice('У этой музыки нет файла на диске', true); return; }
-  if (ae && ae.dirty && ae.path !== file.path && !window.confirm(`В «${ae.name}» есть несохранённые правки. Открыть другой файл без сохранения?`)) { setTab('audio'); return; }
+  if (ae && ae.dirty && ae.path !== file.path && !(await askYes(`Открыть другой файл без сохранения? В «${ae.name}» есть несохранённые правки.`, 'Открыть без сохранения', true))) { setTab('audio'); return; }
   setTab('audio');
   if (ae && ae.path === file.path && !ae.dirty) { ae.src = src || ae.src; return; }
   await aeLoad(file, src || { kind: 'file' });

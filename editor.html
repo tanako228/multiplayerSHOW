@@ -97,6 +97,10 @@
     .ctx-menu .ctx-key { color: var(--muted); font-size: 12px; }
     .ctx-sep { height: 1px; background: var(--line); margin: 4px 6px; }
     #cropBox { position: absolute; border: 2px dashed var(--live); background: rgba(170, 116, 82, .12); pointer-events: none; }
+    #askDialog { color: var(--text); background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 18px; width: min(460px, 92vw); }
+    #askDialog::backdrop { background: rgba(5, 24, 34, .7); }
+    #askDialog p { margin: 0 0 16px; line-height: 1.5; white-space: pre-line; }
+    #askDialog .ask-foot { display: flex; justify-content: flex-end; gap: 8px; }
   </style>
 </head>
 <body>
@@ -174,6 +178,15 @@
       </div>
     </div>
   </section>
+
+  <!-- Вопрос «Да / Отмена» — своё окно вместо window.confirm (editor.js: askYes): после системного окна
+       Electron в Windows поля ввода переставали принимать буквы -->
+  <dialog id="askDialog">
+    <form method="dialog">
+      <p id="askText"></p>
+      <div class="ask-foot"><button value="cancel" id="askNo">Отмена</button><button value="ok" id="askOk" class="primary">Да</button></div>
+    </form>
+  </dialog>
 
   <script src="icons.js"></script>
   <script src="scene.js"></script>

@@ -283,8 +283,8 @@ function musicListMenu(e, l) {
     { label: 'Играть с начала', disabled: !l.tracks.length, fn: () => playTrack(0, l.tracks) },
     '-',
     { label: 'Переименовать', fn: () => renameMusicList(l) },
-    { label: 'Удалить плейлист', fn: () => {
-      if (!window.confirm(`Удалить плейлист «${l.name}»? Сами файлы песен останутся на диске.`)) return;
+    { label: 'Удалить плейлист', fn: async () => {
+      if (!(await askYes(`Удалить плейлист «${l.name}»? Сами файлы песен останутся на диске.`, 'Удалить', true))) return;
       musicLists = musicLists.filter((x) => x !== l);
       listChanged();
     } },

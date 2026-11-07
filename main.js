@@ -75,6 +75,63 @@ const webPreferences = {
   autoplayPolicy: 'no-user-gesture-required',
 };
 
+/* ---------- Клавиатура не должна «отваливаться» ----------
+   Windows + Electron: после системного окна (выбор цвета, файла, вопрос), после заставки или закрытого окна
+   бывало — в поле мигает курсор, а буквы не вводятся, помогал только перезапуск. Страница считает, что фокус
+   у неё, а клавиши Windows отдаёт мимо. Лечим: окну и его странице заново отдаём фокус.
+   strong — клавиши точно теряются (icons.js заметил или Windows говорит, что клавиатура ни у кого): окно на миг
+   отпускает фокус и берёт обратно — так Windows заново направляет клавиатуру в окно (обычного способа тут мало). */
+const focusFixAt = new WeakMap(); // окно → когда последний раз делали strong (не чаще раза в 2 с)
+let w32 = null; // GetFocus/GetForegroundWindow через koffi (как в ndi.js); false — недоступно
+function w32Api() {
+  if (w32 !== null) return w32;
+  w32 = false;
+  if (process.platform !== 'win32') return w32;
+  try {
+    const koffi = require('koffi');
+    const u = koffi.load('user32.dll');
+    w32 = { koffi, focus: u.func('void * __stdcall GetFocus()'), fore: u.func('void * __stdcall GetForegroundWindow()') };
+  } catch (e) {
+    console.warn('Проверка клавиатуры недоступна:', e.message);
+  }
+  return w32;
+}
+// Окно программы впереди, а клавиатура Windows ни у какого окна — буквы уходят в никуда
+function keyboardLost(win) {
+  const api = w32Api();
+  if (!api) return false;
+  try {
+    const me = win.getNativeWindowHandle().readBigUInt64LE(0);
+    const fore = api.fore();
+    if (!fore || api.koffi.address(fore) !== me) return false;
+    return !api.focus();
+  } catch { return false; }
+}
+function fixFocus(win, strong) {
+  if (!win || win.isDestroyed() || !win.isVisible() || win.isMinimized()) return;
+  if (!strong && keyboardLost(win)) strong = true;
+  let blurred = false;
+  if (strong && Date.now() - (focusFixAt.get(win) || 0) >= 2000) {
+    focusFixAt.set(win, Date.now());
+    win.blur();
+    blurred = true;
+  }
+  if (blurred || !win.isFocused()) win.focus();
+  win.webContents.focus();
+}
+// Окно с полями ввода (оператор, «Картинка»): получило фокус — страница тоже
+function keepKeyboard(win) {
+  win.on('focus', () => { if (!win.isDestroyed()) win.webContents.focus(); });
+}
+// Закрыли окно, у которого был фокус («Картинка», окно экрана), — фокус окну программы.
+// Иначе Windows отдаёт его следующему окну (часто окну показа поверх всех), и клавиши уходят туда
+function focusBackOnClose(win) {
+  let had = false;
+  win.on('close', () => { had = win.isFocused(); });
+  win.on('closed', () => { if (had) fixFocus(control); });
+}
+ipcMain.on('win:refocus', (e, strong) => fixFocus(BrowserWindow.fromWebContents(e.sender), !!strong));
+
 /* ---------- Мониторы ---------- */
 
 function listDisplays() {
@@ -376,6 +433,7 @@ function closeOutput() {
   output = null;
   outputDisplayId = null;
   sendOutputState();
+  guardSync();
 }
 
 function openOutput(displayId) {
@@ -390,25 +448,34 @@ function openOutput(displayId) {
     frame: false,
     show: false,
     skipTaskbar: true,
+    minimizable: false, // Win+D не сворачивает показ (guardWin)
     backgroundColor: '#000000',
     webPreferences,
   });
+  const win = output;
+  guardWin(win, display.id);
   output.setMenuBarVisibility(false);
   output.loadFile('output.html');
+  // showInactive: окно вывода не забирает клавиатуру у окна программы (включили проектор посреди набора текста)
   output.once('ready-to-show', () => {
-    output.show();
-    output.setFullScreen(true);
+    if (win.isDestroyed()) return;
+    win.showInactive();
+    win.setFullScreen(true);
+    guardSync();
   });
   output.webContents.on('did-finish-load', () => {
     output.webContents.send('output:settings', outputSettings);
     replayTo(output);
   });
   output.on('closed', () => {
+    if (output !== win) return; // старое окно, уже заменённое новым
     output = null;
     outputDisplayId = null;
     sendOutputState();
+    guardSync();
   });
   sendOutputState();
+  guardSync();
 }
 
 // Новое окно вывода: всё, что сейчас на экране — без переходов
@@ -450,6 +517,7 @@ function openFloatWin({ id, name }) {
   win.loadFile('output.html', { query: { screen: sid, win: '1' } });
   win.webContents.on('did-finish-load', () => replayTo(win));
   win.on('closed', () => { if (floatWins.get(sid) === win) floatWins.delete(sid); });
+  focusBackOnClose(win);
   floatWins.set(sid, win);
 }
 const toOutputs = (channel, msg) => outWins().forEach((w) => w.webContents.send(channel, msg));
@@ -489,6 +557,7 @@ function syncScreens() {
     }
   }
   sendScreensState();
+  guardSync();
 }
 
 function closeScreenWin(x) {
@@ -504,8 +573,9 @@ function openScreenWin({ key, s, o }) {
   if (o.kind === 'display') {
     const d = screen.getAllDisplays().find((z) => z.id === Number(o.display));
     const b = d.bounds;
-    win = new BrowserWindow({ x: b.x, y: b.y, width: b.width, height: b.height, frame: false, show: false, skipTaskbar: true, backgroundColor: '#000000', webPreferences });
-    win.once('ready-to-show', () => { win.show(); win.setFullScreen(true); });
+    win = new BrowserWindow({ x: b.x, y: b.y, width: b.width, height: b.height, frame: false, show: false, skipTaskbar: true, minimizable: false, backgroundColor: '#000000', webPreferences });
+    guardWin(win, d.id); // Win+D не сворачивает показ
+    win.once('ready-to-show', () => { if (win.isDestroyed()) return; win.showInactive(); win.setFullScreen(true); guardSync(); }); // клавиатура остаётся у окна программы
   } else if (o.kind === 'ndi') {
     // NDI-выход: невидимое окно рисует экран в своём разрешении, кадры уходят в сеть (ndi.js)
     const W = Math.max(16, Math.min(7680, Number(s.w) || 1920));
@@ -568,12 +638,14 @@ function openScreenWin({ key, s, o }) {
     query.win = '1';
   }
   x.win = win;
+  focusBackOnClose(win);
   win.setMenuBarVisibility(false);
   win.loadFile('output.html', { query });
   win.webContents.on('did-finish-load', () => replayTo(win));
   win.on('closed', () => {
     // Окно закрыли руками — выход остаётся выключенным до следующей правки экрана
     if (screenWins.get(key) === x) { screenWins.delete(key); if (x.ndi) x.ndi.close(); if (x.timer) clearInterval(x.timer); sendScreensState(); }
+    if (x.kind === 'display') guardSync();
   });
   screenWins.set(key, x);
 }
@@ -623,8 +695,15 @@ function saverShow(test) {
   return 'ok';
 }
 
+// Закрыть заставку. У неё фокус — сначала отдать его окну программы, потом закрыть:
+// закрытое окно с фокусом в Windows оставляло программу без клавиатуры (курсор мигает, буквы не вводятся)
 function saverHide() {
-  if (saverWin && !saverWin.isDestroyed()) saverWin.destroy();
+  if (saverWin && !saverWin.isDestroyed()) {
+    const had = saverWin.isFocused(); // фокус был у заставки, а не у другой программы
+    if (had) fixFocus(control);
+    saverWin.destroy();
+    if (had) fixFocus(control);
+  }
   saverWin = null;
 }
 
@@ -632,10 +711,138 @@ function saverTick() {
   const idle = powerMonitor.getSystemIdleTime(); // секунды без мыши и клавиатуры во всей Windows
   if (saverWin && !saverWin.isDestroyed()) {
     // Пошевелили мышью или нажали клавишу — закрыть; вывод открыли на этом мониторе — тоже
-    if ((idle < 1 && Date.now() - saverSince > 1500) || !saverDisplay()) { saverHide(); if (control && !control.isDestroyed()) control.focus(); }
+    if ((idle < 1 && Date.now() - saverSince > 1500) || !saverDisplay()) saverHide(); // фокус окну программы вернёт saverHide
     return;
   }
   if (saverCfg.on && idle >= saverCfg.min * 60) saverShow(false);
+}
+
+/* ---------- Защита экранов показа: Win+D и курсор ----------
+   Экран показа — монитор, на котором открыто окно вывода («Зал», «Сцена»), кроме монитора с окном программы
+   (проверка на одном мониторе — там вывод остаётся обычным окном).
+   1) Win+D / «Свернуть всё» сворачивает программу, но не показ: окна вывода без кнопки «свернуть» и поверх всех окон;
+      если Windows всё же свернула — тут же возвращаем, не забирая фокус у окна программы. Всегда, без настройки.
+   2) Курсор не уходит на экраны показа (Настройки → Показ и звук, guardCursor): ClipCursor — рамка вокруг остальных
+      мониторов. Windows сама иногда снимает рамку (Alt+Tab, UAC) — ставим заново раз в 250 мс. Курсор оказался на экране
+      показа (включили «Зал», когда он был там) — переносим в центр монитора программы. Мониторы стоят так, что рамка
+      задела бы экран показа, — рамки нет, курсор проверяется 60 раз в секунду и возвращается назад. */
+let guardCfg = { cursor: true };
+let guardTimer = null; // проверка раз в 250 мс, пока открыт хоть один вывод на монитор
+let guardFast = null; // частая проверка курсора, когда рамкой не обойтись
+let guardClipped = false;
+let guardOkPos = null; // последнее место курсора не на экране показа
+let user32 = null; // ClipCursor/GetCursorPos/SetCursorPos через koffi (как в ndi.js); false — недоступно
+
+function guardApi() {
+  if (user32 !== null) return user32;
+  user32 = false;
+  if (process.platform !== 'win32') return user32;
+  try {
+    const koffi = require('koffi');
+    const lib = koffi.load('user32.dll');
+    koffi.struct('MPS_RECT', { left: 'int32', top: 'int32', right: 'int32', bottom: 'int32' });
+    koffi.struct('MPS_POINT', { x: 'int32', y: 'int32' });
+    user32 = {
+      clip: lib.func('bool __stdcall ClipCursor(const MPS_RECT *r)'),
+      getClip: lib.func('bool __stdcall GetClipCursor(_Out_ MPS_RECT *r)'),
+      getPos: lib.func('bool __stdcall GetCursorPos(_Out_ MPS_POINT *p)'),
+      setPos: lib.func('bool __stdcall SetCursorPos(int x, int y)'),
+    };
+  } catch (e) {
+    console.warn('Защита курсора недоступна:', e.message);
+  }
+  return user32;
+}
+
+// Окна вывода на мониторах: [{ win, display }]
+function guardWins() {
+  const list = [];
+  if (output && !output.isDestroyed()) list.push({ win: output, display: outputDisplayId });
+  for (const x of screenWins.values()) if (x.kind === 'display' && x.win && !x.win.isDestroyed()) list.push({ win: x.win, display: x.display });
+  return list;
+}
+
+const ctlDisplay = () => (control && !control.isDestroyed() ? screen.getDisplayMatching(control.getBounds()) : null);
+
+// Окно вывода на мониторе: без кнопки «свернуть»; свернулось (Win+D) — сразу назад, без фокуса
+function guardWin(win, displayId) {
+  win.setMinimizable(false);
+  win.on('minimize', () => setTimeout(() => guardRestore(win, displayId), 0));
+}
+function guardRestore(win, displayId) {
+  if (win.isDestroyed() || !win.isMinimized()) return;
+  const ctl = ctlDisplay();
+  if (ctl && ctl.id === displayId) return; // вывод на мониторе программы — пусть сворачивается
+  win.showInactive();
+  if (!win.isFullScreen()) win.setFullScreen(true);
+}
+
+// Открыли/закрыли вывод, поменяли настройку — включить или выключить проверку
+function guardSync() {
+  const any = guardWins().length > 0;
+  if (any && !guardTimer) guardTimer = setInterval(guardTick, 250);
+  if (!any && guardTimer) { clearInterval(guardTimer); guardTimer = null; }
+  guardTick();
+}
+
+function guardTick() {
+  const ctl = ctlDisplay();
+  const shows = new Set();
+  for (const { win, display } of guardWins()) {
+    const mine = !!ctl && ctl.id === display;
+    if (win.isAlwaysOnTop() === mine) win.setAlwaysOnTop(!mine);
+    if (mine) continue;
+    shows.add(display);
+    guardRestore(win, display);
+  }
+  guardCursor(shows, ctl);
+}
+
+// Снять рамку и частую проверку
+function guardFree() {
+  if (guardFast) { clearInterval(guardFast); guardFast = null; }
+  if (guardClipped && user32) user32.clip(null);
+  guardClipped = false;
+  guardOkPos = null;
+}
+
+function guardCursor(shows, ctl) {
+  const api = guardCfg.cursor && shows.size && ctl ? guardApi() : null;
+  if (!api) return guardFree();
+  const disp = screen.getAllDisplays();
+  const phys = (d) => screen.dipToScreenRect(null, d.bounds); // в пикселях экрана — их понимают ClipCursor и SetCursorPos
+  const bad = disp.filter((d) => shows.has(d.id)).map(phys);
+  const ok = disp.filter((d) => !shows.has(d.id)).map(phys);
+  if (!bad.length || !ok.length) return guardFree();
+  const inBad = (p) => bad.some((r) => p.x >= r.x && p.x < r.x + r.width && p.y >= r.y && p.y < r.y + r.height);
+  const c = phys(ctl);
+  const home = { x: Math.round(c.x + c.width / 2), y: Math.round(c.y + c.height / 2) };
+  const p = {};
+  if (api.getPos(p) && inBad(p)) api.setPos(home.x, home.y); // курсор был на экране показа — в центр монитора программы
+  // Рамка — прямоугольник вокруг остальных мониторов
+  const box = {
+    left: Math.min(...ok.map((r) => r.x)), top: Math.min(...ok.map((r) => r.y)),
+    right: Math.max(...ok.map((r) => r.x + r.width)), bottom: Math.max(...ok.map((r) => r.y + r.height)),
+  };
+  const cross = bad.some((r) => r.x < box.right && r.x + r.width > box.left && r.y < box.bottom && r.y + r.height > box.top);
+  if (!cross) {
+    if (guardFast) { clearInterval(guardFast); guardFast = null; }
+    const now = {};
+    api.getClip(now);
+    if (now.left !== box.left || now.top !== box.top || now.right !== box.right || now.bottom !== box.bottom) api.clip(box);
+    guardClipped = true;
+    return;
+  }
+  // Рамкой не обойтись (экран показа между мониторами) — возвращаем курсор назад, как только он туда попал
+  if (guardClipped) { api.clip(null); guardClipped = false; }
+  if (guardFast) clearInterval(guardFast);
+  guardFast = setInterval(() => {
+    const q = {};
+    if (!api.getPos(q)) return;
+    if (!inBad(q)) { guardOkPos = q; return; }
+    const back = guardOkPos && !inBad(guardOkPos) ? guardOkPos : home;
+    api.setPos(back.x, back.y);
+  }, 16);
 }
 
 /* ---------- Окно «Картинка» (editor.html): правка фото; слайды — в редакторе тем главного окна ---------- */
@@ -657,6 +864,8 @@ function openEditor(payload) {
     icon: APP_ICON,
     webPreferences,
   });
+  keepKeyboard(editor);
+  focusBackOnClose(editor);
   editor.loadFile('editor.html');
   editor.webContents.once('did-finish-load', () => editor.webContents.send('editor:load', payload));
   editor.on('closed', () => { editor = null; });
@@ -683,6 +892,7 @@ function createControl() {
       relaunchCommand: `"${process.execPath}"${args}`, relaunchDisplayName: SHORT_NAME,
     });
   }
+  keepKeyboard(control);
   control.loadFile('index.html');
   // Перед выходом спрашиваем, чтобы случайно не закрыть программу посреди служения
   let confirmed = false;
@@ -709,6 +919,8 @@ function createControl() {
   });
   control.on('closed', () => {
     control = null;
+    if (guardTimer) { clearInterval(guardTimer); guardTimer = null; }
+    guardFree(); // курсор снова ходит везде
     if (editor && !editor.isDestroyed()) editor.destroy();
     for (const x of screenWins.values()) closeScreenWin(x);
     screenWins.clear();
@@ -756,6 +968,9 @@ app.whenReady().then(() => {
   // Заставка от выгорания OLED (Настройки → Показ): только на мониторе окна оператора
   ipcMain.handle('saver:set', (_e, cfg) => saverSet(cfg));
   ipcMain.handle('saver:test', () => saverShow(true));
+  // Защита экранов показа (Настройки → Показ и звук): не пускать курсор на мониторы вывода
+  ipcMain.handle('guard:set', (_e, cfg) => { guardCfg = { cursor: !(cfg && cfg.cursor === false) }; guardSync(); });
+  app.on('will-quit', guardFree);
 
   ipcMain.handle('output:settings', (_e, st) => {
     outputSettings = { resW: Number(st.resW) || 0, resH: Number(st.resH) || 0 };

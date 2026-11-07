@@ -8,6 +8,20 @@ const H = 1080;
 const newId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 const clone = (x) => JSON.parse(JSON.stringify(x));
 
+// Вопрос «Да / Отмена» — своё окно вместо window.confirm (системное ломало ввод с клавиатуры). Ответ — Promise<true/false>
+function askYes(text, ok = 'Да') {
+  const dlg = $('askDialog');
+  if (dlg.open) return Promise.resolve(false);
+  $('askText').textContent = text;
+  $('askOk').textContent = ok;
+  dlg.returnValue = '';
+  return new Promise((resolve) => {
+    dlg.addEventListener('close', () => resolve(dlg.returnValue === 'ok'), { once: true });
+    try { dlg.showModal(); } catch { resolve(false); return; }
+    $('askNo').focus(); // все вопросы тут — о потере правок: Enter = «Отмена»
+  });
+}
+
 let dirty = false;
 function setDirty(on) {
   dirty = on;
@@ -97,7 +111,7 @@ async function openImagePath(p, name, target) {
 }
 
 $('imOpen').addEventListener('click', async () => {
-  if (dirty && !window.confirm('Есть несохранённые изменения картинки. Открыть другую?')) return;
+  if (dirty && !(await askYes('Есть несохранённые изменения картинки. Открыть другую?', 'Открыть без сохранения'))) return;
   const [f] = await window.api.pickFile({ kinds: ['image'], title: 'Открыть картинку' });
   if (f) openImagePath(f.path, f.name.replace(/\.[^.]+$/, ''), null);
 });
@@ -297,15 +311,15 @@ let closing = false;
 window.addEventListener('beforeunload', (e) => {
   if (!dirty || closing) return;
   e.returnValue = false;
-  setTimeout(() => {
-    if (window.confirm('Есть несохранённые изменения. Закрыть редактор без сохранения?')) { closing = true; window.close(); }
+  setTimeout(async () => {
+    if (await askYes('Есть несохранённые изменения. Закрыть редактор без сохранения?', 'Закрыть без сохранения')) { closing = true; window.close(); }
   }, 0);
 });
 
 
-window.api.onEditorLoad((p) => {
+window.api.onEditorLoad(async (p) => {
   if (!p) return;
-  if (dirty && !window.confirm('Есть несохранённые изменения. Открыть другое без сохранения?')) return;
+  if (dirty && !(await askYes('Есть несохранённые изменения. Открыть другое без сохранения?', 'Открыть без сохранения'))) return;
   // Цвета программы из «Настройки → Оформление»
   const ui = p.ui || {};
   for (const v of ['--ink', '--panel', '--field', '--line', '--text', '--muted', '--live', '--brown', '--warn']) {

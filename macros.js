@@ -463,12 +463,14 @@ R('act.openSong', {
     { id: 'show', name: 'Показать на экране', t: 'check', def: true },
   ],
   ins: EXEC_IN, outs: EXEC_OUT,
-  run(c, p) {
+  async run(c, p) {
     const item = mcItemOf(p.song);
     if (p.arr && item.song) {
       const a = (item.song.arrangements || []).find((x) => x.name.toLowerCase() === p.arr.trim().toLowerCase());
       if (!a && !/^как в тексте$/i.test(p.arr.trim())) throw new Error(`У песни нет аранжировки «${p.arr}»`);
-      if ((a ? a.id : '') !== (item.song.arr || '')) setSongArr(item, a ? a.id : '');
+      // Слайды песни меняли вручную — программа спросит; ждём ответа (без вопроса всё идёт сразу)
+      const ask = (a ? a.id : '') !== (item.song.arr || '') ? setSongArr(item, a ? a.id : '') : null;
+      if (ask) { await ask; if (c.stopped()) return null; }
     }
     let f = mcFindEntry(item.id);
     if (!f) {
@@ -2181,12 +2183,24 @@ function mcSelect(opts, value, onChange) {
   return s;
 }
 function mcKeyBtn(value, onSet) {
-  const b = Object.assign(document.createElement('button'), { className: 'mc-keybtn', textContent: value ? prettyCombo(value) : 'Назначить…', title: 'Нажмите и затем сочетание клавиш. Esc — отмена, Delete — убрать' });
-  b.addEventListener('click', () => { mcKeyWait = { onSet, btn: b }; b.textContent = 'Нажмите сочетание…'; b.classList.add('wait'); });
+  const label = value ? prettyCombo(value) : 'Назначить…';
+  const b = Object.assign(document.createElement('button'), { className: 'mc-keybtn', textContent: label, title: 'Нажмите и затем сочетание клавиш. Esc — отмена, Delete — убрать' });
+  b.addEventListener('click', () => { mcKeyCancel(); mcKeyWait = { onSet, btn: b, label }; b.textContent = 'Нажмите сочетание…'; b.classList.add('wait'); });
   return b;
 }
+// Перестать ждать сочетание (кнопка — снова с прежней подписью)
+function mcKeyCancel() {
+  const w = mcKeyWait;
+  mcKeyWait = null;
+  if (w && w.btn.isConnected) { w.btn.textContent = w.label; w.btn.classList.remove('wait'); }
+}
+// Щёлкнули мимо кнопки или ушли из окна — не ждать: иначе следующая буква в любом поле (поиск, настройки)
+// пропадала бы и становилась сочетанием макроса
+window.addEventListener('pointerdown', (e) => { if (mcKeyWait && !mcKeyWait.btn.contains(e.target)) mcKeyCancel(); }, true);
+window.addEventListener('blur', () => { if (mcKeyWait) mcKeyCancel(); });
 window.addEventListener('keydown', (e) => {
   if (!mcKeyWait) return;
+  if (!mcKeyWait.btn.isConnected) { mcKeyCancel(); return; } // кнопку уже убрали (другая нода) — клавиша обычная
   e.preventDefault();
   e.stopPropagation();
   const w = mcKeyWait;

@@ -1683,6 +1683,31 @@ function askName(title, value) {
   });
 }
 
+// Вопрос «Да / Отмена» — своё окно вместо window.confirm: после системного окна Electron в Windows поля ввода
+// переставали принимать буквы (курсор мигает, текст не вводится) до перезапуска. window.confirm/alert не использовать.
+// Текст до первого «?» (или до переноса строки) — заголовок, остальное — пояснение. ok — подпись кнопки;
+// danger — опасное действие: красная кнопка, Enter = «Отмена». Ответ — Promise<true/false>. Вопросы идут по очереди.
+let askChain = Promise.resolve();
+function askYes(text, ok = 'Да', danger = false) {
+  const run = () => new Promise((resolve) => {
+    const dlg = $('askDialog');
+    const s = String(text || '');
+    const m = /^([^\n]*?\?)\s+([\s\S]+)$/.exec(s) || /^([^\n]*)\n+([\s\S]+)$/.exec(s);
+    $('askTitle').textContent = m ? m[1] : s;
+    $('askText').textContent = m ? m[2] : '';
+    $('askBody').hidden = !m;
+    $('askOk').textContent = ok;
+    $('askOk').className = danger ? 'danger-btn' : 'primary';
+    dlg.returnValue = '';
+    dlg.addEventListener('close', () => resolve(dlg.returnValue === 'ok'), { once: true });
+    try { dlg.showModal(); } catch { resolve(false); return; }
+    (danger ? $('askNo') : $('askOk')).focus();
+  });
+  const p = askChain.then(run, run);
+  askChain = p.catch(() => {});
+  return p;
+}
+
 // Свободное имя: «Плейлист 02.11.2026», а если такое уже есть — «… (2)», «… (3)»
 function freeName(kind, base) {
   const names = (kind === 'pl' ? lib.playlists : lib.libraries).map((x) => x.name);
@@ -1763,11 +1788,12 @@ async function renameView(kind = lib.view && lib.view.kind, id = lib.view && lib
   renderService();
 }
 
-function deleteView(kind = lib.view && lib.view.kind, id = lib.view && lib.view.id) {
+async function deleteView(kind = lib.view && lib.view.kind, id = lib.view && lib.view.id) {
   const isPl = kind === 'pl';
   const v = (isPl ? lib.playlists : lib.libraries).find((x) => x.id === id);
   if (!v) return;
-  if (!window.confirm(isPl ? `Удалить плейлист «${v.name}»? Песни в библиотеках останутся.` : `Удалить библиотеку «${v.name}»? Презентации, которые стоят в плейлистах, там останутся.`)) return;
+  if (!(await askYes(isPl ? `Удалить плейлист «${v.name}»? Песни в библиотеках останутся.` : `Удалить библиотеку «${v.name}»? Презентации, которые стоят в плейлистах, там останутся.`, 'Удалить', true))) return;
+  if (!(isPl ? lib.playlists : lib.libraries).includes(v)) return; // пока спрашивали, уже удалили (Ctrl+Z, другой вопрос)
   if (isPl) lib.playlists = lib.playlists.filter((p) => p !== v);
   else lib.libraries = lib.libraries.filter((l) => l !== v);
   const ids = isPl ? v.entries.map((e) => e.item) : v.items;

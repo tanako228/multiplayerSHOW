@@ -41,6 +41,7 @@ const DEFAULTS = {
   scaleBible: 190, scaleScreen: 170, // ширина слайда-миниатюры (Scale под предпросмотром)
   sizes: {}, // ширины панелей, заданные разделителями: { aside: 420, col: 260, … }
   ssOn: false, ssMin: 5, ssKind: 'clock', // заставка от выгорания OLED: включена, через сколько минут, вид
+  guardCursor: true, // курсор не уходит на мониторы, где идёт показ (main.js: guardCursor)
 };
 const settings = { ...DEFAULTS };
 try { Object.assign(settings, JSON.parse(localStorage.getItem('cp.settings') || '{}')); } catch { /* первый запуск */ }
@@ -70,6 +71,7 @@ const BINDINGS = [
   // Шрифт, размер и цвета текста Библии без темы (textFont…textBg) — только в настройках; оформление — в темах и окне «Библия»
   ['poolFit', 'str'], ['plFeed', 'check'], ['fadeOut', 'num'], ['fadeIn', 'num'], ['autoNext', 'check'],
   ['ssOn', 'check'], ['ssMin', 'num'], ['ssKind', 'str'], // заставка от выгорания OLED (main.js: saverSet)
+  ['guardCursor', 'check'], // защита экранов показа (main.js: guardSync)
 ];
 
 const VISUAL_KEYS = ['fit', 'videoSound', 'videoLoop', 'textFont', 'textScale', 'textColor', 'textBg', 'showTr', 'trShort'];
@@ -91,6 +93,9 @@ function sendSaver() {
   if (window.api && window.api.saverSet) window.api.saverSet({ on: settings.ssOn, min: settings.ssMin, kind: settings.ssKind });
 }
 sendSaver();
+// Защита экранов показа: курсор не уходит на мониторы вывода (Win+D окна вывода не сворачивает всегда — main.js)
+function sendGuard() { if (window.api && window.api.guardSet) window.api.guardSet({ cursor: !!settings.guardCursor }); }
+sendGuard();
 $('ssTest').addEventListener('click', async () => {
   if (!window.api || !window.api.saverTest) return;
   const r = await window.api.saverTest();
@@ -107,6 +112,7 @@ function onSettingChanged(key) {
   if (VISUAL_KEYS.includes(key)) refreshLive();
   if (key === 'plFeed' && typeof renderService === 'function') renderService();
   if (['ssOn', 'ssMin', 'ssKind'].includes(key)) sendSaver();
+  if (key === 'guardCursor') sendGuard();
   if (key === 'trShort' && typeof renderChips === 'function' && typeof bibleIndex !== 'undefined') renderChips();
   if (key === 'showTr' || key === 'trShort') {
     syncTrShow();
@@ -2680,7 +2686,7 @@ async function pickBibles() {
 
 async function deleteBible(id) {
   const t = bibleIndex.find((x) => x.id === id);
-  if (!t || !window.confirm(`Удалить перевод «${t.name}» из программы? Исходный файл не изменится.`)) return;
+  if (!t || !(await askYes(`Удалить перевод «${t.name}» из программы? Исходный файл не изменится.`, 'Удалить', true))) return;
   bibleIndex = await window.api.bibleDelete(id);
   bibleCache.delete(id);
   renderTrRows();
@@ -3016,8 +3022,8 @@ function renderKeys() {
   }
 }
 
-$('keysReset').addEventListener('click', () => {
-  if (!window.confirm('Вернуть все горячие клавиши к начальным?')) return;
+$('keysReset').addEventListener('click', async () => {
+  if (!(await askYes('Вернуть все горячие клавиши к начальным? Ваши сочетания пропадут.', 'Вернуть', true))) return;
   settings.keys = {};
   saveSettings();
   renderKeys();
@@ -3047,6 +3053,14 @@ $('openSettings').addEventListener('click', () => openSettings());
 $('setClose').addEventListener('click', () => $('setDialog').close());
 $('setDialog').addEventListener('cancel', (e) => { if (keyWait) e.preventDefault(); }); // Esc при записи клавиши не закрывает окно
 $('setDialog').addEventListener('close', () => { keyWait = null; });
+// Ждём сочетание, а щёлкнули не по кнопке сочетания или ушли из окна — перестать ждать:
+// иначе следующая буква в любом поле пропадала бы и становилась горячей клавишей
+window.addEventListener('pointerdown', (e) => {
+  if (!keyWait || (e.target.closest && e.target.closest('#keyRows button'))) return;
+  keyWait = null;
+  renderKeys();
+}, true);
+window.addEventListener('blur', () => { if (keyWait) { keyWait = null; renderKeys(); } });
 
 /* ---------- Звуковой выход для музыки ---------- */
 

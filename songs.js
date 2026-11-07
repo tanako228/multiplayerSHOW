@@ -564,9 +564,10 @@ function arrCopy() {
   updateSongView();
 }
 
-function arrDelete() {
+async function arrDelete() {
   const a = curArr();
-  if (!a || !window.confirm(`Удалить аранжировку «${a.name}»? Текст песни не изменится.`)) return;
+  if (!a || !(await askYes(`Удалить аранжировку «${a.name}»? Текст песни не изменится.`, 'Удалить', true))) return;
+  if (curArr() !== a) return; // пока спрашивали, окно песни поменялось
   songDraft.arrangements = songDraft.arrangements.filter((x) => x !== a);
   songDraft.arr = '';
   updateSongView();
@@ -653,6 +654,8 @@ $('songText').addEventListener('keydown', (e) => {
   const combo = comboOf(e);
   if (!combo) return;
   if (combo === 'Ctrl+Digit0' || combo === 'Ctrl+Numpad0') { e.preventDefault(); unmarkPart(); return; }
+  // Простые буквы — всегда текст (даже если в старых данных такая клавиша стоит у типа части)
+  if (!e.ctrlKey && !e.altKey && !/^F\d+$/.test(e.code)) return;
   const t = partTypes().find((x) => x.key === combo);
   if (t) { e.preventDefault(); markPart(t); }
 });
@@ -681,10 +684,20 @@ function songAbsorb(item) {
   if (Songs.absorb(item) === 'loose') flashStatus('Слайды песни изменены вручную — аранжировка пересоберёт их, когда смените её или сохраните текст');
 }
 
+// Слайды меняли вручную — сначала вопрос: тогда ответ — Promise (макрос его ждёт), иначе всё сразу
 function setSongArr(item, arr) {
   const s = item.song;
   if (!s) return;
-  if (s.loose && !window.confirm('Слайды этой песни меняли вручную. Собрать их заново по аранжировке?')) return;
+  if (s.loose) {
+    return askYes('Собрать слайды заново по аранжировке? Слайды этой песни меняли вручную.', 'Собрать заново').then((ok) => {
+      if (ok && item.song === s) applySongArr(item, arr);
+      else renderService(); // выбор аранжировки в ленте — как было
+    });
+  }
+  applySongArr(item, arr);
+}
+function applySongArr(item, arr) {
+  const s = item.song;
   s.arr = arr;
   delete s.loose;
   item.slides = Songs.build(s, item.slides);
@@ -833,14 +846,28 @@ $('partTypesDialog').addEventListener('keydown', (e) => {
 }, true);
 $('partTypesDialog').addEventListener('cancel', (e) => { if (ptWait) e.preventDefault(); });
 $('partTypesDialog').addEventListener('close', () => { ptWait = null; });
+// Ждём сочетание, а щёлкнули мимо кнопки (например, в название) — перестать ждать, иначе буквы не вводились бы.
+// Без перерисовки строк: поле, по которому щёлкнули, должно остаться и получить фокус
+$('partTypesDialog').addEventListener('pointerdown', (e) => {
+  if (!ptWait || e.target.closest('#ptRows button.key')) return;
+  const t = partTypes().find((x) => x.id === ptWait);
+  ptWait = null;
+  $('ptMsg').textContent = '';
+  const b = $('ptRows').querySelector('button.key.wait');
+  if (b) {
+    b.classList.remove('wait');
+    b.classList.toggle('empty-key', !(t && t.key));
+    b.textContent = t && t.key ? prettyCombo(t.key) : '—';
+  }
+}, true);
 $('ptAdd').addEventListener('click', () => {
   partTypes().push({ id: newId(), name: 'Новая часть', color: '#12a594', num: false });
   partTypesChanged();
   const rows = $('ptRows').querySelectorAll('input[type=text]');
   if (rows.length) rows[rows.length - 1].select();
 });
-$('ptReset').addEventListener('click', () => {
-  if (!window.confirm('Вернуть стандартные типы частей? Свои типы пропадут, обозначения в песнях останутся.')) return;
+$('ptReset').addEventListener('click', async () => {
+  if (!(await askYes('Вернуть стандартные типы частей? Свои типы пропадут, обозначения в песнях останутся.', 'Вернуть', true))) return;
   lib.partTypes = defaultPartTypes();
   partTypesChanged();
 });

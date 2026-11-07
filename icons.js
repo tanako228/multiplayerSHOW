@@ -179,3 +179,41 @@ const Icons = (() => {
 
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', () => Icons.apply());
 else Icons.apply();
+
+/* Клавиатура не должна «отваливаться» (Windows + Electron; main.js: fixFocus). Бывало: в поле мигает курсор,
+   а буквы не вводятся до перезапуска программы. Здесь — для всех окон с полями ввода:
+   1) щелчок в поле ввода или окно снова впереди — main проверяет, у окна ли клавиатура, и возвращает её;
+   2) буквы и правда пропадают: в поле для текста нажали букву, ничего не ввелось и никто нажатие не перехватил —
+      дважды за 3 с — main переподключает клавиатуру к окну. */
+(() => {
+  if (!window.api || !window.api.refocus) return;
+  const TEXT = new Set(['text', 'search', 'url', 'email', 'tel', 'password']);
+  const textField = (t) => !!t && !t.disabled && !t.readOnly
+    && (t.tagName === 'TEXTAREA' || (t.tagName === 'INPUT' && TEXT.has(t.type)) || !!t.isContentEditable);
+  let softAt = 0;
+  const soft = () => {
+    const now = Date.now();
+    if (now - softAt < 300) return;
+    softAt = now;
+    window.api.refocus(false);
+  };
+  document.addEventListener('pointerdown', (e) => { if (textField(e.target) || (e.target && e.target.type === 'number')) soft(); }, true);
+  window.addEventListener('focus', soft);
+  let typedAt = 0; // когда последний раз что-то ввелось (в любом поле)
+  let misses = []; // когда нажатая буква пропала
+  for (const ev of ['beforeinput', 'input', 'compositionstart']) document.addEventListener(ev, () => { typedAt = performance.now(); }, true);
+  window.addEventListener('keydown', (e) => {
+    if (e.ctrlKey || e.altKey || e.metaKey || e.isComposing || !e.key || e.key.length !== 1) return;
+    const t = e.target;
+    if (!textField(t)) return;
+    if (t.maxLength > 0 && t.value.length >= t.maxLength && t.selectionStart === t.selectionEnd) return; // поле полное — так и должно быть
+    const at = performance.now();
+    setTimeout(() => {
+      if (e.defaultPrevented || typedAt >= at || document.activeElement !== t) return; // нажатие перехватили или текст ввёлся
+      const now = performance.now();
+      misses = misses.filter((x) => now - x < 3000);
+      misses.push(now);
+      if (misses.length >= 2) { misses = []; window.api.refocus(true); }
+    }, 400);
+  }, true);
+})();
