@@ -1245,6 +1245,12 @@ const UI_THEMES = [
   { id: 'slate', name: 'Сланец', c: ['#161b20', '#1c232a', '#232b33', '#334049', '#cdd5dc', '#8796a2', '#6fa3c4', '#4a7590', '#d98478'] },
   { id: 'ocean', name: 'Океан', c: ['#071a1f', '#0c242b', '#112e36', '#21444e', '#d2e6ea', '#8aa9b0', '#3cb4c8', '#257a8a', '#ef8070'] },
   { id: 'contrast', name: 'Контраст', c: ['#000000', '#000000', '#111111', '#5a5a5a', '#ffffff', '#c8c8c8', '#ffd400', '#00b3ff', '#ff4a4a'] },
+  // «Свечение» (deco: 'aura', index.html): чёрный фон, тёплое свечение снизу, матовое стекло, кнопки-«таблетки» с градиентом.
+  // fx — эффекты, которые ставятся вместе с темой (потом их можно поменять ползунками)
+  { id: 'ember', name: 'Жар', deco: 'aura', fx: { uiGlass: 'glass', uiAlpha: 24, uiGlow: 45, uiRadius: 12 },
+    c: ['#0a0a0b', '#141416', '#1c1c1f', '#2c2c31', '#f2f0ee', '#8e8c93', '#ff6a1f', '#ffb347', '#ff4d5e'] },
+  { id: 'neon', name: 'Неон', deco: 'aura', fx: { uiGlass: 'glass', uiAlpha: 24, uiGlow: 40, uiRadius: 12 },
+    c: ['#0b0b0b', '#151515', '#1d1d1d', '#2c2c2c', '#ffffff', '#a7a7a7', '#1ed760', '#3cc8c8', '#ff5c5c'] },
 ];
 const uiTheme = () => UI_THEMES.find((t) => t.id === settings.uiTheme) || UI_THEMES[0];
 // Итоговые цвета: тема + свои поправки; scheme — светлая или тёмная (для полей ввода и полос прокрутки)
@@ -1303,6 +1309,7 @@ function applyUiFx(p) {
     root.setProperty('--field', `color-mix(in srgb, ${p['--field']} ${Math.max(20, 100 - a * 1.4)}%, transparent)`);
   }
   html.dataset.uiFont = UI_FONTS.some(([id]) => id === settings.uiFont) ? settings.uiFont : '';
+  html.dataset.uiDeco = uiTheme().deco || ''; // особое оформление темы (свечение, «таблетки»)
   html.classList.toggle('ui-caps', !!settings.uiCaps);
 }
 
@@ -1313,7 +1320,8 @@ function renderUiColors() {
     const b = Object.assign(document.createElement('button'), { className: 'ui-theme', title: `Тема программы «${t.name}»` });
     b.setAttribute('aria-pressed', String(t.id === uiTheme().id));
     const pv = Object.assign(document.createElement('span'), { className: 'ui-th-pv' });
-    pv.style.cssText = `--a:${t.c[0]};--b:${t.c[1]};--c:${t.c[3]};--d:${t.c[4]};--e:${t.c[6]}`;
+    pv.style.cssText = `--a:${t.c[0]};--b:${t.c[1]};--c:${t.c[3]};--d:${t.c[4]};--e:${t.c[6]};--f:${t.c[7]}`;
+    if (t.deco) pv.dataset.deco = t.deco;
     pv.innerHTML = '<i></i><i></i><i></i>';
     b.append(pv, Object.assign(document.createElement('span'), { textContent: t.name }));
     b.addEventListener('click', () => setUiTheme(t.id));
@@ -1365,10 +1373,12 @@ function setUiTheme(id) {
   const had = Object.keys(settings.uiColors || {}).length > 0;
   settings.uiTheme = id;
   settings.uiColors = {};
+  const fx = uiTheme().fx;
+  if (fx) Object.assign(settings, fx); // тема со своими эффектами — стекло, свечение, углы
   saveSettings();
   applyUiColors();
   renderUiColors();
-  flashStatus(`Тема программы: «${uiTheme().name}»` + (had ? ' · свои цвета сброшены' : ''));
+  flashStatus(`Тема программы: «${uiTheme().name}»` + (fx ? ' · с эффектами темы' : '') + (had ? ' · свои цвета сброшены' : ''));
 }
 
 $('uiReset').addEventListener('click', () => {

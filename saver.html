@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' file: data:; style-src 'self' 'unsafe-inline'">
+  <title>Заставка</title>
+  <!-- Заставка от выгорания OLED (main.js: saverShow): чёрный экран, тусклые часы раз в 20 с переходят на новое место -->
+  <style>
+    html, body { margin: 0; height: 100%; background: #000; overflow: hidden; cursor: none; user-select: none; }
+    #box { position: absolute; text-align: center; color: #5a5f68; font-family: 'Segoe UI', sans-serif; opacity: 0; transition: opacity 1.5s; }
+    #box.on { opacity: 1; }
+    #time { font-size: 9vmin; font-weight: 200; line-height: 1; }
+    #date { font-size: 2.4vmin; margin-top: 1.2vmin; }
+    #logo { width: 18vmin; margin-top: 2.5vmin; opacity: .35; }
+    html.black #box { display: none; }
+  </style>
+</head>
+<body>
+  <div id="box">
+    <div id="time"></div>
+    <div id="date"></div>
+    <img id="logo" src="brand/logo-dark-transparent.svg" alt="">
+  </div>
+  <script src="saver.js"></script>
+</body>
+</html>

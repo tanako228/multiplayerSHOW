@@ -40,6 +40,7 @@ const DEFAULTS = {
   musicRoot: '', musicSrc: null, musicVol: 0.8, fadeOut: 2, fadeIn: 1, autoNext: true,
   scaleBible: 190, scaleScreen: 170, // ширина слайда-миниатюры (Scale под предпросмотром)
   sizes: {}, // ширины панелей, заданные разделителями: { aside: 420, col: 260, … }
+  ssOn: false, ssMin: 5, ssKind: 'clock', // заставка от выгорания OLED: включена, через сколько минут, вид
 };
 const settings = { ...DEFAULTS };
 try { Object.assign(settings, JSON.parse(localStorage.getItem('cp.settings') || '{}')); } catch { /* первый запуск */ }
@@ -68,6 +69,7 @@ const BINDINGS = [
   ['fit', 'str'], ['videoSound', 'check'], ['videoLoop', 'check'],
   // Шрифт, размер и цвета текста Библии без темы (textFont…textBg) — только в настройках; оформление — в темах и окне «Библия»
   ['poolFit', 'str'], ['plFeed', 'check'], ['fadeOut', 'num'], ['fadeIn', 'num'], ['autoNext', 'check'],
+  ['ssOn', 'check'], ['ssMin', 'num'], ['ssKind', 'str'], // заставка от выгорания OLED (main.js: saverSet)
 ];
 
 const VISUAL_KEYS = ['fit', 'videoSound', 'videoLoop', 'textFont', 'textScale', 'textColor', 'textBg', 'showTr', 'trShort'];
@@ -84,6 +86,17 @@ BINDINGS.forEach(([key, kind, id]) => {
 });
 if (!/^(auto|custom|\d+x\d+)$/.test(String(settings.res))) settings.res = 'auto';
 
+// Заставка от выгорания OLED: настройки — в main.js (там видно, сколько не трогали мышь), «Проверить» — показать сразу
+function sendSaver() {
+  if (window.api && window.api.saverSet) window.api.saverSet({ on: settings.ssOn, min: settings.ssMin, kind: settings.ssKind });
+}
+sendSaver();
+$('ssTest').addEventListener('click', async () => {
+  if (!window.api || !window.api.saverTest) return;
+  const r = await window.api.saverTest();
+  if (r === 'busy') flashStatus('На этом мониторе открыт вывод — заставка его не перекрывает');
+});
+
 function onSettingChanged(key) {
   $('transMsVal').textContent = (settings.transMs / 1000).toFixed(1) + ' с';
   // Fade In / Fade Out — на кнопке и рядом со шкалой
@@ -93,6 +106,7 @@ function onSettingChanged(key) {
   if (['res', 'resW', 'resH', 'outFit'].includes(key)) { sendOutputSettings(); layoutPreview(); }
   if (VISUAL_KEYS.includes(key)) refreshLive();
   if (key === 'plFeed' && typeof renderService === 'function') renderService();
+  if (['ssOn', 'ssMin', 'ssKind'].includes(key)) sendSaver();
   if (key === 'trShort' && typeof renderChips === 'function' && typeof bibleIndex !== 'undefined') renderChips();
   if (key === 'showTr' || key === 'trShort') {
     syncTrShow();

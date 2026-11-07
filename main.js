@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, screen, nativeImage, clipboard, shell, desktopCapturer } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, screen, nativeImage, clipboard, shell, desktopCapturer, powerMonitor } = require('electron');
 const dgram = require('dgram');
 const ndi = require('./ndi');
 const cast = require('./cast');
@@ -500,7 +500,7 @@ function closeScreenWin(x) {
 function openScreenWin({ key, s, o }) {
   const query = { screen: s.id };
   let win;
-  const x = { win: null, screen: s.id, kind: o.kind };
+  const x = { win: null, screen: s.id, kind: o.kind, display: o.kind === 'display' ? Number(o.display) : null };
   if (o.kind === 'display') {
     const d = screen.getAllDisplays().find((z) => z.id === Number(o.display));
     const b = d.bounds;
@@ -576,6 +576,66 @@ function openScreenWin({ key, s, o }) {
     if (screenWins.get(key) === x) { screenWins.delete(key); if (x.ndi) x.ndi.close(); if (x.timer) clearInterval(x.timer); sendScreensState(); }
   });
   screenWins.set(key, x);
+}
+
+/* ---------- Заставка (screen saver) от выгорания OLED ----------
+   Никто не трогает мышь и клавиатуру N минут — на мониторе окна оператора поверх всего открывается чёрное окно
+   с тусклыми часами, которые переползают по экрану (saver.html). Экраны показа (зал, сцена, NDI) не трогаются:
+   если на мониторе оператора открыт вывод — заставки нет. Любое движение мыши или клавиша — заставка закрывается. */
+let saverCfg = { on: false, min: 5, kind: 'clock' };
+let saverWin = null;
+let saverTimer = null;
+let saverSince = 0; // когда открыли (первые 1,5 с не закрываем — для «Проверить»)
+
+function saverSet(cfg) {
+  saverCfg = { on: !!(cfg && cfg.on), min: Math.max(1, Math.min(240, Number(cfg && cfg.min) || 5)), kind: (cfg && cfg.kind) === 'black' ? 'black' : 'clock' };
+  if (saverTimer) clearInterval(saverTimer);
+  saverTimer = setInterval(saverTick, 1000);
+  if (!saverCfg.on) saverHide();
+  else saverHide(); // поменяли вид — откроется заново уже новым
+}
+
+// Монитор окна оператора — если на нём нет окна вывода
+function saverDisplay() {
+  if (!control || control.isDestroyed() || control.isMinimized()) return null;
+  const d = screen.getDisplayMatching(control.getBounds());
+  if (!d) return null;
+  if (output && !output.isDestroyed() && outputDisplayId === d.id) return null;
+  for (const x of screenWins.values()) if (x.kind === 'display' && x.display === d.id && !x.win.isDestroyed()) return null;
+  return d;
+}
+
+function saverShow(test) {
+  if (saverWin && !saverWin.isDestroyed()) return;
+  const d = saverDisplay();
+  if (!d) return test ? 'busy' : undefined;
+  const b = d.bounds;
+  saverWin = new BrowserWindow({
+    x: b.x, y: b.y, width: b.width, height: b.height, frame: false, show: false, skipTaskbar: true, focusable: true,
+    backgroundColor: '#000000', webPreferences: { contextIsolation: true, nodeIntegration: false },
+  });
+  saverWin.setAlwaysOnTop(true, 'screen-saver');
+  saverWin.setMenuBarVisibility(false);
+  saverWin.loadFile('saver.html', { query: { kind: saverCfg.kind } });
+  saverWin.once('ready-to-show', () => { if (saverWin && !saverWin.isDestroyed()) { saverWin.show(); saverWin.setFullScreen(true); } });
+  saverWin.on('closed', () => { saverWin = null; });
+  saverSince = Date.now();
+  return 'ok';
+}
+
+function saverHide() {
+  if (saverWin && !saverWin.isDestroyed()) saverWin.destroy();
+  saverWin = null;
+}
+
+function saverTick() {
+  const idle = powerMonitor.getSystemIdleTime(); // секунды без мыши и клавиатуры во всей Windows
+  if (saverWin && !saverWin.isDestroyed()) {
+    // Пошевелили мышью или нажали клавишу — закрыть; вывод открыли на этом мониторе — тоже
+    if ((idle < 1 && Date.now() - saverSince > 1500) || !saverDisplay()) { saverHide(); if (control && !control.isDestroyed()) control.focus(); }
+    return;
+  }
+  if (saverCfg.on && idle >= saverCfg.min * 60) saverShow(false);
 }
 
 /* ---------- Окно «Картинка» (editor.html): правка фото; слайды — в редакторе тем главного окна ---------- */
@@ -692,6 +752,10 @@ app.whenReady().then(() => {
 
   ipcMain.handle('output:open', (_e, displayId) => openOutput(displayId));
   ipcMain.handle('output:close', () => closeOutput());
+
+  // Заставка от выгорания OLED (Настройки → Показ): только на мониторе окна оператора
+  ipcMain.handle('saver:set', (_e, cfg) => saverSet(cfg));
+  ipcMain.handle('saver:test', () => saverShow(true));
 
   ipcMain.handle('output:settings', (_e, st) => {
     outputSettings = { resW: Number(st.resW) || 0, resH: Number(st.resH) || 0 };

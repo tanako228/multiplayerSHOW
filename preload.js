@@ -40,6 +40,8 @@ contextBridge.exposeInMainWorld('api', {
   openOutput: (displayId) => ipcRenderer.invoke('output:open', displayId),
   closeOutput: () => ipcRenderer.invoke('output:close'),
   setOutputSettings: (s) => ipcRenderer.invoke('output:settings', s),
+  saverSet: (cfg) => ipcRenderer.invoke('saver:set', cfg), // заставка от выгорания OLED
+  saverTest: () => ipcRenderer.invoke('saver:test'),
   show: (payload) => ipcRenderer.invoke('output:show', payload),
   clear: (payload) => ipcRenderer.invoke('output:clear', payload),
   layers: (msg) => ipcRenderer.invoke('output:layers', msg),
