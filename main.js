@@ -33,6 +33,10 @@ app.setName(APP_NAME);
 if (process.platform === 'win32') app.setAppUserModelId(APP_ID);
 app.setPath('userData', path.join(app.getPath('appData'), 'church-presenter'));
 
+// Окно, закрытое другим окном целиком (заставка, окно показа), Chromium считает спрятанным и перестаёт рисовать;
+// когда его открывают, программа секунду рисуется заново — был чёрный экран после заставки. Не отключать обратно
+app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion');
+
 // Только одна копия программы: две копии делят одно хранилище настроек (localStorage),
 // и Chromium может его стереть — пропадали папки медиапула и другие настройки.
 // Второй запуск просто показывает уже открытое окно.
@@ -143,6 +147,7 @@ ipcMain.on('win:refocus', (e, strong) => fixFocus(BrowserWindow.fromWebContents(
 // после перезагрузки Windows может поменять одинаковые мониторы местами в списке, а расположение у них то же
 function listDisplays() {
   const primaryId = screen.getPrimaryDisplay().id;
+  const ctl = ctlDisplay(); // монитор с окном программы — на него выводить нельзя (решение владельца)
   const all = screen.getAllDisplays();
   const order = [...all].sort((a, b) => a.bounds.x - b.bounds.x || a.bounds.y - b.bounds.y);
   return all.map((d) => {
@@ -154,6 +159,7 @@ function listDisplays() {
       n,
       name: d.label || '', // имя монитора из Windows («HP E232»)
       primary: d.id === primaryId,
+      here: !!ctl && ctl.id === d.id,
       bx: d.bounds.x, // где стоит монитор (как в Windows: Параметры → Дисплей) — по этому и узнаём монитор
       by: d.bounds.y,
       bw: d.bounds.width,
@@ -161,7 +167,7 @@ function listDisplays() {
       pw,
       ph,
       hz: Math.round(d.displayFrequency || 0), // частота обновления (менять её умеет только Windows)
-      label: `Монитор ${n}: ${d.label ? d.label + ', ' : ''}${pw}×${ph}` + (d.id === primaryId ? ' (основной)' : ''),
+      label: `Монитор ${n}: ${d.label ? d.label + ', ' : ''}${pw}×${ph}` + (ctl && ctl.id === d.id ? ' — здесь программа' : d.id === primaryId ? ' (основной)' : ''),
     };
   }).sort((a, b) => a.n - b.n);
 }
@@ -480,9 +486,13 @@ function closeOutput() {
   guardSync();
 }
 
+// Мониторы, на которые можно выводить: все, кроме того, где окно программы (решение владельца, не возвращать)
+const outAllowed = (id) => { const c = ctlDisplay(); return !c || c.id !== Number(id); };
+
 function openOutput(displayId) {
   const display = screen.getAllDisplays().find((d) => d.id === displayId);
   if (!display) return;
+  if (!outAllowed(display.id)) return 'here'; // здесь окно программы
   if (output && !output.isDestroyed()) output.destroy();
 
   const b = display.bounds;
@@ -576,6 +586,7 @@ function wantedOutputs() {
     (Array.isArray(s.outputs) ? s.outputs : []).forEach((o, i) => {
       if (!o || o.off) return;
       if (o.kind === 'display' && !disp.some((d) => d.id === Number(o.display))) return; // монитор не подключён — подождём
+      if (o.kind === 'display' && !outAllowed(o.display)) return; // здесь окно программы — не выводим, пока его не перенесут
       if (o.kind === 'ndi' && !ndi.available()) return;
       const extra = o.kind === 'ndi' ? `|${o.name || s.name}|${s.w}x${s.h}|${s.hz || 30}|${s.alpha ? 'a' : ''}` : o.kind === 'display' ? '|' + o.display : s.alpha ? '|a' : '';
       list.push({ key: `${s.id}|${i}|${o.kind}${extra}`, s, o });
@@ -704,7 +715,8 @@ let saverTimer = null;
 let saverSince = 0; // когда открыли (первые 1,5 с не закрываем — для «Проверить»)
 
 function saverSet(cfg) {
-  saverCfg = { on: !!(cfg && cfg.on), min: Math.max(1, Math.min(240, Number(cfg && cfg.min) || 5)), kind: (cfg && cfg.kind) === 'black' ? 'black' : 'clock' };
+  const k = String((cfg && cfg.kind) || '');
+  saverCfg = { on: !!(cfg && cfg.on), min: Math.max(1, Math.min(240, Number(cfg && cfg.min) || 5)), kind: k === 'black' ? k : 'clock' };
   if (saverTimer) clearInterval(saverTimer);
   saverTimer = setInterval(saverTick, 1000);
   if (!saverCfg.on) saverHide();
@@ -733,15 +745,40 @@ function saverShow(test) {
   saverWin.setAlwaysOnTop(true, 'screen-saver');
   saverWin.setMenuBarVisibility(false);
   saverWin.loadFile('saver.html', { query: { kind: saverCfg.kind } });
-  saverWin.once('ready-to-show', () => { if (saverWin && !saverWin.isDestroyed()) { saverWin.show(); saverWin.setFullScreen(true); } });
-  saverWin.on('closed', () => { saverWin = null; });
+  const win = saverWin;
+  saverWin.once('ready-to-show', () => {
+    if (win.isDestroyed()) return;
+    win.show();
+    win.setFullScreen(true);
+  });
+  saverWin.on('closed', () => { if (saverWin === win) saverWin = null; });
   saverSince = Date.now();
+  saverFastStart(test);
   return 'ok';
 }
 
-// Закрыть заставку. У неё фокус — сначала отдать его окну программы, потом закрыть:
-// закрытое окно с фокусом в Windows оставляло программу без клавиатуры (курсор мигает, буквы не вводятся)
+// Пока заставка открыта — проверка каждые 50 мс: GetLastInputInfo меняется от любого движения мыши или клавиши
+// (powerMonitor.getSystemIdleTime считает целыми секундами — выход был с задержкой до 2 с)
+let saverFast = null;
+let saverInput0 = 0; // время последнего ввода, когда заставку открыли
+const lastInputTick = () => {
+  const api = guardApi();
+  if (!api || !api.lastInput) return null;
+  try { const p = { cbSize: 8, dwTime: 0 }; return api.lastInput(p) ? p.dwTime : null; } catch { return null; }
+};
+function saverFastStart(test) {
+  if (saverFast) clearInterval(saverFast);
+  saverInput0 = lastInputTick();
+  if (saverInput0 === null) { saverFast = null; return; } // нет koffi — остаётся проверка раз в секунду
+  saverFast = setInterval(() => {
+    if (!saverWin || saverWin.isDestroyed()) { clearInterval(saverFast); saverFast = null; return; }
+    if (test && Date.now() - saverSince < 600) { saverInput0 = lastInputTick(); return; } // «Проверить»: щелчок по кнопке не в счёт
+    if (lastInputTick() !== saverInput0) saverHide();
+  }, 50);
+}
+
 function saverHide() {
+  if (saverFast) { clearInterval(saverFast); saverFast = null; }
   if (saverWin && !saverWin.isDestroyed()) {
     const had = saverWin.isFocused(); // фокус был у заставки, а не у другой программы
     if (had) fixFocus(control);
@@ -786,11 +823,13 @@ function guardApi() {
     const lib = koffi.load('user32.dll');
     koffi.struct('MPS_RECT', { left: 'int32', top: 'int32', right: 'int32', bottom: 'int32' });
     koffi.struct('MPS_POINT', { x: 'int32', y: 'int32' });
+    koffi.struct('MPS_LII', { cbSize: 'uint32', dwTime: 'uint32' });
     user32 = {
       clip: lib.func('bool __stdcall ClipCursor(const MPS_RECT *r)'),
       getClip: lib.func('bool __stdcall GetClipCursor(_Out_ MPS_RECT *r)'),
       getPos: lib.func('bool __stdcall GetCursorPos(_Out_ MPS_POINT *p)'),
       setPos: lib.func('bool __stdcall SetCursorPos(int x, int y)'),
+      lastInput: lib.func('bool __stdcall GetLastInputInfo(_Inout_ MPS_LII *p)'), // когда последний раз трогали мышь/клавиатуру (мс)
     };
   } catch (e) {
     console.warn('Защита курсора недоступна:', e.message);
@@ -940,6 +979,13 @@ function createControl() {
   }
   keepKeyboard(control);
   control.loadFile('index.html');
+  // Окно программы перенесли на другой монитор: там выводить нельзя — выходы экранов оттуда уходят (и возвращаются,
+  // когда окно уберут), вывод зала закрывается; список мониторов в окне программы обновляется
+  control.on('moved', () => {
+    if (output && !output.isDestroyed() && !outAllowed(outputDisplayId)) closeOutput();
+    syncScreens();
+    sendDisplays();
+  });
   // Перед выходом спрашиваем, чтобы случайно не закрыть программу посреди служения
   let confirmed = false;
   let hung = false; // окно программы не отвечает — закрываем без вопроса
@@ -1053,6 +1099,7 @@ app.whenReady().then(() => {
   // Заставка от выгорания OLED (Настройки → Показ): только на мониторе окна оператора
   ipcMain.handle('saver:set', (_e, cfg) => saverSet(cfg));
   ipcMain.handle('saver:test', () => saverShow(true));
+  // «Настроить…» у заставки Windows — её собственное окно настроек (текст, папка с фото и т. п.)
   // Защита экранов показа (Настройки → Показ и звук): не пускать курсор на мониторы вывода
   ipcMain.handle('guard:set', (_e, cfg) => { guardCfg = { cursor: !(cfg && cfg.cursor === false) }; guardSync(); });
   app.on('will-quit', guardFree);

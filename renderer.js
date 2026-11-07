@@ -89,6 +89,8 @@ BINDINGS.forEach(([key, kind, id]) => {
 if (!/^(auto|custom|\d+x\d+)$/.test(String(settings.res))) settings.res = 'auto';
 
 // Заставка от выгорания OLED: настройки — в main.js (там видно, сколько не трогали мышь), «Проверить» — показать сразу
+// Заставок Windows больше нет (владелец: «только встроенные», см. ПОДРОБНО.md) — выбранная раньше 'win:…' становится часами
+if (String(settings.ssKind || '').startsWith('win:')) { settings.ssKind = 'clock'; if ($('ssKind')) $('ssKind').value = 'clock'; }
 function sendSaver() {
   if (window.api && window.api.saverSet) window.api.saverSet({ on: settings.ssOn, min: settings.ssMin, kind: settings.ssKind });
 }
@@ -655,6 +657,16 @@ function dispMatch(id, key) {
   const d = dispFind(id, key);
   return d && d.id !== Number(id) ? d : null;
 }
+// Можно ли переписать сохранённый ключ на монитор d: он стоит на том же месте или ключ старый (без места).
+// Найденный «на замену» не запоминаем: при запуске Windows не сразу расставляет мониторы (сплиттер, пробуждение) —
+// второй одинаковый монитор появляется позже, и свой найдётся по месту. Сменили расположение в Windows — выбрать через «Схему»
+function dispSure(d, key) {
+  if (!d) return false;
+  const [, size = '', pos] = String(key || '').split(/[|@]/);
+  if (pos === undefined) return true;
+  const [, dsize, dpos] = dispKey(d).split(/[|@]/);
+  return dsize === size && dpos === pos;
+}
 // Переписать сохранённые мониторы выходов (lib.screens, lib.scenes) на те, что подключены сейчас; запомнить имя монитора
 function dispFix() {
   if (typeof lib === 'undefined' || !lib || !Array.isArray(lib.screens) || !displays.length) return;
@@ -663,8 +675,9 @@ function dispFix() {
     if (!o || o.kind !== 'display') continue;
     const d = dispMatch(o.display, o.dkey);
     if (d) { o.display = d.id; ch++; }
-    const k = dispKey(displays.find((x) => x.id === Number(o.display)));
-    if (k && o.dkey !== k) { o.dkey = k; ch++; }
+    const cur = displays.find((x) => x.id === Number(o.display));
+    const k = dispKey(cur);
+    if (k && o.dkey !== k && dispSure(cur, o.dkey)) { o.dkey = k; ch++; }
   }
   if (!ch) return;
   // Без шага отмены: это не правка оператора
@@ -705,10 +718,11 @@ function dispPick(cur, pick) {
     const n = document.createElement('b');
     n.textContent = d.n || '';
     const t = document.createElement('span');
-    t.textContent = [d.name, `${d.pw}×${d.ph}`, d.primary ? 'основной — окно программы' : '', busy.length ? 'занят: ' + busy.join(', ') : ''].filter(Boolean).join('\n');
+    t.textContent = [d.name, `${d.pw}×${d.ph}`, d.here ? 'здесь программа — выводить нельзя' : '', busy.length ? 'занят: ' + busy.join(', ') : ''].filter(Boolean).join('\n');
     b.append(n, t);
     b.title = d.label;
-    b.addEventListener('click', () => { dlg.close(); pick(d.id); });
+    if (d.here) b.disabled = true; // монитор программы не выбирается
+    else b.addEventListener('click', () => { dlg.close(); pick(d.id); });
     map.append(b);
   }
   if (!displays.length) map.textContent = 'Мониторов нет';
@@ -720,23 +734,28 @@ function fillDisplays(list) {
   const keep = Number(displaySel.value) || Number(settings.outDisplay);
   displaySel.replaceChildren(...list.map((d) => Object.assign(document.createElement('option'), { value: d.id, textContent: d.label })));
   const stillThere = dispFind(keep || -1, settings.outDisplayKey);
-  const external = list.find((d) => !d.primary);
+  const external = list.find((d) => !d.here && !d.primary) || list.find((d) => !d.here); // не монитор программы
   displaySel.value = (stillThere || external || list[0]).id;
   // Нашёлся свой монитор — запомнить его новый id и место (выбранный «на замену» не запоминаем: вернётся свой — встанет он)
-  if (stillThere && (settings.outDisplay !== stillThere.id || settings.outDisplayKey !== dispKey(stillThere))) {
+  if (stillThere && dispSure(stillThere, settings.outDisplayKey) && (settings.outDisplay !== stillThere.id || settings.outDisplayKey !== dispKey(stillThere))) {
     settings.outDisplay = stillThere.id;
     settings.outDisplayKey = dispKey(stillThere);
     saveSettings();
   }
+  // Вывод зала уже открыт, а свой монитор нашёлся другой (при запуске Windows ещё расставляла мониторы) — перенести вывод туда.
+  // Раньше окно оставалось на чужом мониторе до «выключить — включить»
+  if (stillThere && outputOpen && outDispNow != null && outDispNow !== stillThere.id) window.api.openOutput(stillThere.id);
   try { dispFix(); } catch { /* библиотека ещё не загружена — dispFix позовёт scInit */ }
   sendOutputSettings();
   layoutPreview();
   if (typeof scOutputChanged === 'function') scOutputChanged(); // список мониторов в Редакторе сцен
 }
 
+let outDispNow = null; // на каком мониторе сейчас открыт вывод зала (сообщает main.js)
 function setOutputState({ open, displayId }) {
   const changed = outputOpen !== open;
   outputOpen = open;
+  outDispNow = open && displayId != null ? Number(displayId) : null;
   if (changed && typeof mcEmit === 'function') queueMicrotask(() => mcEmit('output', { on: open }));
   if (changed && typeof scOutputChanged === 'function') queueMicrotask(scOutputChanged); // точка «выводится» у «Основного»
   if (changed) prevAudio(); // вывод открыли — звук уходит туда, закрыли — звучит предпросмотр
@@ -752,8 +771,12 @@ function setOutputState({ open, displayId }) {
     : 'Вывод выключен. Картинка показана только здесь.';
 }
 
+// На монитор с окном программы выводить нельзя (решение владельца) — main.js тоже не откроет
+const HERE_MSG = 'На этом мониторе окно программы — сюда выводить нельзя. Выберите другой монитор (Редактор сцен → «Основной» → «Схема»)';
+const dispHere = (id) => !!(displays.find((d) => d.id === Number(id)) || {}).here;
 const toggleOutput = () => {
   if (outputOpen) window.api.closeOutput();
+  else if (dispHere(displaySel.value)) flashStatus(HERE_MSG);
   else window.api.openOutput(Number(displaySel.value));
 };
 toggleBtn.addEventListener('click', toggleOutput);
@@ -791,7 +814,7 @@ function outGroupMembers(g) {
 function mainOutOn() { const m = lib && lib.screens && lib.screens.find((s) => s.id === 'main'); return outputOpen || !!(m && m.enabled && (m.outputs || []).length); }
 function mainOutSet(on, quiet) {
   const m = lib && lib.screens && lib.screens.find((s) => s.id === 'main');
-  if (on && !outputOpen && displays.length) window.api.openOutput(Number(displaySel.value));
+  if (on && !outputOpen && displays.length) { if (dispHere(displaySel.value)) flashStatus(HERE_MSG); else window.api.openOutput(Number(displaySel.value)); }
   if (!on && outputOpen) window.api.closeOutput();
   if (m) m.enabled = on;
   if (!quiet) { saveLib(); if (typeof scSend === 'function') scSend(); if (typeof scOutputChanged === 'function') scOutputChanged(); }
@@ -3193,7 +3216,7 @@ window.api.getDisplays().then((list) => {
   fillDisplays(list);
   // «Включать вывод при запуске»: только на отдельный монитор — главный (где окно оператора) не закрываем
   const d = list.find((x) => x.id === Number(displaySel.value));
-  if (settings.outAutoOn && !outputOpen && d && !d.primary) toggleOutput();
+  if (settings.outAutoOn && !outputOpen && d && !d.here) toggleOutput();
 });
 onSettingChanged('init');
 media = loadList('cp.media');

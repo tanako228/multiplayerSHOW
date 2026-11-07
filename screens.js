@@ -1752,7 +1752,7 @@ function scColor(v, on) {
 }
 function scSelect(opts, v, on) {
   const s = scEl('select');
-  for (const [val, label] of opts) s.append(Object.assign(scEl('option', '', label), { value: val }));
+  for (const [val, label, off] of opts) s.append(Object.assign(scEl('option', '', label), { value: val, disabled: !!off }));
   s.value = v != null ? v : '';
   s.addEventListener('change', () => on(s.value));
   return s;
@@ -1846,14 +1846,14 @@ function scMainRows() {
   const rows = [
     (() => {
       const set = (v) => { displaySel.value = v; displaySel.dispatchEvent(new Event('change')); scRenderInsp(); };
-      return scRow('Монитор', scSelect(displays.length ? displays.map((x) => [String(x.id), x.label]) : [['', 'Мониторов нет']], String(displaySel.value || ''), set),
+      return scRow('Монитор', scSelect(displays.length ? displays.map((x) => [String(x.id), x.label, x.here]) : [['', 'Мониторов нет']], String(displaySel.value || ''), set),
         scBtn('Схема', 'screen', () => dispPick(displaySel.value, (id) => set(String(id))), 'Выбрать монитор по расположению, как в Windows'));
     })(),
-    d && d.primary ? scNote('Это главный монитор — на нём окно программы. Вывод закроет его на весь экран.', true) : null,
+    d && d.here ? scNote('Здесь окно программы — на этот монитор выводить нельзя. Выберите другой монитор.', true) : null,
     scRow('Вывод', scOutBtn(mainOutOn(), () => mainOutSet(!mainOutOn()))),
     ...scGroupRows(scScreen('main'), false, (v) => scScreenSet(scScreen('main'), { group: v }, true)),
     scCheck('Включать вывод при запуске', !!settings.outAutoOn, (v) => { settings.outAutoOn = v; saveSettings(); },
-      'При запуске сразу включается вывод на монитор (если он не главный), а сцены — как были включены, когда программу закрыли'),
+      'При запуске сразу включается вывод на монитор (если там нет окна программы), а сцены — как были включены, когда программу закрыли'),
     scRow('Разрешение', scSelect(opts, res, (v) => {
       settings.res = v;
       if (v === 'custom') { settings.resW = Math.min(W, max.W); settings.resH = Math.min(H, max.H); }
@@ -1931,13 +1931,17 @@ function scOutputRows(sid, name, outs, put, added) {
     head.append(st, kind, rm);
     card.append(head);
     if (o.kind === 'display') {
-      const opts = displays.map((d) => [String(d.id), d.label + (d.hz ? ` · ${d.hz} Гц` : '')]);
+      const opts = displays.map((d) => [String(d.id), d.label + (d.hz ? ` · ${d.hz} Гц` : ''), d.here]);
       const setD = (v) => setO({ display: Number(v), dkey: dispKey(displays.find((d) => d.id === Number(v))) });
       card.append(scRow('Монитор', scSelect(opts.length ? opts : [['', 'Мониторов нет']], String(o.display || ''), setD),
         scBtn('Схема', 'screen', () => dispPick(o.display, setD), 'Выбрать монитор по расположению, как в Windows')));
-      const busy = scDisplayBusy(Number(o.display), sid, i);
+      // Сам выход выключен (галочка, сцена или экран выключены) — он никому не мешает, не предупреждаем
+      const sc = sid.startsWith('scene:') ? lib.scenes.find((x) => scSceneSid(x) === sid) : null;
+      const z = sc ? null : scScreen(sid);
+      const on = !o.off && (sc ? !!sc.on : sid === 'main' ? mainOutOn() : !!(z && z.enabled));
+      const busy = on ? scDisplayBusy(Number(o.display), sid, i) : [];
       if (busy.length) card.append(scNote('Этот монитор уже занят: ' + busy.join(', ') + '. Окна лягут друг на друга.', true));
-      if ((displays.find((d) => d.id === Number(o.display)) || {}).primary) card.append(scNote('Это главный монитор — на нём окно программы. Выход закроет его на весь экран.', true));
+      if ((displays.find((d) => d.id === Number(o.display)) || {}).here) card.append(scNote('Здесь окно программы — на этот монитор выводить нельзя, выход не откроется. Выберите другой монитор.', true));
       if (!displays.some((d) => d.id === Number(o.display))) card.append(scNote('Монитор не подключён — выход откроется, когда он появится.', true));
       card.append(scNote('SDI (Blackmagic DeckLink и т. п.) — выберите карту здесь, если в Windows она видна как монитор (Desktop Video → «Использовать как монитор»).'));
     } else if (o.kind === 'ndi') {
@@ -1952,19 +1956,19 @@ function scOutputRows(sid, name, outs, put, added) {
   });
   rows.push(scRow('', scBtn('＋ Выход', '', () => {
     // Новый выход: второй монитор (не главный), а если его нет — окно. У сцены — выключенным (у экрана есть общий «Вывод»)
-    const free = displays.find((d) => !d.primary);
+    const free = displays.find((d) => !d.here && !d.primary) || displays.find((d) => !d.here);
     put([...outs, { kind: free ? 'display' : 'window', display: free ? free.id : undefined, dkey: free ? dispKey(free) : undefined, ...(sid.startsWith('scene:') ? { off: true } : {}) }], true);
     if (added) added();
   }, 'Добавить выход: монитор (HDMI, SDI), окно или NDI')));
   return rows;
 }
 
-// Кто ещё выводит на этот монитор (кроме выхода i у sid)
+// Кто ещё выводит на этот монитор (кроме выхода i у sid). Считаются только включённые: экран — enabled, сцена — on, выход — не off
 function scDisplayBusy(display, sid, i) {
   const busy = [];
   if (outputOpen && display === Number(displaySel.value)) busy.push('«Основной» (зал)');
   for (const z of lib.screens) (z.outputs || []).forEach((y, j) => { if (z.enabled && !y.off && y.kind === 'display' && Number(y.display) === display && !(z.id === sid && j === i)) busy.push(`«${z.name}»`); });
-  for (const sc of lib.scenes) (sc.outputs || []).forEach((y, j) => { if (!y.off && y.kind === 'display' && Number(y.display) === display && !(scSceneSid(sc) === sid && j === i)) busy.push(`сцена «${sc.name}»`); });
+  for (const sc of lib.scenes) (sc.outputs || []).forEach((y, j) => { if (sc.on && !y.off && y.kind === 'display' && Number(y.display) === display && !(scSceneSid(sc) === sid && j === i)) busy.push(`сцена «${sc.name}»`); });
   return busy;
 }
 

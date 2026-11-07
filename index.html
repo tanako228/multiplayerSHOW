@@ -261,6 +261,7 @@
     .disp-box { position: absolute; box-sizing: border-box; padding: 6px; margin: 0; border: 2px solid var(--line); border-radius: 4px; background: var(--field); color: var(--text);
       display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; overflow: hidden; cursor: pointer; text-align: center; }
     .disp-box:hover { border-color: var(--muted); }
+    .disp-box:disabled { cursor: not-allowed; opacity: .55; border-style: dashed; }
     .disp-box.on { border-color: var(--live); outline: 2px solid var(--live); outline-offset: -5px; }
     .disp-box b { font-size: 34px; line-height: 1; }
     .disp-box span { font-size: 11px; color: var(--muted); white-space: pre-line; }
