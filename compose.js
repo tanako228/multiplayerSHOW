@@ -75,8 +75,18 @@ const Compose = (() => {
     const s = num(fx.s, 100); if (s !== 100) parts.push(`saturate(${s / 100})`);
     const h = num(fx.h, 0); if (h) parts.push(`hue-rotate(${h}deg)`);
     const bl = num(fx.blur, 0); if (bl > 0) parts.push(`blur(${bl}px)`);
+    const gr = num(fx.gray, 0); if (gr > 0) parts.push(`grayscale(${gr / 100})`);
+    const sp = num(fx.sepia, 0); if (sp > 0) parts.push(`sepia(${sp / 100})`);
+    if (fx.inv) parts.push('invert(1)');
     return parts.join(' ');
   }
+  // '#rrggbb' + непрозрачность 0…1 → rgba (другой цвет — как есть)
+  function rgbaOf(c, a) {
+    const m = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(c || '');
+    if (!m || a == null || a >= 1) return c;
+    return `rgba(${parseInt(m[1], 16)}, ${parseInt(m[2], 16)}, ${parseInt(m[3], 16)}, ${Math.max(0, a)})`;
+  }
+  const op01 = (v, d) => Math.max(0, Math.min(100, num(v, d))) / 100; // непрозрачность в процентах → 0…1
 
   // Гамма и температура/оттенок — SVG-фильтром (в CSS их нет)
   function svgFilter(g, temp, tint) {
@@ -554,29 +564,54 @@ const Compose = (() => {
     n.style.transform = tf.join(' ');
     n.style.opacity = it.opacity != null && num(it.opacity, 100) < 100 ? String(Math.max(0, num(it.opacity, 100)) / 100) : '';
     n.style.mixBlendMode = BLENDS.includes(it.blend) && it.blend !== 'normal' ? it.blend : '';
-    // Тень — у всего элемента (не обрезается рамкой)
+    // Мягкие края, тень, внешнее свечение — у всего элемента (не обрезаются рамкой); как в редакторе тем (scene.js: objFx)
+    const fl = [];
+    if (num(it.soft, 0) > 0) fl.push(`blur(${num(it.soft, 0)}px)`);
     const sh = it.shadow;
-    n.style.filter = sh && num(sh.blur, 0) + Math.abs(num(sh.x, 0)) + Math.abs(num(sh.y, 0)) > 0
-      ? `drop-shadow(${num(sh.x, 0)}px ${num(sh.y, 0)}px ${num(sh.blur, 0)}px ${sh.c || 'rgba(0,0,0,.6)'})` : '';
+    if (sh && num(sh.blur, 0) + Math.abs(num(sh.x, 0)) + Math.abs(num(sh.y, 0)) > 0) {
+      fl.push(`drop-shadow(${num(sh.x, 0)}px ${num(sh.y, 0)}px ${num(sh.blur, 0)}px ${sh.c ? rgbaOf(sh.c, op01(sh.op, 100)) : 'rgba(0,0,0,.6)'})`);
+    }
+    const gl = it.glow;
+    if (gl && gl.on && num(gl.size, 20) > 0) {
+      const one = `drop-shadow(0 0 ${num(gl.size, 20)}px ${rgbaOf(gl.c || '#ffd27a', op01(gl.op, 90))})`;
+      for (let i = 0; i < Math.max(1, Math.min(4, Math.round(num(gl.power, 2)))); i++) fl.push(one);
+    }
+    n.style.filter = fl.join(' ');
     // Рамка, скругление, маска
     const clip = n._clip;
     const mask = it.mask || 'none';
-    clip.style.borderRadius = mask === 'ellipse' || it.type === 'ellipse' ? '50%' : num(it.radius, 0) ? num(it.radius, 0) + 'px' : '';
-    const bw = num(it.border && it.border.w, 0);
-    clip.style.outline = bw > 0 ? `${bw}px solid ${(it.border && it.border.c) || '#ffffff'}` : '';
+    const rad = mask === 'ellipse' || it.type === 'ellipse' ? '50%' : num(it.radius, 0) ? num(it.radius, 0) + 'px' : '';
+    clip.style.borderRadius = rad;
+    const bd = it.border || {};
+    const bw = num(bd.w, 0);
+    clip.style.outline = bw > 0 ? `${bw}px ${['dashed', 'dotted', 'double'].includes(bd.s) ? bd.s : 'solid'} ${rgbaOf(bd.c || '#ffffff', op01(bd.op, 100))}` : '';
     clip.style.outlineOffset = bw > 0 ? -bw + 'px' : '';
+    // Эффекты фона под элементом: размыть / обесцветить то, что под ним (видео, камеру)
+    const b0 = it.back || {};
+    const bf = [];
+    if (num(b0.blur, 0) > 0) bf.push(`blur(${num(b0.blur, 0)}px)`);
+    if (num(b0.s, 100) !== 100) bf.push(`saturate(${num(b0.s, 100) / 100})`);
+    if (num(b0.b, 100) !== 100) bf.push(`brightness(${num(b0.b, 100) / 100})`);
+    if (b0.inv) bf.push('invert(1)');
+    n.style.backdropFilter = bf.join(' ');
+    n.style.borderRadius = bf.length ? rad : '';
     if (mask === 'fade') {
       const f = Math.max(1, Math.min(50, num(it.feather, 12)));
       const g = (dir) => `linear-gradient(${dir}, transparent, #000 ${f}%, #000 ${100 - f}%, transparent)`;
       clip.style.webkitMaskImage = clip.style.maskImage = `${g('to right')}, ${g('to bottom')}`;
       clip.style.webkitMaskComposite = 'source-in';
       clip.style.maskComposite = 'intersect';
+    } else if (mask === 'vignette') {
+      // Виньетка: края уходят в прозрачность по овалу
+      const f = Math.max(1, Math.min(50, num(it.feather, 12)));
+      clip.style.webkitMaskImage = clip.style.maskImage = `radial-gradient(closest-side, #000 ${100 - 2 * f}%, transparent)`;
+      clip.style.webkitMaskComposite = clip.style.maskComposite = '';
     } else {
       clip.style.webkitMaskImage = clip.style.maskImage = '';
     }
     // Градиент поверх (затемнение, подсветка)
     const g = it.grad;
-    n._ov.style.background = g && g.on ? `linear-gradient(${num(g.a, 180)}deg, ${g.c1 || 'rgba(0,0,0,0)'}, ${g.c2 || '#000'})` : '';
+    n._ov.style.background = g && g.on ? `${g.radial ? 'radial-gradient(circle' : `linear-gradient(${num(g.a, 180)}deg`}, ${g.c1 || 'rgba(0,0,0,0)'}, ${g.c2 || '#000'})` : '';
     n._ov.style.opacity = g && g.on ? String(num(g.o, 100) / 100) : '';
     // Цвет — только содержимого
     const c = n._c;
@@ -618,7 +653,8 @@ const Compose = (() => {
     }
     // Фигуры (заливка или градиент; форма — clip-path), текст, часы
     if (SHAPES.has(it.type)) {
-      c.style.background = it.fill2 ? `linear-gradient(${num(it.fillA, 180)}deg, ${it.fill || '#3e8bff'}, ${it.fill2})` : it.fill || '#3e8bff';
+      const fo = op01(it.fillO, 100);
+      c.style.background = it.fill2 ? `${it.fillR ? 'radial-gradient(circle' : `linear-gradient(${num(it.fillA, 180)}deg`}, ${rgbaOf(it.fill || '#3e8bff', fo)}, ${rgbaOf(it.fill2, fo)})` : rgbaOf(it.fill || '#3e8bff', fo);
       c.style.clipPath = CLIPS[it.type] || '';
     } else { c.style.background = ''; c.style.clipPath = ''; }
     if (n._txt) paintText(n, it);
@@ -641,21 +677,66 @@ const Compose = (() => {
     t.style.fontSize = Math.max(4, num(it.size, 64)) + 'px';
     t.style.fontWeight = it.weight ? String(it.weight) : it.bold ? '700' : '400';
     t.style.fontStyle = it.italic ? 'italic' : '';
-    t.style.textDecoration = it.underline ? 'underline' : '';
+    t.style.textDecoration = [it.underline ? 'underline' : '', it.strike ? 'line-through' : ''].filter(Boolean).join(' ');
     t.style.textTransform = CASES[it.case] || '';
     t.style.lineHeight = num(it.lineH, 0) ? String(num(it.lineH, 0)) : '';
     t.style.letterSpacing = num(it.spacing, 0) ? num(it.spacing, 0) + 'px' : '';
-    t.style.color = it.color || '#ffffff';
-    t.style.background = it.bg || '';
-    t.style.borderRadius = it.bg && num(it.bgR, 0) ? num(it.bgR, 0) + 'px' : '';
+    // Подложка — на весь блок (под текстом), со своей непрозрачностью и скруглением
+    const c = n._c;
+    c.style.background = it.bg ? rgbaOf(it.bg, op01(it.bgO, 100)) : '';
+    c.style.borderRadius = it.bg && num(it.bgR, 0) ? num(it.bgR, 0) + 'px' : '';
     t.style.padding = num(it.pad, 0) + 'px';
     t.style.justifyContent = ALIGN[it.align] || 'center';
     t.style.alignItems = JUST[it.valign] || 'center';
     t.style.textAlign = it.align || 'center';
-    t.style.textShadow = it.tshadow ? `0 2px ${num(it.tshadowB, 8)}px ${it.tshadowC || 'rgba(0,0,0,.7)'}` : '';
-    t.style.webkitTextStroke = num(it.stroke, 0) ? `${num(it.stroke, 0)}px ${it.strokeC || '#000'}` : '';
+    // Тень текста: размытие, сдвиг, цвет, непрозрачность
+    const tsh = it.tshadow ? `${num(it.tshadowX, 0)}px ${num(it.tshadowY, 2)}px ${num(it.tshadowB, 8)}px ${it.tshadowC ? rgbaOf(it.tshadowC, op01(it.tshadowO, 100)) : 'rgba(0,0,0,.7)'}` : '';
+    // Градиент букв (надпись и часы): фон, видный только сквозь буквы; тень тогда — фильтром (иначе она легла бы поверх градиента)
+    const grad = (it.type === 'text' || it.type === 'clock') && it.tgrad && it.tgrad.on;
+    const col = rgbaOf(it.color || '#ffffff', op01(it.colorO, 100));
+    t.style.color = col;
+    t.style.backgroundImage = grad ? `${it.tgrad.radial ? 'radial-gradient(circle' : `linear-gradient(${num(it.tgrad.a, 90)}deg`}, ${col}, ${it.tgrad.c2 || '#ffd27a'})` : '';
+    t.style.webkitBackgroundClip = t.style.backgroundClip = grad ? 'text' : '';
+    t.style.webkitTextFillColor = grad ? 'transparent' : '';
+    t.style.textShadow = grad ? '' : tsh;
+    t.style.filter = grad && tsh ? `drop-shadow(${tsh})` : '';
+    t.style.webkitTextStroke = num(it.stroke, 0) ? `${num(it.stroke, 0)}px ${rgbaOf(it.strokeC || '#000000', op01(it.strokeO, 100))}` : '';
+    t.style.paintOrder = it.strokeOut ? 'stroke fill' : ''; // обводка снаружи букв (не съедает тонкие буквы)
     if (n._in) paintStage(n, true);
-    else t.textContent = it.type === 'clock' ? clockText(it) : it.text || '';
+    else if (it.type === 'text' && it.run && it.run.on) runText(n, t, it);
+    else { stopRun(n); t.textContent = it.type === 'clock' ? clockText(it) : it.text || ''; }
+  }
+
+  // Бегущая строка у надписи: влево (в одну строку) или вверх (титры); растворение у краёв
+  function stopRun(n) {
+    if (n._runA) n._runA.cancel();
+    n._runA = null; n._run = null; n._runKey = '';
+    if (n._txt) n._txt.style.webkitMaskImage = n._txt.style.maskImage = '';
+  }
+  function runText(n, t, it) {
+    const r = it.run;
+    const up = r.dir === 'up';
+    if (up) t.style.alignItems = 'center'; else t.style.justifyContent = 'center'; // движется от центра — так проще считать путь
+    const f = Math.max(0, Math.min(30, num(r.fade, 6)));
+    t.style.webkitMaskImage = t.style.maskImage = f ? `linear-gradient(${up ? 'to bottom' : 'to right'}, transparent, #000 ${f}%, #000 ${100 - f}%, transparent)` : '';
+    const key = JSON.stringify([it.text, up, r.speed, it.w, it.h, it.size, it.font, it.spacing, it.lineH, it.case, it.bold, it.weight, it.pad, it.italic]);
+    if (n._run && n._runKey === key && n._run.parentNode === t) return;
+    if (n._runA) n._runA.cancel();
+    n._runKey = key;
+    const s = make('span');
+    s.textContent = it.text || '';
+    s.style.cssText = up ? 'display:block;width:100%;white-space:pre-wrap;flex:none' : 'display:block;white-space:pre;flex:none';
+    t.replaceChildren(s);
+    n._run = s;
+    requestAnimationFrame(() => {
+      if (n._run !== s || !s.isConnected) return;
+      const box = up ? t.clientHeight : t.clientWidth;
+      const len = up ? s.offsetHeight : s.offsetWidth;
+      const d = (box + len) / 2;
+      const ax = up ? 'translateY' : 'translateX';
+      n._runA = s.animate([{ transform: `${ax}(${d}px)` }, { transform: `${ax}(${-d}px)` }],
+        { duration: Math.max(500, ((box + len) / Math.max(5, num(r.speed, 120))) * 1000), iterations: Infinity });
+    });
   }
 
   /* ----- Инфоблоки: текст слайда, заметки, сообщение, плейлист, счётчик, аккорды, таймеры, видео, запись ----- */

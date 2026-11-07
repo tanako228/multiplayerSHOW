@@ -1311,22 +1311,138 @@ function applyUiFx(p) {
   html.dataset.uiFont = UI_FONTS.some(([id]) => id === settings.uiFont) ? settings.uiFont : '';
   html.dataset.uiDeco = uiTheme().deco || ''; // особое оформление темы (свечение, «таблетки»)
   html.classList.toggle('ui-caps', !!settings.uiCaps);
+  auraRun(html.dataset.uiDeco === 'aura');
+}
+
+/* ===== Элементы управления тем «Жар»/«Неон» (deco 'aura'; CSS — index.html, «Элементы управления aura») =====
+   Ползунки: заливка до значения (--pct). Крутилки — круглая ручка-шкала вместо ползунка у Fade In/Out и плагинов
+   аудиоредактора: сам ползунок прячется (класс knobbed), крутилка двигает его и шлёт обычные input/change —
+   вся старая логика работает как была. Тянуть вверх/вправо — больше, колесо — по шагу, двойной щелчок — по умолчанию. */
+const KNOB_SEL = '.ae-prm input[type=range], .fade-box input[type=range]';
+let auraTimer = 0;
+const rangePct = (r) => { const min = +r.min || 0, max = r.max === '' ? 100 : +r.max; return max > min ? ((+r.value - min) / (max - min)) * 100 : 0; };
+function auraSyncRanges() {
+  for (const r of document.querySelectorAll('input[type=range]')) {
+    const p = rangePct(r).toFixed(1) + '%';
+    if (r.style.getPropertyValue('--pct') !== p) r.style.setProperty('--pct', p);
+    if (r.matches(KNOB_SEL) && !r.classList.contains('knobbed')) makeKnob(r);
+    if (r._knob) knobShow(r, p);
+  }
+}
+// Крутилка показывает значение: --pct — дуга шкалы, --ang — поворот ручки (−135°…+135°)
+function knobShow(r, p) {
+  const k = r._knob;
+  k.style.setProperty('--pct', p);
+  k.style.setProperty('--ang', (parseFloat(p) * 2.7 - 135).toFixed(1) + 'deg');
+  k.classList.toggle('off', r.disabled);
+}
+function auraRun(on) {
+  clearInterval(auraTimer);
+  auraTimer = 0;
+  if (!on) return;
+  auraSyncRanges();
+  auraTimer = setInterval(auraSyncRanges, 200); // перемотка песни и прочие значения меняются из кода — догоняем
+}
+document.addEventListener('input', (e) => {
+  const r = e.target;
+  if (r && r.type === 'range' && auraTimer) { const p = rangePct(r).toFixed(1) + '%'; r.style.setProperty('--pct', p); if (r._knob) knobShow(r, p); }
+}, true);
+
+function makeKnob(r) {
+  r.classList.add('knobbed');
+  const k = Object.assign(document.createElement('span'), { className: 'ui-knob', tabIndex: 0, title: 'Тяните вверх/вниз или крутите колесом; двойной щелчок — по умолчанию' });
+  k.setAttribute('role', 'slider');
+  if (r.getAttribute('aria-label')) k.setAttribute('aria-label', r.getAttribute('aria-label'));
+  k.innerHTML = '<i class="kn-ticks"></i><i class="kn-arc"></i><i class="kn-cap"><b></b></i>';
+  r._knob = k;
+  r.after(k);
+  const lim = () => ({ min: +r.min || 0, max: r.max === '' ? 100 : +r.max, step: r.step === 'any' ? 0 : +r.step || 1 });
+  const set = (v, fin) => {
+    const { min, max, step } = lim();
+    v = Math.max(min, Math.min(max, v));
+    if (step) v = Math.round((v - min) / step) * step + min;
+    v = +v.toFixed(4);
+    if (String(v) !== r.value) { r.value = v; r.dispatchEvent(new Event('input', { bubbles: true })); }
+    if (fin) r.dispatchEvent(new Event('change', { bubbles: true }));
+  };
+  k.addEventListener('pointerdown', (e) => {
+    if (r.disabled || e.button !== 0) return;
+    e.preventDefault();
+    k.focus();
+    k.setPointerCapture(e.pointerId);
+    const x0 = e.clientX, y0 = e.clientY, v0 = +r.value, { min, max } = lim();
+    const move = (ev) => set(v0 + ((y0 - ev.clientY + ev.clientX - x0) / 160) * (max - min));
+    const up = () => { k.removeEventListener('pointermove', move); k.removeEventListener('pointerup', up); k.removeEventListener('pointercancel', up); set(+r.value, true); };
+    k.addEventListener('pointermove', move);
+    k.addEventListener('pointerup', up);
+    k.addEventListener('pointercancel', up);
+  });
+  k.addEventListener('wheel', (e) => {
+    if (r.disabled) return;
+    e.preventDefault();
+    const { min, max, step } = lim();
+    set(+r.value + (e.deltaY < 0 ? 1 : -1) * (step || (max - min) / 100), true);
+  }, { passive: false });
+  k.addEventListener('keydown', (e) => {
+    const d = { ArrowUp: 1, ArrowRight: 1, ArrowDown: -1, ArrowLeft: -1 }[e.key];
+    if (!d) return;
+    e.preventDefault();
+    e.stopPropagation(); // стрелки не листают слайды
+    const { min, max, step } = lim();
+    set(+r.value + d * (step || (max - min) / 100), true);
+  });
+  k.addEventListener('dblclick', () => r.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))); // общий сброс из icons.js
+}
+
+// Карточка темы: маленький образец окна (c — 9 цветов по порядку UI_COLORS) и название
+function uiThemeCard(name, c, deco, pressed, onClick, title, sub) {
+  const b = Object.assign(document.createElement('button'), { className: 'ui-theme', title });
+  b.setAttribute('aria-pressed', String(pressed));
+  const pv = Object.assign(document.createElement('span'), { className: 'ui-th-pv' });
+  pv.style.cssText = `--a:${c[0]};--b:${c[1]};--c:${c[3]};--d:${c[4]};--e:${c[6]};--f:${c[7]}`;
+  if (deco) pv.dataset.deco = deco;
+  pv.innerHTML = '<i></i><i></i><i></i>';
+  const lab = Object.assign(document.createElement('span'), { textContent: name });
+  if (sub) lab.append(Object.assign(document.createElement('small'), { className: 'ui-th-sub', textContent: sub }));
+  b.append(pv, lab);
+  b.addEventListener('click', onClick);
+  return b;
+}
+
+// Пресеты настроек с оформлением (есть uiTheme) — тоже темы программы: карточкой в «Теме программы»
+const lookPresets = () => presets.filter((p) => p && p.settings && p.settings.uiTheme);
+// «Отпечаток» оформления — чтобы подсветить карточку пресета, который сейчас включён
+function lookKey(s) {
+  const c = s.uiColors || {};
+  return JSON.stringify([s.uiTheme || '', Object.keys(c).sort().map((k) => [k, c[k]]), UI_FX.map((k) => s[k] ?? null)]);
+}
+// Включить только оформление пресета (тема, свои цвета, эффекты) — без перезагрузки окна
+function applyLookPreset(p) {
+  const s = p.settings;
+  settings.uiTheme = s.uiTheme;
+  settings.uiColors = clone(s.uiColors || {});
+  for (const k of UI_FX) if (s[k] !== undefined) settings[k] = clone(s[k]);
+  saveSettings();
+  applyUiColors();
+  renderUiColors();
+  flashStatus(`Тема программы: «${p.name}» (пресет)`);
 }
 
 function renderUiColors() {
-  // Готовые темы — карточками с маленьким образцом окна
+  // Готовые темы и пресеты с оформлением — карточками с маленьким образцом окна
   const cards = $('uiThemes');
-  cards.replaceChildren(...UI_THEMES.map((t) => {
-    const b = Object.assign(document.createElement('button'), { className: 'ui-theme', title: `Тема программы «${t.name}»` });
-    b.setAttribute('aria-pressed', String(t.id === uiTheme().id));
-    const pv = Object.assign(document.createElement('span'), { className: 'ui-th-pv' });
-    pv.style.cssText = `--a:${t.c[0]};--b:${t.c[1]};--c:${t.c[3]};--d:${t.c[4]};--e:${t.c[6]};--f:${t.c[7]}`;
-    if (t.deco) pv.dataset.deco = t.deco;
-    pv.innerHTML = '<i></i><i></i><i></i>';
-    b.append(pv, Object.assign(document.createElement('span'), { textContent: t.name }));
-    b.addEventListener('click', () => setUiTheme(t.id));
-    return b;
-  }));
+  const curKey = lookKey(settings);
+  const mine = lookPresets();
+  const onPreset = mine.some((p) => lookKey(p.settings) === curKey);
+  cards.replaceChildren(
+    ...UI_THEMES.map((t) => uiThemeCard(t.name, t.c, t.deco, !onPreset && t.id === uiTheme().id, () => setUiTheme(t.id), `Тема программы «${t.name}»`)),
+    ...mine.map((p) => {
+      const t = UI_THEMES.find((x) => x.id === p.settings.uiTheme) || UI_THEMES[0];
+      const c = UI_COLORS.map(([v], i) => (p.settings.uiColors || {})[v] || t.c[i]);
+      return uiThemeCard(p.name, c, t.deco, lookKey(p.settings) === curKey, () => applyLookPreset(p),
+        `Пресет «${p.name}»: включить только его оформление (остальные настройки не меняются)`, 'пресет');
+    }),
+  );
   const box = $('uiColors');
   box.replaceChildren();
   const pal = uiPalette();
@@ -1438,6 +1554,7 @@ function renderPresets() {
       }));
     box.append(row);
   }
+  renderUiColors(); // пресеты с оформлением — ещё и карточками в «Теме программы»
 }
 
 $('presetSave').addEventListener('click', async () => {

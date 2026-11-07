@@ -1889,6 +1889,9 @@ function scFxSec(obj, apply) {
     r('Температура', 'temp', -100, 100, 1, 0, ''),
     r('Зелёный ↔ пурпур', 'tint', -100, 100, 1, 0, ''),
     r('Размытие', 'blur', 0, 40, 0.5, 0, ' px'),
+    r('Ч/б', 'gray', 0, 100, 1, 0, '%'),
+    r('Сепия', 'sepia', 0, 100, 1, 0, '%'),
+    scCheck('Инверсия цветов', !!fx.inv, (v) => set('inv', v)),
     scRow('', scBtn('Сбросить цвет', '', () => { obj.fx = {}; apply(true); })),
   ], false);
 }
@@ -2097,24 +2100,68 @@ function scTextRows(it, set) {
   const auto = info && it.auto !== false;
   return [
     scRow('Шрифт', scSelect(fonts.filter((f, i, a) => a.findIndex((x) => x[0] === f[0]) === i), it.font || 'segoe', (v) => set({ font: v }))),
-    scRow(auto ? 'Размер (наибольший)' : 'Размер', scNum(it.size || 64, (v) => set({ size: Math.max(4, v) }), { min: 4, max: 2000 }), scColor(it.color || '#ffffff', (v) => set({ color: v })),
+    scRow(auto ? 'Размер (наибольший)' : 'Размер', scNum(it.size || 64, (v) => set({ size: Math.max(4, v) }), { min: 4, max: 2000 }),
       scCheck('Ж', it.bold, (v) => set({ bold: v }), 'Жирный'), scCheck('К', it.italic, (v) => set({ italic: v }), 'Курсив')),
     info ? scRow('Размер — сам', scCheck('', auto, (v) => set({ auto: v }, true), 'Длинный текст уменьшается, чтобы влезть в блок'),
       auto ? scEl('span', 'te-sub', 'не меньше') : null, auto ? scNum(it.minSize || 14, (v) => set({ minSize: Math.max(4, v) }), { min: 4, max: 400 }) : null) : null,
-    scRow('Выравнивание', scSelect([['left', 'Слева'], ['center', 'По центру'], ['right', 'Справа']], it.align || 'center', (v) => set({ align: v })),
+    scRow('Выравнивание', scSelect([['left', 'Слева'], ['center', 'По центру'], ['right', 'Справа'], ['justify', 'По ширине']], it.align || 'center', (v) => set({ align: v })),
       scSelect([['top', 'Сверху'], ['middle', 'Посередине'], ['bottom', 'Снизу']], it.valign || 'middle', (v) => set({ valign: v }))),
-    scRow('Насыщенность', scSelect([['', 'Как «Ж»'], ['300', 'Тонкий'], ['400', 'Обычный'], ['500', 'Средний'], ['600', 'Полужирный'], ['700', 'Жирный'], ['900', 'Очень жирный']], String(it.weight || ''), (v) => set({ weight: v ? Number(v) : 0 })),
-      scCheck('Ч', it.underline, (v) => set({ underline: v }), 'Подчёркнутый')),
+    scRow('Насыщенность', scSelect([['', 'Как «Ж»'], ['100', 'Сверхтонкий'], ['200', 'Очень тонкий'], ['300', 'Тонкий'], ['400', 'Обычный'], ['500', 'Средний'], ['600', 'Полужирный'], ['700', 'Жирный'], ['800', 'Очень жирный'], ['900', 'Чёрный']], String(it.weight || ''), (v) => set({ weight: v ? Number(v) : 0 })),
+      scCheck('Ч', it.underline, (v) => set({ underline: v }), 'Подчёркнутый'), scCheck('З', it.strike, (v) => set({ strike: v }), 'Зачёркнутый')),
     scRow('Регистр', scSelect([['', 'Как написано'], ['upper', 'ВСЕ ЗАГЛАВНЫЕ'], ['lower', 'все строчные'], ['title', 'Каждое Слово С Заглавной']], it.case || '', (v) => set({ case: v }))),
     scRow('Межстрочный', scRange(it.lineH || 1.2, 0.7, 2.5, 0.05, (v) => set({ lineH: v }), '', 1.2), scEl('span', 'te-sub', 'буквы'), scNum(it.spacing || 0, (v) => set({ spacing: v }), { min: -20, max: 100 })),
-    scRow('Подложка', scCheck('', !!it.bg, (v) => set({ bg: v ? '#000000' : '' }, true)), it.bg ? scColor(it.bg, (v) => set({ bg: v })) : null,
-      scEl('span', 'te-sub', 'отступ'), scNum(it.pad || 0, (v) => set({ pad: Math.max(0, v) }), { min: 0, max: 400 }),
-      it.bg ? scEl('span', 'te-sub', 'скругл.') : null, it.bg ? scNum(it.bgR || 0, (v) => set({ bgR: Math.max(0, v) }), { min: 0, max: 400 }) : null),
-    scRow('Обводка', scNum(it.stroke || 0, (v) => set({ stroke: Math.max(0, v) }), { min: 0, max: 40 }), scColor(it.strokeC || '#000000', (v) => set({ strokeC: v }))),
-    scRow('Тень текста', scCheck('', it.tshadow, (v) => set({ tshadow: v }, true)),
-      it.tshadow ? scNum(it.tshadowB != null ? it.tshadowB : 8, (v) => set({ tshadowB: Math.max(0, v) }), { min: 0, max: 80 }) : null,
-      it.tshadow ? scColor(it.tshadowC || '#000000', (v) => set({ tshadowC: v })) : null),
+    scRow('Поля внутри', scNum(it.pad || 0, (v) => set({ pad: Math.max(0, v) }), { min: 0, max: 400 }), scEl('span', 'te-sub', 'px')),
   ];
+}
+
+// Цвет букв, градиент, обводка, тень, подложка, бегущая строка — как в редакторе тем
+function scTextLookSecs(it, set) {
+  const gradOk = it.type === 'text' || it.type === 'clock';
+  const tg = it.tgrad || {};
+  const tgSet = (k, v, re) => { scSub(it, 'tgrad', k, v); scSceneTouch(re); };
+  const run = it.run || {};
+  const runSet = (k, v, re) => { scSub(it, 'run', k, v); scSceneTouch(re); };
+  const op = (v, on) => scRange(v != null ? v : 100, 0, 100, 1, on, '%', 100);
+  const secs = [
+    scSec('Цвет и заливка текста', [
+      scRow('Цвет', scColor(it.color || '#ffffff', (v) => set({ color: v })), op(it.colorO, (v) => set({ colorO: v }))),
+      gradOk ? scRow('Градиент', scCheck('', !!tg.on, (v) => tgSet('on', v, true), 'Буквы переливаются от «Цвета» ко второму цвету')) : null,
+      gradOk && tg.on ? scRow('Второй цвет', scColor(tg.c2 || '#ffd27a', (v) => tgSet('c2', v)), scCheck('из центра', !!tg.radial, (v) => tgSet('radial', v, true))) : null,
+      gradOk && tg.on && !tg.radial ? scRow('Угол', scRange(tg.a != null ? tg.a : 90, 0, 360, 1, (v) => tgSet('a', v), '°', 90)) : null,
+    ], true),
+    scSec('Обводка текста', [
+      scRow('Толщина', scRange(it.stroke || 0, 0, 40, 0.5, (v) => set({ stroke: v }), ' px', 0)),
+      scRow('Цвет', scColor(it.strokeC || '#000000', (v) => set({ strokeC: v })), op(it.strokeO, (v) => set({ strokeO: v }))),
+      scCheck('Снаружи букв (не делает буквы тоньше)', !!it.strokeOut, (v) => set({ strokeOut: v })),
+    ], (it.stroke || 0) > 0),
+    scSec('Тень текста', [
+      scRow('', scCheck('тень', !!it.tshadow, (v) => set({ tshadow: v }, true))),
+      ...(it.tshadow ? [
+        scRow('Цвет', scColor(it.tshadowC || '#000000', (v) => set({ tshadowC: v })), op(it.tshadowO != null ? it.tshadowO : 70, (v) => set({ tshadowO: v }))),
+        scRow('Размытие', scRange(it.tshadowB != null ? it.tshadowB : 8, 0, 80, 1, (v) => set({ tshadowB: v }), ' px', 8)),
+        scRow('Сдвиг X, Y', scNum(it.tshadowX || 0, (v) => set({ tshadowX: v }), { min: -200, max: 200 }), scNum(it.tshadowY != null ? it.tshadowY : 2, (v) => set({ tshadowY: v }), { min: -200, max: 200 })),
+      ] : []),
+    ], !!it.tshadow),
+    scSec('Подложка под текстом', [
+      scRow('', scCheck('подложка', !!it.bg, (v) => set({ bg: v ? '#000000' : '' }, true))),
+      ...(it.bg ? [
+        scRow('Цвет', scColor(it.bg, (v) => set({ bg: v })), op(it.bgO, (v) => set({ bgO: v }))),
+        scRow('Скругление', scNum(it.bgR || 0, (v) => set({ bgR: Math.max(0, v) }), { min: 0, max: 400 }), scEl('span', 'te-sub', 'px')),
+        scNote('Размыть то, что под подложкой, — «Эффекты фона под элементом» ниже.'),
+      ] : []),
+    ], !!it.bg),
+  ];
+  if (it.type === 'text') {
+    secs.push(scSec('Бегущая строка', [
+      scRow('', scCheck('текст бежит', !!run.on, (v) => runSet('on', v, true))),
+      ...(run.on ? [
+        scRow('Куда', scSelect([['left', '← Влево (в одну строку)'], ['up', '↑ Вверх (титры)']], run.dir || 'left', (v) => runSet('dir', v))),
+        scRow('Скорость', scRange(run.speed || 120, 10, 1000, 10, (v) => runSet('speed', v), ' px/с', 120)),
+        scRow('Растворение', scRange(run.fade != null ? run.fade : 6, 0, 30, 1, (v) => runSet('fade', v), '%', 6)),
+      ] : []),
+    ], !!run.on));
+  }
+  return secs;
 }
 
 // Настройки инфоблоков сценического экрана
@@ -2264,11 +2311,15 @@ function scItemInsp(it, sc) {
   } else if (SC_ITEMS[it.type].shape) {
     c.push(scRow('Фигура', scSelect(Object.entries(SC_ITEMS).filter(([, x]) => x.shape).map(([k, x]) => [k, x.name]), it.type, (v) => set({ type: v }, true))));
     c.push(scRow('Цвет', scColor(it.fill || '#3e8bff', (v) => set({ fill: v })), scCheck('Градиент', !!it.fill2, (v) => set({ fill2: v ? '#000000' : '' }, true))));
-    if (it.fill2) c.push(scRow('Второй цвет', scColor(it.fill2, (v) => set({ fill2: v })), scNum(it.fillA != null ? it.fillA : 180, (v) => set({ fillA: v }), { min: 0, max: 360 }), scEl('span', 'te-sub', '°')));
+    if (it.fill2) {
+      c.push(scRow('Второй цвет', scColor(it.fill2, (v) => set({ fill2: v })), scCheck('из центра', !!it.fillR, (v) => set({ fillR: v }, true))));
+      if (!it.fillR) c.push(scRow('Угол', scRange(it.fillA != null ? it.fillA : 180, 0, 360, 1, (v) => set({ fillA: v }), '°', 180)));
+    }
+    c.push(scRow('Непрозрачность заливки', scRange(it.fillO != null ? it.fillO : 100, 0, 100, 1, (v) => set({ fillO: v }), '%', 100)));
     if (it.type === 'line') c.push(scNote('Толщина линии — высота элемента. Наклон — поворот (кружок над рамкой).'));
   }
   out.push(scSec('Содержимое', c));
-  if (SC_TEXTY.includes(it.type) || ((it.type === 'cur' || it.type === 'next') && it.plain)) out.push(scSec('Текст', scTextRows(it, set)));
+  if (SC_TEXTY.includes(it.type) || ((it.type === 'cur' || it.type === 'next') && it.plain)) out.push(scSec('Текст', scTextRows(it, set)), ...scTextLookSecs(it, set));
   out.push(scSec('Положение и размер', [
     scRow('X, Y', scNum(it.x, (v) => set({ x: v })), scNum(it.y, (v) => set({ y: v }))),
     scRow('Ширина, высота', scNum(it.w, (v) => set({ w: Math.max(1, v) }), { min: 1 }), scNum(it.h, (v) => set({ h: Math.max(1, v) }), { min: 1 })),
@@ -2289,24 +2340,68 @@ function scItemInsp(it, sc) {
       scRow('', scBtn('Без обрезки', '', () => set({ crop: {} }, true))),
     ], !!(cr.l || cr.r || cr.t || cr.b)));
   }
-  const sh = it.shadow || {};
-  const g = it.grad || {};
-  const bd = it.border || {};
-  out.push(scSec('Вид', [
-    scRow('Прозрачность', scRange(it.opacity != null ? it.opacity : 100, 0, 100, 1, (v) => set({ opacity: v }), '%', 100)),
-    scRow('Наложение', scSelect(Compose.BLENDS.map((b) => [b, ({ normal: 'Обычное', multiply: 'Умножение', screen: 'Экран', overlay: 'Перекрытие', darken: 'Темнее', lighten: 'Светлее', difference: 'Разница', 'soft-light': 'Мягкий свет', 'hard-light': 'Жёсткий свет', luminosity: 'Яркость', color: 'Цветность' })[b] || b]), it.blend || 'normal', (v) => set({ blend: v }))),
-    scRow('Маска', scSelect([['none', 'Нет'], ['ellipse', 'Круг / эллипс'], ['fade', 'Мягкие края']], it.mask || 'none', (v) => set({ mask: v }, true))),
-    it.mask === 'fade' ? scRow('Ширина края', scRange(it.feather || 12, 1, 50, 1, (v) => set({ feather: v }), '%', 12)) : scRow('Скругление', scNum(it.radius || 0, (v) => set({ radius: Math.max(0, v) }), { min: 0, max: 2000 })),
-    scRow('Рамка', scNum(bd.w || 0, (v) => { scSub(it, 'border', 'w', Math.max(0, v)); scSceneTouch(false); }, { min: 0, max: 200 }), scColor(bd.c || '#ffffff', (v) => { scSub(it, 'border', 'c', v); scSceneTouch(false); })),
-    scRow('Тень', scNum(sh.blur || 0, (v) => { scSub(it, 'shadow', 'blur', Math.max(0, v)); scSceneTouch(false); }, { min: 0, max: 300 }),
-      scNum(sh.x || 0, (v) => { scSub(it, 'shadow', 'x', v); scSceneTouch(false); }), scNum(sh.y || 0, (v) => { scSub(it, 'shadow', 'y', v); scSceneTouch(false); }),
-      scColor(sh.c || '#000000', (v) => { scSub(it, 'shadow', 'c', v); scSceneTouch(false); })),
-    scNote('Тень: размытие, сдвиг X, Y, цвет.'),
-    scRow('Градиент поверх', scCheck('', !!g.on, (v) => { scSub(it, 'grad', 'on', v); scSceneTouch(true); })),
-    g.on ? scRow('Цвета, угол', scColor(g.c1 || '#000000', (v) => { scSub(it, 'grad', 'c1', v); scSceneTouch(false); }), scColor(g.c2 || '#000000', (v) => { scSub(it, 'grad', 'c2', v); scSceneTouch(false); }),
-      scNum(g.a != null ? g.a : 180, (v) => { scSub(it, 'grad', 'a', v); scSceneTouch(false); }, { min: 0, max: 360 })) : null,
-    g.on ? scRow('Сила', scRange(g.o != null ? g.o : 100, 0, 100, 1, (v) => { scSub(it, 'grad', 'o', v); scSceneTouch(false); }, '%', 100)) : null,
-  ], false));
+  out.push(...scLookSecs(it, set));
   out.push(scFxSec(it, (re) => scSceneTouch(re)));
   return out;
+}
+
+// Вид элемента — как в редакторе тем: прозрачность и наложение, маска, рамка, тень, внешнее свечение, мягкие края,
+// градиент поверх, эффекты фона под элементом (compose.js: applyNode)
+function scLookSecs(it, set) {
+  const sub = (key) => (k, v, re) => { scSub(it, key, k, v); scSceneTouch(re); };
+  const sh = it.shadow || {}; const shS = sub('shadow');
+  const g = it.grad || {}; const gS = sub('grad');
+  const bd = it.border || {}; const bdS = sub('border');
+  const gl = it.glow || {}; const glS = sub('glow');
+  const bk = it.back || {}; const bkS = sub('back');
+  const op = (v, on, d = 100) => scRange(v != null ? v : d, 0, 100, 1, on, '%', d);
+  const shadowOn = (sh.blur || 0) + Math.abs(sh.x || 0) + Math.abs(sh.y || 0) > 0;
+  const backOn = !!(bk.blur || bk.inv || (bk.s != null && bk.s !== 100) || (bk.b != null && bk.b !== 100));
+  return [
+    scSec('Вид', [
+      scRow('Прозрачность', op(it.opacity, (v) => set({ opacity: v }))),
+      scRow('Наложение', scSelect(Compose.BLENDS.map((b) => [b, ({ normal: 'Обычное', multiply: 'Умножение', screen: 'Экран', overlay: 'Перекрытие', darken: 'Темнее', lighten: 'Светлее', 'color-dodge': 'Осветление основы', 'color-burn': 'Затемнение основы', difference: 'Разница', exclusion: 'Исключение', 'soft-light': 'Мягкий свет', 'hard-light': 'Жёсткий свет', hue: 'Цветовой тон', saturation: 'Насыщенность', luminosity: 'Яркость', color: 'Цветность' })[b] || b]), it.blend || 'normal', (v) => set({ blend: v }))),
+      scRow('Маска', scSelect([['none', 'Нет'], ['ellipse', 'Круг / эллипс'], ['fade', 'Мягкие края (прямоугольник)'], ['vignette', 'Виньетка (по овалу)']], it.mask || 'none', (v) => set({ mask: v }, true))),
+      it.mask === 'fade' || it.mask === 'vignette' ? scRow('Ширина края', scRange(it.feather || 12, 1, 50, 1, (v) => set({ feather: v }), '%', 12)) : null,
+      it.mask !== 'ellipse' && it.type !== 'ellipse' ? scRow('Скругление', scNum(it.radius || 0, (v) => set({ radius: Math.max(0, v) }), { min: 0, max: 2000 }), scEl('span', 'te-sub', 'px')) : null,
+    ], false),
+    scSec('Рамка', [
+      scRow('Толщина', scRange(bd.w || 0, 0, 100, 1, (v) => bdS('w', v), ' px', 0)),
+      scRow('Цвет', scColor(bd.c || '#ffffff', (v) => bdS('c', v)), op(bd.op, (v) => bdS('op', v))),
+      scRow('Линия', scSelect([['solid', 'Сплошная'], ['dashed', 'Штрихи'], ['dotted', 'Точки'], ['double', 'Двойная']], bd.s || 'solid', (v) => bdS('s', v))),
+    ], (bd.w || 0) > 0),
+    scSec('Тень', [
+      scRow('Размытие', scRange(sh.blur || 0, 0, 300, 1, (v) => shS('blur', v), ' px', 0)),
+      scRow('Сдвиг X, Y', scNum(sh.x || 0, (v) => shS('x', v), { min: -2000, max: 2000 }), scNum(sh.y || 0, (v) => shS('y', v), { min: -2000, max: 2000 })),
+      scRow('Цвет', scColor(sh.c || '#000000', (v) => shS('c', v)), op(sh.op, (v) => shS('op', v), sh.c ? 100 : 60)),
+      scRow('', scBtn('Без тени', '', () => set({ shadow: {} }, true))),
+    ], shadowOn),
+    scSec('Внешнее свечение', [
+      scRow('', scCheck('свечение', !!gl.on, (v) => glS('on', v, true), 'Сияние вокруг всего, что нарисовано (как Outer Glow в Photoshop)')),
+      ...(gl.on ? [
+        scRow('Цвет', scColor(gl.c || '#ffd27a', (v) => glS('c', v)), op(gl.op, (v) => glS('op', v), 90)),
+        scRow('Размер', scRange(gl.size != null ? gl.size : 20, 1, 200, 1, (v) => glS('size', v), ' px', 20)),
+        scRow('Сила', scRange(gl.power || 2, 1, 4, 1, (v) => glS('power', v), '', 2)),
+      ] : []),
+    ], !!gl.on),
+    scSec('Мягкие края', [
+      scRow('Размытие краёв', scRange(it.soft || 0, 0, 40, 0.5, (v) => set({ soft: v }), ' px', 0)),
+      scNote('Весь элемент становится мягким, с размытыми краями. Плавно растворить края картинки — «Маска» → «Мягкие края» или «Виньетка».'),
+    ], (it.soft || 0) > 0),
+    scSec('Градиент поверх', [
+      scRow('', scCheck('градиент', !!g.on, (v) => gS('on', v, true), 'Затемнение или подсветка поверх содержимого')),
+      ...(g.on ? [
+        scRow('Цвета', scColor(g.c1 || '#000000', (v) => gS('c1', v)), scColor(g.c2 || '#000000', (v) => gS('c2', v)), scCheck('из центра', !!g.radial, (v) => gS('radial', v, true))),
+        g.radial ? null : scRow('Угол', scRange(g.a != null ? g.a : 180, 0, 360, 1, (v) => gS('a', v), '°', 180)),
+        scRow('Сила', op(g.o, (v) => gS('o', v))),
+      ] : []),
+    ], !!g.on),
+    scSec('Эффекты фона под элементом', [
+      scNote('Действуют на то, что ПОД элементом: видео, фото, камеру. Например, прямоугольник без заливки с размытием — видео размыто только за текстом.'),
+      scRow('Размытие', scRange(bk.blur || 0, 0, 60, 0.5, (v) => bkS('blur', v), ' px', 0)),
+      scRow('Насыщенность', scRange(bk.s != null ? bk.s : 100, 0, 300, 1, (v) => bkS('s', v), '%', 100)),
+      scRow('Яркость', scRange(bk.b != null ? bk.b : 100, 0, 200, 1, (v) => bkS('b', v), '%', 100)),
+      scCheck('Инверсия цветов', !!bk.inv, (v) => bkS('inv', v)),
+    ], backOn),
+  ];
 }
