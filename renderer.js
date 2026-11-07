@@ -634,14 +634,26 @@ document.querySelectorAll('.splitter').forEach((sp) => {
   });
 });
 
-// Монитор узнаётся по id, а если Windows его сменила (перезагрузка, другой разъём) — по имени и разрешению (dispKey),
-// иначе — единственный дополнительный монитор. Так выходы экранов и сцен не «слетают» при запуске
-const dispKey = (d) => (d ? `${d.name || ''}|${d.pw || d.bw}x${d.ph || d.bh}` : '');
-function dispMatch(id, key) {
-  if (!displays.length || displays.some((d) => d.id === Number(id))) return null; // на месте или мониторов нет
-  const name = String(key || '').split('|')[0];
+// Монитор узнаётся по месту (как в Windows: Параметры → Дисплей), имени и разрешению — dispKey «имя|1920x1080@x,y».
+// id у Windows ненадёжный: после перезагрузки два одинаковых монитора могут поменяться id. Порядок поиска:
+// то же место и разрешение → тот же id → то же имя и разрешение → то же имя → единственный дополнительный монитор
+const dispKey = (d) => (d ? `${d.name || ''}|${d.pw || d.bw}x${d.ph || d.bh}@${d.bx || 0},${d.by || 0}` : '');
+function dispFind(id, key) {
+  if (!displays.length) return null;
+  const [nm = '', size = '', pos = ''] = String(key || '').split(/[|@]/);
+  const sz = (d) => `${d.pw || d.bw}x${d.ph || d.bh}`;
+  const at = (d) => `${d.bx || 0},${d.by || 0}`;
   const ext = displays.filter((d) => !d.primary);
-  return (key && displays.find((d) => dispKey(d) === key)) || (name && displays.find((d) => d.name === name)) || (ext.length === 1 ? ext[0] : null);
+  return (pos && (displays.find((d) => at(d) === pos && sz(d) === size && d.name === nm) || displays.find((d) => at(d) === pos && sz(d) === size)))
+    || displays.find((d) => d.id === Number(id))
+    || (size && displays.find((d) => d.name === nm && sz(d) === size))
+    || (nm && displays.find((d) => d.name === nm))
+    || (ext.length === 1 ? ext[0] : null);
+}
+// Другой монитор вместо сохранённого id (null — id верный или найти нечего)
+function dispMatch(id, key) {
+  const d = dispFind(id, key);
+  return d && d.id !== Number(id) ? d : null;
 }
 // Переписать сохранённые мониторы выходов (lib.screens, lib.scenes) на те, что подключены сейчас; запомнить имя монитора
 function dispFix() {
@@ -661,13 +673,61 @@ function dispFix() {
   if (typeof scSend === 'function') scSend();
 }
 
+// Выбор монитора по схеме, как в Windows (Параметры → Дисплей): прямоугольники на своих местах, щелчок — выбрать.
+// cur — id выбранного сейчас, pick(id) — что делать с выбором. «Показать номера» — номер крупно на каждом мониторе
+function dispPick(cur, pick) {
+  let dlg = $('dispDialog');
+  if (!dlg) {
+    dlg = document.createElement('dialog');
+    dlg.id = 'dispDialog';
+    dlg.innerHTML = `<form method="dialog"><div class="dlg-head"><h2>Выберите монитор</h2></div>
+      <div class="dlg-body"><p class="hint" style="margin:0 0 10px">Расположение — как в Windows (Параметры → Система → Дисплей). Не знаете, где какой, — нажмите «Показать номера».</p>
+      <div class="disp-map"></div></div>
+      <div class="dlg-foot"><button type="button" class="disp-ident" data-icon="screen">Показать номера</button><span class="spacer"></span><button value="cancel">Отмена</button></div></form>`;
+    document.body.append(dlg);
+    dlg.querySelector('.disp-ident').addEventListener('click', () => window.api.identifyDisplays());
+    if (typeof Icons !== 'undefined') Icons.apply(dlg);
+  }
+  const map = dlg.querySelector('.disp-map');
+  map.replaceChildren();
+  const x0 = Math.min(...displays.map((d) => d.bx || 0)), y0 = Math.min(...displays.map((d) => d.by || 0));
+  const x1 = Math.max(...displays.map((d) => (d.bx || 0) + d.bw)), y1 = Math.max(...displays.map((d) => (d.by || 0) + d.bh));
+  const k = Math.min(640 / Math.max(1, x1 - x0), 300 / Math.max(1, y1 - y0));
+  map.style.width = Math.round((x1 - x0) * k) + 'px';
+  map.style.height = Math.round((y1 - y0) * k) + 'px';
+  for (const d of displays) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'disp-box' + (d.id === Number(cur) ? ' on' : '');
+    Object.assign(b.style, { left: ((d.bx || 0) - x0) * k + 'px', top: ((d.by || 0) - y0) * k + 'px', width: d.bw * k + 'px', height: d.bh * k + 'px' });
+    // Кто уже выводит на этот монитор
+    const busy = typeof scDisplayBusy === 'function' && lib ? scDisplayBusy(d.id, '', -1) : [];
+    const n = document.createElement('b');
+    n.textContent = d.n || '';
+    const t = document.createElement('span');
+    t.textContent = [d.name, `${d.pw}×${d.ph}`, d.primary ? 'основной — окно программы' : '', busy.length ? 'занят: ' + busy.join(', ') : ''].filter(Boolean).join('\n');
+    b.append(n, t);
+    b.title = d.label;
+    b.addEventListener('click', () => { dlg.close(); pick(d.id); });
+    map.append(b);
+  }
+  if (!displays.length) map.textContent = 'Мониторов нет';
+  dlg.showModal();
+}
+
 function fillDisplays(list) {
   displays = list;
   const keep = Number(displaySel.value) || Number(settings.outDisplay);
   displaySel.replaceChildren(...list.map((d) => Object.assign(document.createElement('option'), { value: d.id, textContent: d.label })));
-  const stillThere = list.find((d) => d.id === keep) || dispMatch(keep || -1, settings.outDisplayKey);
+  const stillThere = dispFind(keep || -1, settings.outDisplayKey);
   const external = list.find((d) => !d.primary);
   displaySel.value = (stillThere || external || list[0]).id;
+  // Нашёлся свой монитор — запомнить его новый id и место (выбранный «на замену» не запоминаем: вернётся свой — встанет он)
+  if (stillThere && (settings.outDisplay !== stillThere.id || settings.outDisplayKey !== dispKey(stillThere))) {
+    settings.outDisplay = stillThere.id;
+    settings.outDisplayKey = dispKey(stillThere);
+    saveSettings();
+  }
   try { dispFix(); } catch { /* библиотека ещё не загружена — dispFix позовёт scInit */ }
   sendOutputSettings();
   layoutPreview();
@@ -3114,6 +3174,13 @@ if (window.api.onAskClose) window.api.onAskClose(() => {
   const dlg = $('closeDialog');
   if (dlg.open) return;
   dlg.returnValue = '';
+  // Скачано обновление — оно ставится после закрытия; пока ставится, ярлык программы не работает
+  const u = typeof updLast !== 'undefined' ? updLast : null; // tools.js
+  const upd = $('closeUpd');
+  if (upd) {
+    upd.hidden = !(u && u.state === 'ready');
+    if (!upd.hidden) upd.textContent = `После закрытия установится новая версия ${u.version || ''}. Подождите около минуты и только потом запускайте программу снова.`;
+  }
   dlg.showModal();
   dlg.addEventListener('close', async () => {
     if (dlg.returnValue !== 'ok') return;

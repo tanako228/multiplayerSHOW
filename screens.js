@@ -1844,11 +1844,11 @@ function scMainRows() {
   if (res !== 'auto' && res !== 'custom' && !opts.some((o) => o[0] === res)) opts.push([res, res.replace('x', '×') + ' — больше монитора']);
   opts.push(['custom', 'Своё…']);
   const rows = [
-    scRow('Монитор', scSelect(displays.length ? displays.map((x) => [String(x.id), x.label]) : [['', 'Мониторов нет']], String(displaySel.value || ''), (v) => {
-      displaySel.value = v;
-      displaySel.dispatchEvent(new Event('change'));
-      scRenderInsp();
-    })),
+    (() => {
+      const set = (v) => { displaySel.value = v; displaySel.dispatchEvent(new Event('change')); scRenderInsp(); };
+      return scRow('Монитор', scSelect(displays.length ? displays.map((x) => [String(x.id), x.label]) : [['', 'Мониторов нет']], String(displaySel.value || ''), set),
+        scBtn('Схема', 'screen', () => dispPick(displaySel.value, (id) => set(String(id))), 'Выбрать монитор по расположению, как в Windows'));
+    })(),
     d && d.primary ? scNote('Это главный монитор — на нём окно программы. Вывод закроет его на весь экран.', true) : null,
     scRow('Вывод', scOutBtn(mainOutOn(), () => mainOutSet(!mainOutOn()))),
     ...scGroupRows(scScreen('main'), false, (v) => scScreenSet(scScreen('main'), { group: v }, true)),
@@ -1932,7 +1932,9 @@ function scOutputRows(sid, name, outs, put, added) {
     card.append(head);
     if (o.kind === 'display') {
       const opts = displays.map((d) => [String(d.id), d.label + (d.hz ? ` · ${d.hz} Гц` : '')]);
-      card.append(scRow('Монитор', scSelect(opts.length ? opts : [['', 'Мониторов нет']], String(o.display || ''), (v) => setO({ display: Number(v), dkey: dispKey(displays.find((d) => d.id === Number(v))) }))));
+      const setD = (v) => setO({ display: Number(v), dkey: dispKey(displays.find((d) => d.id === Number(v))) });
+      card.append(scRow('Монитор', scSelect(opts.length ? opts : [['', 'Мониторов нет']], String(o.display || ''), setD),
+        scBtn('Схема', 'screen', () => dispPick(o.display, setD), 'Выбрать монитор по расположению, как в Windows')));
       const busy = scDisplayBusy(Number(o.display), sid, i);
       if (busy.length) card.append(scNote('Этот монитор уже занят: ' + busy.join(', ') + '. Окна лягут друг на друга.', true));
       if ((displays.find((d) => d.id === Number(o.display)) || {}).primary) card.append(scNote('Это главный монитор — на нём окно программы. Выход закроет его на весь экран.', true));

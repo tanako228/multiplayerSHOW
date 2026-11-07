@@ -22,6 +22,7 @@
 ## Выпуск и обновление
 - Открытый GitHub. `выпустить.cmd` → `npm version patch` + push метки `v*` → `.github/workflows/release.yml` собирает NSIS-установщик (electron-builder, настройки в `package.json` → `build`) и кладёт в Releases. Локально установщик не собрать: на этом ПК Smart App Control блокирует неподписанный exe.
 - Обновление — `electron-updater` в main.js (`update:*`), только в установленной программе; ставится при закрытии или кнопкой. Инструкция — `ИНСТРУКЦИЯ-GITHUB.md`.
+- `APP_ID` в main.js = `build.appId` (иначе ломаются закреплённые ярлыки); значок для Windows — из exe, не из `app.asar`; старые ярлыки чинит `fixShortcuts()`.
 
 ## Данные (не терять!)
 - `%APPDATA%\church-presenter`: `library.json` (items, libraries, playlists, themes, themesLive, macros, screens, scenes, timers, verseSplits…), `bibles/`, `fonts/`, `images/`, `media/`, `slides/`, `thumbs/` (кэш).

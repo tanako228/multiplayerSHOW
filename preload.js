@@ -33,6 +33,7 @@ if (/\/index\.html$/i.test(location.pathname)) {
 
 contextBridge.exposeInMainWorld('api', {
   getDisplays: () => ipcRenderer.invoke('displays:get'),
+  identifyDisplays: () => ipcRenderer.invoke('displays:identify'), // большие номера на мониторах на 3 с
   pickMedia: (opts) => ipcRenderer.invoke('media:pick', opts),
   describeFiles: (paths, opts) => ipcRenderer.invoke('media:describe', paths, opts),
   pathForFile: (file) => webUtils.getPathForFile(file),

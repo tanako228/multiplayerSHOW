@@ -24,8 +24,13 @@ const ALL_EXT = Object.values(EXT).flat();
 const APP_NAME = 'multiplayerSHOW';
 const APP_ICON = path.join(__dirname, 'brand', 'icon.ico'); // значок окна и панели задач
 const SHORT_NAME = 'MP Show'; // короткое имя — заголовок окна и подпись в панели задач Windows
+// Имя программы для Windows (AppUserModelID) — строго как build.appId в package.json: под ним установщик
+// создаёт ярлыки в «Пуске» и на рабочем столе. Было другое ('multiplayerSHOW.app') — Windows считала окно
+// чужим для ярлыков: закреплённая кнопка жила отдельно и ломалась после обновления (см. fixShortcuts).
+// При запуске через npm start — своё имя, чтобы не смешиваться с установленной программой.
+const APP_ID = app.isPackaged ? 'org.multiplayershow.app' : 'org.multiplayershow.dev';
 app.setName(APP_NAME);
-if (process.platform === 'win32') app.setAppUserModelId('multiplayerSHOW.app');
+if (process.platform === 'win32') app.setAppUserModelId(APP_ID);
 app.setPath('userData', path.join(app.getPath('appData'), 'church-presenter'));
 
 // Только одна копия программы: две копии делят одно хранилище настроек (localStorage),
@@ -134,21 +139,60 @@ ipcMain.on('win:refocus', (e, strong) => fixFocus(BrowserWindow.fromWebContents(
 
 /* ---------- Мониторы ---------- */
 
+// Номер монитора — по расположению (слева направо, сверху вниз), а не по порядку Windows:
+// после перезагрузки Windows может поменять одинаковые мониторы местами в списке, а расположение у них то же
 function listDisplays() {
   const primaryId = screen.getPrimaryDisplay().id;
-  return screen.getAllDisplays().map((d, i) => ({
-    id: d.id,
-    name: d.label || '', // имя монитора из Windows («HP E232») — по нему узнаём монитор, если Windows сменила id
-    primary: d.id === primaryId,
-    bw: d.bounds.width,
-    bh: d.bounds.height,
-    pw: Math.round(d.size.width * d.scaleFactor), // настоящее разрешение монитора (пиксели) — больше на него не выводим
-    ph: Math.round(d.size.height * d.scaleFactor),
-    hz: Math.round(d.displayFrequency || 0), // частота обновления (менять её умеет только Windows)
-    label: `Монитор ${i + 1}: ${Math.round(d.size.width * d.scaleFactor)}×${Math.round(d.size.height * d.scaleFactor)}` +
-      (d.id === primaryId ? ' (основной)' : ''),
-  }));
+  const all = screen.getAllDisplays();
+  const order = [...all].sort((a, b) => a.bounds.x - b.bounds.x || a.bounds.y - b.bounds.y);
+  return all.map((d) => {
+    const n = order.indexOf(d) + 1;
+    const pw = Math.round(d.size.width * d.scaleFactor); // настоящее разрешение монитора (пиксели) — больше на него не выводим
+    const ph = Math.round(d.size.height * d.scaleFactor);
+    return {
+      id: d.id,
+      n,
+      name: d.label || '', // имя монитора из Windows («HP E232»)
+      primary: d.id === primaryId,
+      bx: d.bounds.x, // где стоит монитор (как в Windows: Параметры → Дисплей) — по этому и узнаём монитор
+      by: d.bounds.y,
+      bw: d.bounds.width,
+      bh: d.bounds.height,
+      pw,
+      ph,
+      hz: Math.round(d.displayFrequency || 0), // частота обновления (менять её умеет только Windows)
+      label: `Монитор ${n}: ${d.label ? d.label + ', ' : ''}${pw}×${ph}` + (d.id === primaryId ? ' (основной)' : ''),
+    };
+  }).sort((a, b) => a.n - b.n);
 }
+
+// «Показать номера»: на 3 секунды большой номер на каждом мониторе (окно без фокуса, поверх всего)
+let identWins = [];
+ipcMain.handle('displays:identify', () => {
+  for (const w of identWins) if (!w.isDestroyed()) w.close();
+  const list = listDisplays();
+  identWins = screen.getAllDisplays().map((d) => {
+    const it = list.find((x) => x.id === d.id) || {};
+    const w = new BrowserWindow({
+      x: d.bounds.x, y: d.bounds.y, width: d.bounds.width, height: d.bounds.height,
+      frame: false, transparent: true, resizable: false, movable: false, focusable: false,
+      skipTaskbar: true, alwaysOnTop: true, show: false, hasShadow: false,
+      webPreferences: { contextIsolation: true, sandbox: true },
+    });
+    w.setAlwaysOnTop(true, 'screen-saver');
+    w.setIgnoreMouseEvents(true);
+    const esc = (t) => String(t).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+    const html = `<!doctype html><meta charset="utf-8"><style>html,body{margin:0;height:100%;background:transparent;overflow:hidden}
+      div{position:absolute;left:40px;bottom:40px;padding:20px 44px;border-radius:24px;background:rgba(0,0,0,.82);color:#fff;
+      font:600 28px Segoe UI,sans-serif;border:4px solid #4da3ff}b{display:block;font-size:180px;line-height:1}</style>
+      <div><b>${it.n || ''}</b>${esc(it.name || 'Монитор')} · ${it.pw}×${it.ph}${it.primary ? ' · основной' : ''}</div>`;
+    w.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html));
+    w.once('ready-to-show', () => { if (!w.isDestroyed()) w.showInactive(); });
+    setTimeout(() => { if (!w.isDestroyed()) w.close(); }, 3000);
+    return w;
+  });
+  return true;
+});
 
 /* ---------- Файлы ---------- */
 
@@ -884,11 +928,13 @@ function createControl() {
     title: SHORT_NAME,
     webPreferences,
   });
-  // Панель задач Windows: короткое имя и наш значок (и у закреплённой кнопки)
+  // Панель задач Windows: короткое имя и наш значок (и у закреплённой кнопки).
+  // Значок закреплённой кнопки Windows читает сама, когда программа закрыта, а внутрь app.asar
+  // она заглянуть не может (был «пустой файл») — в установленной программе берём значок из самого exe.
   if (process.platform === 'win32') {
     const args = app.isPackaged ? '' : ` "${app.getAppPath()}"`;
     control.setAppDetails({
-      appId: 'multiplayerSHOW.app', appIconPath: APP_ICON, appIconIndex: 0,
+      appId: APP_ID, appIconPath: app.isPackaged ? process.execPath : APP_ICON, appIconIndex: 0,
       relaunchCommand: `"${process.execPath}"${args}`, relaunchDisplayName: SHORT_NAME,
     });
   }
@@ -930,8 +976,47 @@ function createControl() {
   });
 }
 
+/* Починка ярлыков Windows (панель задач, «Пуск», рабочий стол) — при каждом запуске установленной программы.
+   Старые версии называли окно в Windows иначе, чем ярлыки установщика, и давали закреплённой кнопке значок
+   из app.asar: после закрытия кнопка становилась «пустым файлом», а после обновления могла не запускаться.
+   Чиним только свои ярлыки (ведут на multiplayerSHOW.exe): путь к exe, значок из exe, имя APP_ID.
+   Ярлык другой установленной копии (её exe на месте) не трогаем. */
+function fixShortcuts() {
+  if (process.platform !== 'win32' || !app.isPackaged) return;
+  const exe = process.execPath;
+  const exeName = path.basename(exe).toLowerCase();
+  const same = (a, b) => path.resolve(a).toLowerCase() === path.resolve(b).toLowerCase();
+  const roam = app.getPath('appData');
+  const pinned = path.join(roam, 'Microsoft', 'Internet Explorer', 'Quick Launch', 'User Pinned');
+  const dirs = [path.join(pinned, 'TaskBar'), path.join(pinned, 'StartMenu'),
+    path.join(roam, 'Microsoft', 'Windows', 'Start Menu', 'Programs'), app.getPath('desktop')];
+  let fixed = 0;
+  for (const dir of dirs) {
+    let names;
+    try { names = fs.readdirSync(dir).filter((n) => /\.lnk$/i.test(n)); } catch { continue; }
+    for (const n of names) {
+      const file = path.join(dir, n);
+      let l;
+      try { l = shell.readShortcutLink(file); } catch { continue; }
+      const t = l.target || '';
+      if (!t || path.basename(t).toLowerCase() !== exeName) continue; // чужой ярлык
+      if (!same(t, exe) && fs.existsSync(t)) continue; // другая копия программы
+      // значок внутри app.asar Windows не видит (проверка до existsSync: Electron «видит» файлы в asar)
+      const iconBad = !!l.icon && (/\.asar([\\/]|$)/i.test(l.icon) || !fs.existsSync(l.icon));
+      if (same(t, exe) && l.appUserModelId === APP_ID && !iconBad) continue; // всё в порядке
+      try {
+        shell.writeShortcutLink(file, 'update', { target: exe, cwd: path.dirname(exe), icon: exe, iconIndex: 0, appUserModelId: APP_ID });
+        fixed++;
+      } catch { /* нет прав на ярлык — пропускаем */ }
+    }
+  }
+  // Windows перечитает значки (иначе до перезагрузки может показывать старый «пустой»)
+  if (fixed) execFile(path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'ie4uinit.exe'), ['-show'], () => {});
+}
+
 app.whenReady().then(() => {
   createControl();
+  setTimeout(() => { try { fixShortcuts(); } catch { /* не мешать работе */ } }, 5000);
 
   const onDisplaysChanged = () => {
     sendDisplays();
