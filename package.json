@@ -1,7 +1,7 @@
 {
   "name": "church-presenter",
   "productName": "multiplayerSHOW",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "Открытая программа для показа фото и видео на экранах в церкви",
   "main": "main.js",
   "scripts": {
