@@ -2,7 +2,8 @@
    Экраны и макеты — screens.js (экран и сцена с kind 'stage'), отрисовка блоков — compose.js (stageValue).
    Здесь:
    - stSend — собирает данные блоков и шлёт окнам вывода (screens:stage) и превью (Compose.progInfo):
-     текущий/следующий слайд и их текст, заметки, плейлист, номер слайда, аккорды, таймеры, сообщение, видео, запись;
+     текущий/следующий слайд и их текст, заметки, плейлист, номер слайда, аккорды, таймеры, сообщение, видео, запись,
+     часть песни (stPart) и очередь плейлиста (stQueue — прошедшие, текущий, следующие пункты);
    - таймеры lib.timers [{ id, name, mode: 'down'|'up', dur (с) }] — в отмене Ctrl+Z; ход (пуск, пауза) — в памяти stRun;
    - сообщение для сцены stMsg, «только для сцены» stOnly — слайд, который видят только сценические экраны;
    - запись и эфир stCap — отмечает оператор (программа сама не пишет и не транслирует);
@@ -78,8 +79,72 @@ function stCollect() {
       : { mode: t.mode, dur: t.dur, ...(stRun[t.id] || t0) }])),
     video: stVideo,
     cap: { rec: stCap.rec, live: stCap.live, ndi: (typeof scOpenOuts !== 'undefined' ? scOpenOuts : []).filter((o) => o.kind === 'ndi').length },
+    part: stPart(shown),
+    queue: stQueue(),
   };
   return { cur, next, only: stOnly ? stOnly.content : null, st };
+}
+
+/* ----- Часть песни (блок «Часть песни») ----- */
+// Слайд не часть песни: стих Библии (подпись — номер стиха), музыка
+const stPartSkip = (s) => !s || s.k === 'bible' || s.k === 'audio';
+// Части презентации по порядку: parts [{ label }], at — номер части у каждого слайда (-1 — не часть).
+// У песни подпись есть у каждого слайда (новая часть — другая часть или другой её повтор); у старых слайдов
+// подпись бывает только у первого слайда части — слайды без подписи продолжают часть выше
+function stPartsOf(item) {
+  const parts = [];
+  const at = [];
+  let cur = -1;
+  let prev = null;
+  for (const s of item.slides) {
+    if (stPartSkip(s)) { at.push(-1); cur = -1; prev = null; continue; }
+    const lb = String(s.label || '').trim();
+    const key = s.part !== undefined ? s.part + '|' + s.occ : lb;
+    if (lb && (cur < 0 || key !== prev || (s.part !== undefined && s.pi === 0))) { parts.push({ label: lb }); cur = parts.length - 1; prev = key; }
+    at.push(cur);
+  }
+  return { parts, at };
+}
+// { cur, curC, next, nextC, i, n } — подпись части на экране и следующей (цвет — по типу части, songs.js partColor)
+function stPart(shown) {
+  if (!shown || stPartSkip(shown.slide)) return null;
+  const { parts, at } = stPartsOf(shown.item);
+  const k = at[shown.index];
+  if (k == null || k < 0) return null;
+  const col = (l) => (l && typeof partColor === 'function' ? partColor(l) : '') || '';
+  const nx = parts[k + 1];
+  return { cur: parts[k].label, curC: col(parts[k].label), next: nx ? nx.label : '', nextC: nx ? col(nx.label) : '', i: k + 1, n: parts.length };
+}
+
+/* ----- Очередь плейлиста (блок «Очередь») ----- */
+// Какой плейлист и какой пункт шёл последним: { view: 'pl:id', key } — держится и после «Очистить»,
+// листание другого плейлиста очередь не меняет (только показ слайда из него)
+let stQ = null;
+const ST_QKINDS = ['song', 'bible', 'custom', 'deck', 'media', 'audio'];
+// Вид презентации для фильтра блока: песни, Библия, слайды, презентации (PowerPoint), медиа, музыка
+function stKindOf(item) {
+  if (item.song) return 'song';
+  const k = Slides.presKind(item);
+  if (ST_QKINDS.includes(k)) return k;
+  return ST_QKINDS.includes(item.kind) ? item.kind : 'custom';
+}
+// { name, at (номер пункта, который идёт; -1 — ещё ничего), items: [{ n: имя, k: вид, l: [id библиотек] }] }
+function stQueue() {
+  if (plShown && String(plShown.view).startsWith('pl:')) stQ = { view: plShown.view, key: plShown.key };
+  let vk = stQ && findView(keyView(stQ.view)) ? stQ.view : '';
+  if (!vk && work && work.kind === 'pl') vk = workKey(); // ещё ничего не показывали — рабочий плейлист
+  const v = keyView(vk);
+  const pl = v && v.kind === 'pl' ? findView(v) : null;
+  if (!pl) return null;
+  const list = viewEntries(v);
+  const ids = new Set(list.map((x) => x.item.id));
+  const libs = new Map();
+  for (const l of lib.libraries) for (const id of l.items) if (ids.has(id)) { if (!libs.has(id)) libs.set(id, []); libs.get(id).push(l.id); }
+  return {
+    name: pl.name,
+    at: stQ && stQ.view === vk ? list.findIndex((x) => x.key === stQ.key) : -1,
+    items: list.map((x) => ({ n: x.item.name || '', k: stKindOf(x.item), l: libs.get(x.item.id) || [] })),
+  };
 }
 
 function stSend() {

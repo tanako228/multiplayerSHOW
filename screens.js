@@ -51,6 +51,8 @@ const SC_ITEMS = {
   opnote: { name: 'Заметка оператора', icon: 'note', tip: 'Заметка к презентации — «?» у пункта в «Содержании»', info: true },
   msg: { name: 'Сообщение', icon: 'message', tip: 'Сообщение для сцены — пишет оператор (кнопка «Сцена» под предпросмотром)', info: true },
   plist: { name: 'Плейлист', icon: 'playlist', tip: 'Что сейчас и что дальше в плейлисте', info: true },
+  part: { name: 'Часть песни', icon: 'parts', tip: 'Какая часть песни идёт: Куплет 1, Припев, Проигрыш… (подпись слайда)', info: true },
+  queue: { name: 'Очередь', icon: 'list', tip: 'Список плейлиста: что уже было (зачёркнуто), что идёт, что дальше', info: true },
   count: { name: 'Номер слайда', icon: 'counter', tip: 'Номер слайда и сколько всего: 3 / 12', info: true },
   chords: { name: 'Аккорды', icon: 'chord', tip: 'Аккорды текущего слайда (поле «Аккорды» в окне песни)', info: true },
   timer: { name: 'Таймер', icon: 'timer', tip: 'Таймер оператора: обратный отсчёт или секундомер', info: true },
@@ -60,8 +62,10 @@ const SC_ITEMS = {
   only: { name: 'Только для сцены', icon: 'stage', tip: 'Слайд или файл, который оператор отправил только на сценические экраны', info: true },
 };
 const SC_NATIVE = ['screen', 'program', 'cur', 'next', 'media', 'source', 'only']; // у них своё разрешение: обрезка и вписывание
-const SC_TEXTY = ['text', 'clock', 'curText', 'nextText', 'notes', 'opnote', 'msg', 'plist', 'count', 'chords', 'timer', 'countdown', 'vcd', 'cap']; // у них шрифт и цвет текста
+const SC_TEXTY = ['text', 'clock', 'curText', 'nextText', 'notes', 'opnote', 'msg', 'plist', 'count', 'chords', 'timer', 'countdown', 'vcd', 'cap', 'part', 'queue']; // у них шрифт и цвет текста
 const SC_TRANS = Scene.TRANS; // все переходы — список в scene.js
+// Виды презентаций для блока «Очередь» (stage.js stKindOf)
+const SC_QKINDS = [['song', 'Песни'], ['bible', 'Библия'], ['custom', 'Слайды'], ['deck', 'Презентации'], ['media', 'Фото и видео'], ['audio', 'Музыка']];
 
 let scSel = { kind: 'screen', id: 'main' }; // что открыто: экран ('screen'), сцена ('scene') или макет ('layout')
 let scIt = null;      // id выделенного элемента макета
@@ -1350,6 +1354,9 @@ function scAddItem(type) {
     if (type === 'timer') over.ref = typeof stEnsureTimer === 'function' ? stEnsureTimer() : '';
     if (type === 'countdown') over.to = '10:00';
     if (type === 'msg') { w = sc.w; h = Math.round(sc.h * 0.12); Object.assign(over, { bg: '#c81e2e', pad: 10, bold: true, hideEmpty: true, blink: true }); }
+    // Часть песни — плашка цветом части; очередь — столбик сбоку
+    if (type === 'part') { w = Math.round(sc.w * 0.25); h = Math.round(sc.h * 0.1); Object.assign(over, { bold: true, case: 'upper', pcol: 'bg', bg: '#2a3240', bgR: 12, pad: 8, hideEmpty: true }); }
+    if (type === 'queue') { w = Math.round(sc.w * 0.3); h = Math.round(sc.h * 0.5); Object.assign(over, { size: Math.round(sc.h / 18), align: 'left', valign: 'top', past: 1, ahead: 3, curC: '#ffd84a', title: 'Очередь' }); }
   }
   if (h > sc.h * 0.9) { const k = (sc.h * 0.9) / h; h = Math.round(h * k); w = Math.round(w * k); }
   const it = scItem(type, Math.round((sc.w - w) / 2), Math.round((sc.h - h) / 2), w, h, over);
@@ -2193,6 +2200,37 @@ function scInfoRows(it, set) {
       if (st) out.push(scRow('', scBtn('Написать…', 'message', async () => { const t = await askName('Сообщение для сцены', st.msg()); if (t != null) st.setMsg(t); }), scBtn('Убрать', '', () => st.setMsg(''))));
       break;
     case 'plist': out.push(scRow('Показывать', scSelect([['both', 'Сейчас и далее'], ['cur', 'Только что сейчас'], ['next', 'Только что далее']], it.show || 'both', (v) => set({ show: v })))); break;
+    case 'part':
+      out.push(scRow('Показывать', scSelect([['cur', 'Часть, которая идёт'], ['both', 'Идёт и следующая'], ['next', 'Только следующая']], it.show || 'cur', (v) => set({ show: v }, true))));
+      if ((it.show || 'cur') === 'both') out.push(scRow('Расположение', scSelect([['col', 'Одна под другой'], ['row', 'В строку (→)']], it.dir === 'row' ? 'row' : 'col', (v) => set({ dir: v }))));
+      out.push(scCheck('С номером (Куплет 1, Куплет 2)', it.num !== false, (v) => set({ num: v }), 'Без галочки — только «Куплет»'));
+      out.push(scRow('Цвет части', scSelect([['', 'Нет — как в «Тексте»'], ['bg', 'Подложка'], ['text', 'Буквы']], it.pcol || '', (v) => set({ pcol: v }, true)),
+        typeof openPartTypes === 'function' ? scBtn('Цвета…', 'parts', () => openPartTypes(), 'Типы частей песни: название и цвет') : null));
+      out.push(scRow('Подпись', scText(it.prefix, (v) => set({ prefix: v }), 'например: Сейчас')));
+      out.push(scNote('Часть — это подпись слайда песни: [Куплет 1], [Припев], [Проигрыш] в окне песни. Цвет — у типа части (окно песни → «Типы…»). У стихов Библии, медиа и слайдов без подписи — пусто.'));
+      break;
+    case 'queue': {
+      const kinds = Array.isArray(it.kinds) ? it.kinds : null;
+      const kindSet = (k, on) => {
+        const now = new Set(kinds || SC_QKINDS.map((x) => x[0]));
+        if (on) now.add(k); else now.delete(k);
+        set({ kinds: now.size === SC_QKINDS.length ? undefined : SC_QKINDS.map((x) => x[0]).filter((x) => now.has(x)) }, true);
+      };
+      const grid = scEl('div', 'sc-kinds');
+      for (const [k, name] of SC_QKINDS) grid.append(scCheck(name, !kinds || kinds.includes(k), (v) => kindSet(k, v)));
+      out.push(scRow('Что показывать', grid));
+      out.push(scRow('Из библиотеки', scSelect([['', 'Любой'], ...lib.libraries.map((l) => [l.id, l.name])], it.lib && lib.libraries.some((l) => l.id === it.lib) ? it.lib : '', (v) => set({ lib: v || undefined }))));
+      const cnt = [[0, 'нет'], [1, '1'], [2, '2'], [3, '3'], [5, '5'], [10, '10'], [-1, 'все']];
+      out.push(scRow('Прошедших', scSelect(cnt.map(([v, n]) => [String(v), n]), String(it.past != null ? it.past : 1), (v) => set({ past: Number(v) })),
+        scEl('span', 'te-sub', 'следующих'), scSelect(cnt.filter(([v]) => v).map(([v, n]) => [String(v), n]), String(it.ahead != null ? it.ahead : 3), (v) => set({ ahead: Number(v) }))));
+      out.push(scRow('Расположение', scSelect([['col', 'Столбик (сверху вниз)'], ['row', 'Полоска (в строку →)']], it.dir === 'row' ? 'row' : 'col', (v) => set({ dir: v }))));
+      out.push(scRow('Что идёт', scColor(it.curC || '#ffd84a', (v) => set({ curC: v })), scCheck('▶', it.mark !== false, (v) => set({ mark: v }), 'Значок ▶ перед тем, что идёт')));
+      out.push(scCheck('Зачёркивать прошедшие', it.strike2 !== false, (v) => set({ strike2: v })));
+      out.push(scCheck('Номера (1. 2. 3.)', !!it.nums, (v) => set({ nums: v })));
+      out.push(scRow('Заголовок', scText(it.title, (v) => set({ title: v }), 'например: Очередь')));
+      out.push(scNote('Пункты плейлиста, из которого показали последний слайд (до первого показа — рабочий плейлист). Что идёт — подсвечено, прошедшие — зачёркнуты. Листание другого плейлиста очередь не меняет.'));
+      break;
+    }
     case 'count':
       out.push(scRow('Вид', scSelect([['nt', '3 / 12'], ['n', 'только номер']], it.fmt === 'n' ? 'n' : 'nt', (v) => set({ fmt: v }))));
       out.push(scRow('Подпись', scText(it.prefix, (v) => set({ prefix: v }), 'например: Слайд')));

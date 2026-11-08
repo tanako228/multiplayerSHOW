@@ -1170,6 +1170,8 @@ function setTab(name) {
   else document.body.classList.remove('side-folded'); // в «Музыке» колонки нет — предпросмотр обычной ширины
   // Заходим в Библию — все книги свёрнуты
   if (name === 'bible' && typeof bible !== 'undefined' && bible) { navOpen = -1; renderNav(); }
+  // Заходим в Библию — курсор сразу в поле «Место» (старый текст выделен: начали печатать — он заменится)
+  if (name === 'bible') { const r = $('refInput'); r.focus({ preventScroll: true }); r.select(); }
   $('tabScreen').setAttribute('aria-selected', String(onScreen));
   $('tabBible').setAttribute('aria-selected', String(name === 'bible'));
   $('tabMusic').setAttribute('aria-selected', String(name === 'music'));

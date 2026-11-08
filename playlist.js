@@ -80,6 +80,7 @@ function flushLib() {
   window.api.libSave(lib).catch(() => showNotice('Не удалось сохранить плейлисты и библиотеки', true));
   if (typeof mcLibSaved === 'function') mcLibSaved(); // макросы: «Добавлено в плейлист»
   if (typeof repoTouch === 'function') repoTouch('lib'); // репозиторий (tools.js)
+  if (typeof scStage === 'function') scStage(); // очередь и части песни на сценах — после правки плейлиста (stage.js)
 }
 
 /* ----- Отмена и повтор (Ctrl+Z, Ctrl+Shift+Z): снимки содержимого при каждом сохранении ----- */

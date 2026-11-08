@@ -39,6 +39,11 @@ const Compose = (() => {
     .cmp-chc { font-weight: 700; line-height: 1.1; min-height: 1.1em; padding-right: .25em; white-space: nowrap; }
     .cmp-cht { white-space: pre; }
     .cmp-chn { opacity: .45; margin-top: .5em; }
+    .cmp-done { opacity: .45; }
+    .cmp-strike { text-decoration: line-through; }
+    .cmp-now { font-weight: 700; }
+    .cmp-row { display: flex; flex-wrap: nowrap; align-items: baseline; column-gap: .9em; white-space: nowrap; }
+    .cmp-row > .cmp-sep { opacity: .4; }
     @keyframes cmpBlink { 0%, 100% { opacity: 1; } 50% { opacity: .12; } }
     .cmp-blink { animation: cmpBlink .6s ease-in-out 5; }
   `;
@@ -376,8 +381,7 @@ const Compose = (() => {
     const tr = (s.sceneTrans && s.sceneTrans.type) ? s.sceneTrans : (sc.trans && sc.trans.type ? sc.trans : { type: 'fade', ms: 500 });
     const ms = old && tr.type !== 'none' ? Math.max(0, num(tr.ms, 500)) : 0;
     if (!ms) { disposeBody(old); return; }
-    if (old && old.el) Scene.animOut([old.el], tr, ms);
-    const a = Scene.animIn(box, tr, ms);
+    const a = Scene.animSwap(box, old && old.el ? [old.el] : [], tr, ms);
     const done = () => disposeBody(old);
     a.onfinish = done;
     a.oncancel = done;
@@ -740,7 +744,7 @@ const Compose = (() => {
   }
 
   /* ----- Инфоблоки: текст слайда, заметки, сообщение, плейлист, счётчик, аккорды, таймеры, видео, запись ----- */
-  const STAGE = new Set(['curText', 'nextText', 'notes', 'opnote', 'msg', 'plist', 'count', 'chords', 'timer', 'countdown', 'vcd', 'cap']);
+  const STAGE = new Set(['curText', 'nextText', 'notes', 'opnote', 'msg', 'plist', 'count', 'chords', 'timer', 'countdown', 'vcd', 'cap', 'part', 'queue']);
   const TICK = new Set(['timer', 'countdown', 'vcd', 'cap']); // меняются каждую секунду
   const stageNodes = new Set();
 
@@ -831,8 +835,54 @@ const Compose = (() => {
         if (!lines.length) lines.push({ t: 'Не в эфире', cls: 'dim' });
         return { lines };
       }
+      case 'part': return partValue(it, st.part, edit, pre);
+      case 'queue': return queueValue(it, st.queue, edit);
       default: return { text: '' };
     }
+  }
+
+  // Часть песни: «Куплет 1», «Припев»; show: cur — та, что идёт, both — и следующая, next — только следующая.
+  // num === false — без номера («Куплет»); pcol: text — буквы цветом части, bg — подложка цветом части
+  const partBase = (l) => String(l || '').replace(/\s*\(\d+\)$/, '').replace(/\s+\d+$/, '').trim() || String(l || '');
+  function partValue(it, p, edit, pre) {
+    const sample = !p || !p.cur;
+    if (sample && !edit) return { text: '', empty: true };
+    if (sample) p = { cur: 'Куплет 1', curC: '#3b82f6', next: 'Припев', nextC: '#e5484d' }; // пример в редакторе макета
+    const nm = (l) => (it.num === false ? partBase(l) : l);
+    const show = it.show || 'cur';
+    const colT = it.pcol === 'text';
+    const lines = [];
+    if (show !== 'next') lines.push({ t: pre + nm(p.cur), c: colT ? p.curC : '' });
+    if (show !== 'cur') {
+      if (p.next) lines.push({ t: (show === 'both' ? (it.dir === 'row' ? '' : 'Далее: ') : pre) + nm(p.next), cls: show === 'both' ? 'dim' : '', c: colT ? p.nextC : '' }); // в строку — стрелка вместо «Далее»
+      else lines.push({ t: show === 'both' ? 'Последняя часть' : pre + 'Конец', cls: 'dim' });
+    }
+    return { lines, row: it.dir === 'row', bg: it.pcol === 'bg' ? (show === 'next' ? p.nextC : p.curC) || '' : undefined, ph: sample };
+  }
+
+  // Очередь плейлиста: прошедшие (зачёркнуты), тот, что идёт, следующие. kinds — какие виды показывать (нет — все),
+  // lib — только из этой библиотеки, past / ahead — сколько прошедших и следующих (-1 — все), dir 'row' — полоской
+  const Q_SAMPLE = { at: 1, items: [{ n: 'Песня 1', k: 'song', l: [] }, { n: 'Песня 2', k: 'song', l: [] }, { n: 'Чтение Библии', k: 'bible', l: [] }, { n: 'Песня 3', k: 'song', l: [] }, { n: 'Объявления', k: 'custom', l: [] }] };
+  function queueValue(it, q, edit) {
+    const sample = !q || !q.items || !q.items.length;
+    if (sample && !edit) return { text: '', empty: true };
+    if (sample) q = Q_SAMPLE;
+    const kinds = Array.isArray(it.kinds) ? it.kinds : null;
+    const list = q.items.map((x, i) => ({ ...x, s: q.at < 0 || i > q.at ? 'next' : i < q.at ? 'done' : 'now' }))
+      .filter((x) => (!kinds || kinds.includes(x.k)) && (!it.lib || sample || x.l.includes(it.lib)));
+    const np = num(it.past, 1);
+    const nn = num(it.ahead, 3);
+    const done = list.filter((x) => x.s === 'done');
+    const ahead = list.filter((x) => x.s === 'next');
+    const pick = [...(np < 0 ? done : done.slice(Math.max(0, done.length - np))), ...list.filter((x) => x.s === 'now'), ...(nn < 0 ? ahead : ahead.slice(0, nn))];
+    const strike = it.strike2 !== false;
+    const lines = pick.map((x) => ({
+      t: (x.s === 'now' && it.mark !== false ? '▶ ' : '') + (it.nums ? list.indexOf(x) + 1 + '. ' : '') + x.n,
+      cls: x.s === 'done' ? (strike ? 'done strike' : 'done') : x.s === 'now' ? 'now' : '',
+      c: x.s === 'now' ? it.curC || '#ffd84a' : '',
+    }));
+    if (!lines.length) return edit ? { text: 'Очередь: нет подходящих пунктов', ph: true, empty: true } : { text: '', empty: true };
+    return { label: it.title || '', lines, row: it.dir === 'row', ph: sample };
   }
 
   // Строка с аккордами «[Am]Слава [G]Богу» → аккорды над слогами
@@ -863,13 +913,26 @@ const Compose = (() => {
     box.className = 'cmp-in' + (v.ph ? ' cmp-ph' : '') + (v.dim ? ' cmp-dim' : '');
     box.style.color = v.color || '';
     if (v.label) box.append(Object.assign(make('div', 'cmp-lbl'), { textContent: v.label }));
-    if (v.lines) for (const l of v.lines) box.append(Object.assign(make('div', l.cls ? 'cmp-' + l.cls : ''), { textContent: l.t }));
+    // Строки: cls — классы через пробел (dim, done strike, now…), c — свой цвет; row — полоской в одну строку (через «→»)
+    const line = (l) => { const d = make('div', l.cls ? l.cls.split(' ').map((c) => 'cmp-' + c).join(' ') : ''); d.textContent = l.t; if (l.c) d.style.color = l.c; return d; };
+    if (v.lines && v.row) {
+      const r = make('div', 'cmp-row');
+      r.style.justifyContent = ALIGN[it.align] || 'center';
+      v.lines.forEach((l, i) => { if (i) r.append(Object.assign(make('span', 'cmp-sep'), { textContent: '→' })); r.append(line(l)); });
+      box.append(r);
+    } else if (v.lines) for (const l of v.lines) box.append(line(l));
     else if (v.chords) {
       const cc = it.chordC || '#ffd84a';
       for (const l of v.chords) box.append(chordLine(l));
       if (v.next) { const nx = make('div', 'cmp-chn'); for (const l of v.next) nx.append(chordLine(l)); box.append(nx); }
       box.querySelectorAll('.cmp-chc').forEach((x) => { x.style.color = cc; });
     } else if (v.text) box.append(document.createTextNode(v.text));
+    // Подложка цветом части песни (блок «Часть песни»); нет цвета у части — своя подложка блока
+    if (v.bg !== undefined) {
+      const bg = v.bg || it.bg;
+      n._c.style.background = bg ? rgbaOf(bg, op01(it.bgO, 100)) : '';
+      n._c.style.borderRadius = bg && num(it.bgR, 0) ? num(it.bgR, 0) + 'px' : '';
+    }
     // Пустой блок: подложку не показывать (по галочке), в редакторе — подсказка
     n.style.visibility = v.empty && it.hideEmpty && !n._edit ? 'hidden' : '';
     // Новое сообщение — мигнуть

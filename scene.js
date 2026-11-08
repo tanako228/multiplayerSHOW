@@ -27,12 +27,12 @@ const Scene = (() => {
   };
   const family = (f) => FONTS[f] || (f ? `"${String(f).replace(/"/g, '')}", sans-serif` : FONTS.segoe);
 
-  // Переходы: in — как входит новый слайд, out — как уходит старый (нет — старый просто лежит под новым), ease — плавность.
-  // Список для окон выбора — TRANS (id, название); новый переход — строка здесь
+  // Переходы: in — как входит новый слайд, out — как уходит старый (нет — старый просто лежит под новым), ease — плавность,
+  // x — наплыв: старый гаснет, пока новый проявляется (animSwap). Список для окон выбора — TRANS (id, название); новый переход — строка здесь
   const TL = (x, y) => `translate(${x}, ${y})`;
   const P3 = 'perspective(2400px) ';
   const TRD = {
-    fade: { name: 'Плавно', in: [{ opacity: 0 }, { opacity: 1 }] },
+    fade: { name: 'Плавно (наплыв)', in: [{ opacity: 0 }, { opacity: 1 }], x: true },
     black: { name: 'Через чёрное', in: [{ opacity: 0 }, { opacity: 0, offset: 0.5 }, { opacity: 1 }], out: [{ opacity: 1 }, { opacity: 0, offset: 0.5 }, { opacity: 0 }], ease: 'linear' },
     blur: { name: 'Размытие', in: [{ opacity: 0, filter: 'blur(40px)' }, { opacity: 1, filter: 'blur(0px)' }] },
     slide: { name: 'Сдвиг', in: [{ opacity: 0, transform: 'translateX(6%)' }, { opacity: 1, transform: 'translateX(0)' }] },
@@ -76,6 +76,40 @@ const Scene = (() => {
     const d = TRD[tr && tr.type];
     if (!d || !d.out) return;
     els.forEach((n) => n.animate(d.out, { duration: ms, easing: d.ease || 'ease-out', fill: 'forwards' }));
+  }
+  const opNow = (n) => { const o = Number(getComputedStyle(n).opacity); return Number.isFinite(o) ? o : 1; };
+  const clearBg = (cs) => cs.backgroundImage === 'none' && /^(rgba\(0, 0, 0, 0\)|rgb\(0, 0, 0\)|transparent)$/.test(cs.backgroundColor);
+  // Смена: el — новое (уже в box), olds — уходящие соседи. Наплыв (x): старое гаснет от своей яркости, новое проявляется — одновременно.
+  // Старое и новое складываются (plus-lighter) в отдельной группе (isolation): как в кино — на сплошном фоне яркость не проседает,
+  // на прозрачном (текст поверх видео) старый текст не висит под новым. Слой со своими анимациями ухода уходит сам, как раньше.
+  function animSwap(el, olds, tr, ms) {
+    const d = TRD[tr && tr.type] || TRD.fade;
+    if (!d.x) { animOut(olds, tr, ms); return animIn(el, tr, ms); }
+    const ease = d.ease || 'ease-out';
+    const fade = olds.filter((n) => !outTime(n));
+    const box = el.parentNode;
+    // Складывать можно, только если в группе нет ничего, кроме них (рисунок сверху не мешает) и под ними пусто или чёрное
+    const add = !!box && clearBg(getComputedStyle(box)) && [...box.children].every((n) => n === el || n.matches('svg.ink')
+      || (fade.includes(n) && !n.classList.contains('leaving') && !n.classList.contains('gone')));
+    fade.forEach((n) => n.animate([{ opacity: opNow(n) }, { opacity: 0 }], { duration: ms, easing: ease, fill: 'forwards' }));
+    const a = el.animate(d.in, { duration: ms, easing: ease });
+    if (!add) return a;
+    [el, ...fade].forEach((n) => { n.style.mixBlendMode = 'plus-lighter'; });
+    box._swaps = (box._swaps || 0) + 1;
+    box.style.isolation = 'isolate';
+    let ended = false;
+    const end = () => {
+      if (ended) return;
+      ended = true;
+      // Последний наплыв в группе закончился — обычное наложение (пока идёт новый — он сам всё уберёт)
+      if (--box._swaps > 0) return;
+      box._swaps = 0;
+      box.style.isolation = '';
+      [...box.children].forEach((n) => { n.style.mixBlendMode = ''; });
+    };
+    a.addEventListener('finish', end);
+    a.addEventListener('cancel', end);
+    return a;
   }
 
   const style = document.createElement('style');
@@ -1264,7 +1298,10 @@ const Scene = (() => {
     fitLayer(layer);
     if (layerId) applyVolume(stage);
     if (!content.edit) startBuilds(layer, same);
-    const done = () => old.forEach(dispose);
+    // Старые слои убирает переход, который подхватил их последним (быстрые щелчки: слой не пропадает посреди наплыва)
+    const tok = {};
+    old.forEach((n) => { n._by = tok; });
+    const done = () => old.forEach((n) => { if (n._by === tok) dispose(n); });
     const ms = tr.type === 'none' ? 0 : Math.max(0, Number(tr.ms) || 0);
     old.forEach((n) => fadeOutSound(n, ms)); // видео того же шаблона уже перенесено в новый слой и не гаснет
     // content.edit — редактор тем: без анимаций исчезновения при каждой правке
@@ -1282,8 +1319,7 @@ const Scene = (() => {
     }
     if (!ms && !outMs) return done();
     if (!ms) { setTimeout(done, outMs); return; }
-    animOut(old.filter((n) => !n.classList.contains('gone')), tr, ms);
-    const anim = animIn(layer, tr, ms);
+    const anim = animSwap(layer, old.filter((n) => !n.classList.contains('gone')), tr, ms);
     if (outMs > ms) { setTimeout(done, outMs); return; }
     anim.onfinish = done;
     anim.oncancel = done;
@@ -1301,7 +1337,7 @@ const Scene = (() => {
       fadeOutSound(n, out || ms);
       if (out) { playOut(n); setTimeout(() => dispose(n), out); return; }
       if (!ms) return dispose(n);
-      const a = n.animate([{ opacity: 1 }, { opacity: 0 }], { duration: ms, fill: 'forwards' });
+      const a = n.animate([{ opacity: opNow(n) }, { opacity: 0 }], { duration: ms, fill: 'forwards' }); // от текущей яркости: посреди наплыва не вспыхивает
       a.onfinish = () => dispose(n);
     });
   }
@@ -1452,5 +1488,5 @@ const Scene = (() => {
     for (const el of stage.querySelectorAll(':scope > .slot, :scope > .layer, :scope > svg.ink')) viewOn(stage, el, Math.max(0, Number(ms) || 0));
   }
 
-  return { TRANS, animIn, animOut, setTimers, setView, viewCss, show, clear, refit, build, fitText, setInk, shapeNode, liveStream, liveRelease, setLayers, applyVolume, layerPlay, pickTpl, textLabels, buildNext, useFonts, fontsList, family, LIVE, FONTS, FONT_NAMES };
+  return { TRANS, animIn, animOut, animSwap, setTimers, setView, viewCss, show, clear, refit, build, fitText, setInk, shapeNode, liveStream, liveRelease, setLayers, applyVolume, layerPlay, pickTpl, textLabels, buildNext, useFonts, fontsList, family, LIVE, FONTS, FONT_NAMES };
 })();

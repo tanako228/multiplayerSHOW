@@ -1251,8 +1251,20 @@ const UI_THEMES = [
     c: ['#0a0a0b', '#141416', '#1c1c1f', '#2c2c31', '#f2f0ee', '#8e8c93', '#ff6a1f', '#ffb347', '#ff4d5e'] },
   { id: 'neon', name: 'Неон', deco: 'aura', fx: { uiGlass: 'glass', uiAlpha: 24, uiGlow: 40, uiRadius: 12 },
     c: ['#0b0b0b', '#151515', '#1d1d1d', '#2c2c2c', '#ffffff', '#a7a7a7', '#1ed760', '#3cc8c8', '#ff5c5c'] },
+  // «Янтарь» (deco: 'amber', index.html): серая, акцент жёлтый. Ползунок — линия со шкалой и тёмной ручкой в жёлтом ореоле,
+  // перемотка — «таблетка», громкость и крутилки — шкала из рисок, переключатели — белая таблетка
+  { id: 'amber', name: 'Янтарь', deco: 'amber', fx: { uiGlass: '', uiAlpha: 16, uiGlow: 30, uiRadius: 10 },
+    c: ['#1f2023', '#28292d', '#313237', '#43454b', '#ededed', '#9c9ea5', '#ffc21a', '#f08c1e', '#ff5a5f'] },
 ];
-const uiTheme = () => UI_THEMES.find((t) => t.id === settings.uiTheme) || UI_THEMES[0];
+
+// Правка тем владельцем (localStorage cp.uiThemes): over — изменённые готовые темы {id: {c, fx, light}},
+// mine — свои темы {id: 'u…', name, deco, c, fx, light, mine: true}, hide — удалённые из списка (id темы или 'p:'+id пресета).
+// Готовые темы не стираются: «Вернуть удалённые» показывает их снова, «Вернуть исходную» снимает правку.
+let uiUser = { hide: [], over: {}, mine: [] };
+try { uiUser = { ...uiUser, ...JSON.parse(localStorage.getItem('cp.uiThemes') || '{}') }; } catch { /* нет — стандартные */ }
+const saveUiUser = () => { try { localStorage.setItem('cp.uiThemes', JSON.stringify(uiUser)); } catch { showNotice('Не удалось сохранить темы', true); } };
+const uiThemesAll = () => [...UI_THEMES.map((t) => (uiUser.over[t.id] ? { ...t, ...uiUser.over[t.id], edited: true } : t)), ...uiUser.mine];
+const uiTheme = () => { const all = uiThemesAll(); return all.find((t) => t.id === settings.uiTheme) || all[0]; };
 // Итоговые цвета: тема + свои поправки; scheme — светлая или тёмная (для полей ввода и полос прокрутки)
 function uiPalette() {
   const t = uiTheme();
@@ -1311,7 +1323,9 @@ function applyUiFx(p) {
   html.dataset.uiFont = UI_FONTS.some(([id]) => id === settings.uiFont) ? settings.uiFont : '';
   html.dataset.uiDeco = uiTheme().deco || ''; // особое оформление темы (свечение, «таблетки»)
   html.classList.toggle('ui-caps', !!settings.uiCaps);
-  auraRun(html.dataset.uiDeco === 'aura');
+  const ctl = ['aura', 'amber'].includes(html.dataset.uiDeco); // темы со своими ползунками, переключателями и крутилками
+  html.classList.toggle('ui-ctl', ctl);
+  auraRun(ctl);
 }
 
 /* ===== Элементы управления тем «Жар»/«Неон» (deco 'aura'; CSS — index.html, «Элементы управления aura») =====
@@ -1419,6 +1433,7 @@ function lookKey(s) {
 // Включить только оформление пресета (тема, свои цвета, эффекты) — без перезагрузки окна
 function applyLookPreset(p) {
   const s = p.settings;
+  settings.uiPreset = p.id; // «Сохранить в тему» тогда пишет в этот пресет
   settings.uiTheme = s.uiTheme;
   settings.uiColors = clone(s.uiColors || {});
   for (const k of UI_FX) if (s[k] !== undefined) settings[k] = clone(s[k]);
@@ -1431,18 +1446,30 @@ function applyLookPreset(p) {
 function renderUiColors() {
   // Готовые темы и пресеты с оформлением — карточками с маленьким образцом окна
   const cards = $('uiThemes');
-  const curKey = lookKey(settings);
-  const mine = lookPresets();
-  const onPreset = mine.some((p) => lookKey(p.settings) === curKey);
+  const cur = uiLookCur();
+  const hide = new Set(uiUser.hide);
+  const all = uiThemesAll();
+  const tip = ' · правый щелчок — изменить, удалить';
   cards.replaceChildren(
-    ...UI_THEMES.map((t) => uiThemeCard(t.name, t.c, t.deco, !onPreset && t.id === uiTheme().id, () => setUiTheme(t.id), `Тема программы «${t.name}»`)),
-    ...mine.map((p) => {
-      const t = UI_THEMES.find((x) => x.id === p.settings.uiTheme) || UI_THEMES[0];
+    ...all.filter((t) => !hide.has(t.id)).map((t) => {
+      const b = uiThemeCard(t.name, t.c, t.deco, !cur.preset && t.id === cur.theme.id, () => setUiTheme(t.id),
+        `Тема программы «${t.name}»${tip}`, t.mine ? 'своя' : t.edited ? 'изменена' : '');
+      b.addEventListener('contextmenu', (e) => { e.preventDefault(); uiThemeMenu(e, t, null); });
+      return b;
+    }),
+    ...lookPresets().filter((p) => !hide.has('p:' + p.id)).map((p) => {
+      const t = all.find((x) => x.id === p.settings.uiTheme) || all[0];
       const c = UI_COLORS.map(([v], i) => (p.settings.uiColors || {})[v] || t.c[i]);
-      return uiThemeCard(p.name, c, t.deco, lookKey(p.settings) === curKey, () => applyLookPreset(p),
-        `Пресет «${p.name}»: включить только его оформление (остальные настройки не меняются)`, 'пресет');
+      const b = uiThemeCard(p.name, c, t.deco, cur.preset === p, () => applyLookPreset(p),
+        `Пресет «${p.name}»: включить только его оформление (остальные настройки не меняются)${tip}`, 'пресет');
+      b.addEventListener('contextmenu', (e) => { e.preventDefault(); uiThemeMenu(e, t, p); });
+      return b;
     }),
   );
+  const n = uiUser.hide.length;
+  $('uiThemeSave').textContent = `Сохранить в «${cur.preset ? cur.preset.name : cur.theme.name}»`;
+  $('uiThemeRestore').hidden = !n;
+  $('uiThemeRestore').textContent = `Вернуть удалённые (${n})`;
   const box = $('uiColors');
   box.replaceChildren();
   const pal = uiPalette();
@@ -1487,6 +1514,7 @@ $('uiCaps').addEventListener('change', () => { settings.uiCaps = $('uiCaps').che
 // Выбрать готовую тему: свои поправки цветов прежней темы убираются
 function setUiTheme(id) {
   const had = Object.keys(settings.uiColors || {}).length > 0;
+  delete settings.uiPreset;
   settings.uiTheme = id;
   settings.uiColors = {};
   const fx = uiTheme().fx;
@@ -1502,6 +1530,98 @@ $('uiReset').addEventListener('click', () => {
   saveSettings();
   applyUiColors();
   renderUiColors();
+});
+
+/* ===== Правка тем программы: сохранить изменения, новая тема, удалить, вернуть ===== */
+
+// Что сейчас включено: тема и, если включали карточку пресета, сам пресет (туда и сохраняем)
+function uiLookCur() {
+  const ps = lookPresets();
+  const preset = ps.find((p) => p.id === settings.uiPreset && p.settings.uiTheme === settings.uiTheme)
+    || ps.find((p) => lookKey(p.settings) === lookKey(settings)) || null;
+  return { theme: uiTheme(), preset };
+}
+// Текущий вид целиком: итоговые цвета (тема + свои) и эффекты
+function uiLookNow() {
+  const pal = uiPalette();
+  const c = UI_COLORS.map(([v]) => pal[v]);
+  return { c, fx: Object.fromEntries(UI_FX.filter((k) => settings[k] != null).map((k) => [k, clone(settings[k])])), light: uiBright(c[0]) };
+}
+// Сделать тему (или пресет) текущей без своих поправок — они уже вписаны в неё
+function uiUseLook(t, p) {
+  settings.uiTheme = t.id;
+  settings.uiColors = p ? clone(p.settings.uiColors || {}) : {};
+  if (p) settings.uiPreset = p.id; else delete settings.uiPreset;
+  saveSettings();
+  applyUiColors();
+  renderUiColors();
+}
+function uiThemeSaveTo(t, p) {
+  const look = uiLookNow();
+  if (p) {
+    Object.assign(p.settings, { uiTheme: settings.uiTheme, uiColors: clone(settings.uiColors || {}) }, look.fx);
+    savePresets();
+    uiUseLook(uiTheme(), p);
+    flashStatus(`Оформление сохранено в пресет «${p.name}»`);
+    return;
+  }
+  const rec = { c: look.c, fx: look.fx, light: look.light };
+  if (t.mine) Object.assign(uiUser.mine.find((x) => x.id === t.id), rec);
+  else uiUser.over[t.id] = rec;
+  saveUiUser();
+  uiUseLook(t, null);
+  flashStatus(`Тема «${t.name}» сохранена` + (t.mine ? '' : ' · правый щелчок по ней — «Вернуть исходную»'));
+}
+function uiThemeDelete(t, p) {
+  const key = p ? 'p:' + p.id : t.id;
+  const shown = uiThemesAll().filter((x) => !uiUser.hide.includes(x.id) && x.id !== key);
+  if (!shown.length) { flashStatus('Последнюю тему удалить нельзя'); return; }
+  const cur = uiLookCur();
+  const was = p ? cur.preset === p : !cur.preset && cur.theme.id === t.id;
+  uiUser.hide.push(key);
+  saveUiUser();
+  if (was) setUiTheme(shown[0].id); else renderUiColors();
+  flashStatus(`Тема «${p ? p.name : t.name}» убрана из списка · «Вернуть удалённые» — показать снова`);
+}
+function uiThemeMenu(e, t, p) {
+  const items = [
+    { label: 'Включить', fn: () => (p ? applyLookPreset(p) : setUiTheme(t.id)) },
+    { label: 'Сохранить сюда текущий вид', fn: () => uiThemeSaveTo(t, p) },
+  ];
+  if (!p && t.mine) items.push({ label: 'Переименовать…', fn: async () => {
+    const name = await askName('Название темы', t.name);
+    if (!name) return;
+    uiUser.mine.find((x) => x.id === t.id).name = name;
+    saveUiUser();
+    renderUiColors();
+  } });
+  if (!p && t.edited) items.push({ label: 'Вернуть исходную', fn: () => {
+    delete uiUser.over[t.id];
+    saveUiUser();
+    if (uiTheme().id === t.id) uiUseLook(uiTheme(), null); else renderUiColors();
+    flashStatus(`Тема «${t.name}» — снова как была`);
+  } });
+  items.push('-', { label: 'Удалить из списка', fn: () => uiThemeDelete(t, p) });
+  showMenu(e, items);
+}
+$('uiThemeSave').addEventListener('click', () => { const cur = uiLookCur(); uiThemeSaveTo(cur.theme, cur.preset); });
+$('uiThemeNew').addEventListener('click', async () => {
+  const cur = uiLookCur();
+  const name = await askName('Название новой темы', (cur.preset ? cur.preset.name : cur.theme.name) + ' — моя');
+  if (!name) return;
+  const t = { id: 'u' + Date.now().toString(36), name, deco: cur.theme.deco || '', mine: true, ...uiLookNow() };
+  uiUser.mine.push(t);
+  saveUiUser();
+  uiUseLook(t, null);
+  flashStatus(`Новая тема «${name}» сохранена`);
+});
+$('uiThemeDel').addEventListener('click', () => { const cur = uiLookCur(); uiThemeDelete(cur.theme, cur.preset); });
+$('uiThemeRestore').addEventListener('click', () => {
+  const n = uiUser.hide.length;
+  uiUser.hide = [];
+  saveUiUser();
+  renderUiColors();
+  flashStatus(`Возвращено тем: ${n}`);
 });
 
 // Настройки пропали или испортились, а запасная копия оформления есть — вернуть тему из неё
