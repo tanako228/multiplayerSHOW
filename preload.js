@@ -168,6 +168,7 @@ contextBridge.exposeInMainWorld('api', {
   teamCert: (o) => ipcRenderer.invoke('team:cert', o), // o.staging: false — настоящий после тестового
   teamDns: () => ipcRenderer.invoke('team:dns'),
   teamCheck: () => ipcRenderer.invoke('team:check'),
+  teamDo: (a) => ipcRenderer.invoke('team:do', a), // люди и устройства: { act, id, … } (teamapi.js: act)
   onTeamInfo: (cb) => on('team:info', cb),
   onThumbDraw: (cb) => on('thumb:draw', cb),
   thumbReady: () => ipcRenderer.send('thumb:ready'),

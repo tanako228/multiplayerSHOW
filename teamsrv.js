@@ -8,6 +8,7 @@
    Запросы https идут в общий обработчик пульта (main.js: rmHandle); он отдаёт сюда /app/… (route).
    Без домена тоже можно: пока доступ включён, работает простой адрес http://<IP>:8090/app/ (http-сервер пульта,
    opt.want/opt.http) — открывается по QR сразу, но установить приложение и работать без сети на нём нельзя.
+   Вход телефонов, люди, устройства, песни для телефона — teamapi.js (/api/v1/…), окно «Группа» видит их в info().grp.
    Модуль работает и без Electron: init() — для проверки в Node, setup() — из main.js. */
 'use strict';
 const fs = require('fs');
@@ -16,6 +17,7 @@ const https = require('https');
 const dns = require('dns');
 const net = require('net');
 const crypto = require('crypto');
+const api = require('./teamapi');
 
 const DEF = { on: false, port: 443, provider: 'desec', domain: '', ip: '', email: '', staging: false };
 const RENEW_DAYS = 30;
@@ -23,7 +25,7 @@ const DAY = 86400e3;
 
 let dir = '';      // папка данных (%APPDATA%\church-presenter)
 let appDir = '';   // папка приложения для телефона (app/)
-let opt = {};      // { ips(), handler(req, res), seal(str), unseal(str), notify(info) }
+let opt = {};      // { ips(), handler(req, res), seal(str), unseal(str), notify(info), want(), http(), libFile, ver }
 let cfg = { ...DEF };
 let token = '';    // токен провайдера, расшифрованный, только в памяти
 let dnsSt = { ip: '', at: 0, err: '' }; // что программа записала в DNS
@@ -380,11 +382,37 @@ const check = () => runJob('check', async (say) => {
   return { items, ok: items.every((x) => x.ok) };
 });
 
-/* ----- Страницы /app/… (сам клиент — этап 1; сейчас — проверочная страница) ----- */
+/* ----- Приложение для телефона: /app/… (файлы из app/), данные: /api/v1/… (teamapi.js) ----- */
 
 const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json; charset=utf-8',
   '.webmanifest': 'application/manifest+json', '.png': 'image/png', '.svg': 'image/svg+xml', '.ico': 'image/x-icon', '.woff2': 'font/woff2', '.txt': 'text/plain; charset=utf-8' };
+// Только свой адрес: домен из настроек или IP. Чужой сайт, подменивший свой адрес на 192.168.x.x (DNS rebinding),
+// не дотянется до данных группы из браузера на компьютере в этой сети
+function hostOk(req) {
+  const h = String(req.headers.host || '').toLowerCase().replace(/:\d+$/, '');
+  return (!!cfg.domain && h === cfg.domain) || net.isIPv4(h) || h === 'localhost';
+}
+// Отпечаток файлов приложения — версия кэша на телефоне (sw.js): файлы поменялись с обновлением программы —
+// телефон сам скачает новые. По содержимому (в app.asar установленной программы время файлов не меняется); ~150 КБ
+function appVer() {
+  const h = crypto.createHash('sha1');
+  const walk = (d) => {
+    for (const e of fs.readdirSync(d, { withFileTypes: true }).sort((a, b) => (a.name < b.name ? -1 : 1))) {
+      const f = path.join(d, e.name);
+      if (e.isDirectory()) walk(f);
+      else { h.update(path.relative(appDir, f) + ':'); h.update(fs.readFileSync(f)); }
+    }
+  };
+  try { walk(appDir); } catch { /* нет папки — всё равно ответим */ }
+  return h.digest('hex').slice(0, 12);
+}
+const CSP = "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'";
 function route(req, res, u) {
+  if (u.pathname.startsWith('/api/v1/')) {
+    if (!hostOk(req)) { res.writeHead(403, { 'Content-Type': 'application/json' }); res.end('{"error":"host"}'); return true; }
+    api.handle(req, res, u);
+    return true;
+  }
   if (u.pathname === '/app') { res.writeHead(301, { Location: '/app/' }); res.end(); return true; }
   if (!u.pathname.startsWith('/app/')) return false;
   if (u.pathname === '/app/ping') {
@@ -394,11 +422,15 @@ function route(req, res, u) {
   }
   let rel = '';
   try { rel = decodeURIComponent(u.pathname.slice(5)) || 'index.html'; } catch { rel = ''; }
-  const file = path.normalize(path.join(appDir, rel));
-  if (!rel || rel.includes('\0') || !file.startsWith(appDir + path.sep)) { res.writeHead(404); res.end(); return true; }
+  // Значки 256 и 512 — из brand/ (тот же значок, что у программы)
+  const icon = /^icon-(256|512)\.png$/.exec(rel);
+  const file = icon ? path.join(appDir, '..', 'brand', `icon-${icon[1]}.png`) : path.normalize(path.join(appDir, rel));
+  if (!rel || rel.includes('\0') || (!icon && !file.startsWith(appDir + path.sep))) { res.writeHead(404); res.end(); return true; }
   fs.readFile(file, (err, buf) => {
     if (err) { res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' }); res.end('нет такой страницы'); return; }
-    res.writeHead(200, { 'Content-Type': TYPES[path.extname(file).toLowerCase()] || 'application/octet-stream', 'Cache-Control': 'no-cache' });
+    if (rel === 'sw.js') buf = Buffer.from(buf.toString('utf8').replace('__VER__', appVer()));
+    res.writeHead(200, { 'Content-Type': TYPES[path.extname(file).toLowerCase()] || 'application/octet-stream', 'Cache-Control': 'no-cache',
+      'Content-Security-Policy': CSP, 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer' });
     res.end(buf);
   });
   return true;
@@ -421,6 +453,7 @@ function info() {
     job: job ? { kind: job.kind, log: job.log.slice(-12) } : null,
     last: last ? { kind: last.kind, ok: last.ok, err: last.err || '', log: last.log.slice(-12), at: last.at, res: last.res } : null,
     url: certOk() ? url : '',
+    grp: api.state(),
   };
 }
 let notifyT = 0;
@@ -478,6 +511,8 @@ function init(o) {
   fs.mkdirSync(dir, { recursive: true });
   load();
   loadCert();
+  api.init({ dir, libFile: o.libFile || path.join(dir, 'library.json'), ver: o.ver || '', on: () => cfg.on, notify,
+    store: { read: readFile, write: writeFile } });
   start();
   if (opt.want) opt.want();
   const t = (fn, ms) => { const h = setInterval(fn, ms); if (h.unref) h.unref(); timers.push(h); };
@@ -490,6 +525,7 @@ function init(o) {
 function shutdown() {
   for (const h of timers) clearInterval(h);
   timers = [];
+  api.shutdown();
   stop();
 }
 
@@ -503,6 +539,9 @@ function setup(ipcMain, o) {
   ipcMain.handle('team:cert', wrap(async (_e, o) => { await issue(o); return info(); }));
   ipcMain.handle('team:dns', wrap(async () => { await dnsNow(); return info(); }));
   ipcMain.handle('team:check', wrap(async () => { const r = await check(); return { ...info(), check: r }; }));
+  // Люди и устройства: { act: 'approve'|'reject'|'off'|'revoke'|'person'|'delPerson'|'log', id, … } (teamapi.js: act)
+  ipcMain.handle('team:do', wrap((_e, a) => { const res = api.act(a); return { ...info(), res }; }));
 }
 
-module.exports = { setup, init, shutdown, route, info, set, setToken, issue, check, dnsNow, port: () => cfg.port, on: () => cfg.on, changed: notify, PROVIDERS, _test: { authServers, waitTxt, curIp } };
+module.exports = { setup, init, shutdown, route, info, set, setToken, issue, check, dnsNow, port: () => cfg.port, on: () => cfg.on, changed: notify,
+  libSaved: (data) => api.libSaved(data), PROVIDERS, _test: { authServers, waitTxt, curIp, api } };

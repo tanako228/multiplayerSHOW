@@ -1907,6 +1907,7 @@ app.whenReady().then(() => {
   // Токен DNS-провайдера — зашифрован Windows (safeStorage), без шифрования — только если его нет в системе
   team.setup(ipcMain, {
     dir: app.getPath('userData'), appDir: path.join(__dirname, 'app'), ips: rmIps, handler: rmHandle,
+    libFile: path.join(app.getPath('userData'), 'library.json'), ver: app.getVersion(),
     want: () => rmWant(), http: () => ({ running: !!rmSrv && !!rmPort, port: rmPort, err: rmErr }),
     seal: (s) => (safeStorage.isEncryptionAvailable() ? 'dp:' + safeStorage.encryptString(s).toString('base64') : 'raw:' + Buffer.from(s).toString('base64')),
     unseal: (s) => (s.startsWith('dp:') ? safeStorage.decryptString(Buffer.from(s.slice(3), 'base64')) : s.startsWith('raw:') ? Buffer.from(s.slice(4), 'base64').toString() : ''),
@@ -2046,6 +2047,7 @@ app.whenReady().then(() => {
     const tmp = libFile() + '.tmp';
     fs.writeFileSync(tmp, JSON.stringify(data));
     fs.renameSync(tmp, libFile());
+    team.libSaved(data); // песни для телефонов группы (teamapi.js) — разберёт, когда телефон спросит
   });
 
   /* ---------- Библия ---------- */

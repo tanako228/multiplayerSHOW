@@ -3,42 +3,110 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#0e1014">
-<link rel="icon" href="/icon.png">
+<meta name="theme-color" content="#051822">
+<meta name="color-scheme" content="dark">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="MP Группа">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="stylesheet" href="app.css">
 <title>MP Show — группа</title>
-<!-- Приложение для телефонов группы (ТЗ-8-Группа.md). Этап 0 — только проверка: адрес, сертификат, связь с программой.
-     Само приложение (песни, текущий слайд, пометки) появится на этапе 1 -->
-<style>
-  :root { --ink: #0e1014; --panel: #181b21; --line: #2e3540; --text: #e8ebf0; --muted: #8b94a3; --ok: #3fb950; --bad: #e5484d; }
-  html, body { margin: 0; min-height: 100%; background: var(--ink); color: var(--text); font: 16px/1.45 -apple-system, "Segoe UI", Roboto, sans-serif; }
-  main { max-width: 520px; margin: 0 auto; padding: calc(env(safe-area-inset-top) + 28px) 18px 28px; }
-  header { display: flex; align-items: center; gap: 12px; margin-bottom: 22px; }
-  header img { width: 44px; height: 44px; border-radius: 10px; }
-  h1 { margin: 0; font-size: 20px; }
-  .row { display: flex; gap: 10px; align-items: baseline; padding: 12px 14px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; margin-bottom: 10px; }
-  .row b { flex: none; width: 1.2em; }
-  .ok b { color: var(--ok); } .bad b { color: var(--bad); } .na b { color: var(--muted); }
-  p { color: var(--muted); font-size: 14px; }
-</style>
+<!-- Приложение для телефонов группы (ТЗ-8-Группа.md). Этап 1: вход по QR с подтверждением оператора, все песни
+     на телефоне (IndexedDB), поиск, работа без сети. Хранилище и синхронизация — db.js, экраны — app.js, кэш — sw.js -->
 </head>
 <body>
-<main>
-  <header><img src="/icon.png" alt=""><h1>multiplayerSHOW — группа</h1></header>
-  <div class="row" id="https"><b>…</b><span>Защищённое соединение</span></div>
-  <div class="row" id="link"><b>…</b><span>Связь с программой</span></div>
-  <div class="row" id="sw"><b>…</b><span>Можно установить как приложение</span></div>
-  <p id="about">Это проверочная страница. Если все три строки зелёные — адрес и сертификат настроены верно. Песни, текущий слайд и пометки появятся здесь в следующих версиях программы.</p>
-</main>
-<script>
-// ok: true — ✓, false — ✗, null — «не для этого адреса» (простой адрес по Wi-Fi, так и задумано)
-const mark = (id, ok, text) => { const el = document.getElementById(id); el.className = 'row ' + (ok === null ? 'na' : ok ? 'ok' : 'bad'); el.querySelector('b').textContent = ok === null ? '–' : ok ? '✓' : '✗'; if (text) el.querySelector('span').textContent = text; };
-const safe = location.protocol === 'https:';
-mark('https', safe ? true : null, safe ? 'Защищённое соединение (' + location.host + ')' : 'Простой адрес по Wi-Fi (' + location.host + ')');
-fetch('/app/ping', { cache: 'no-store' }).then((r) => r.json()).then((j) => mark('link', j.app === 'church-presenter', 'Связь с программой есть'))
-  .catch(() => mark('link', false, 'Нет связи с программой'));
-if (safe) mark('sw', window.isSecureContext && 'serviceWorker' in navigator, 'Можно установить как приложение');
-else mark('sw', null, 'Установить как приложение — только на защищённом адресе');
-if (!safe) document.getElementById('about').textContent = 'Это проверочная страница. Связь с программой есть — значит, QR-код работает. Чтобы установить приложение на экран «Домой» и открывать без сети, в программе настройте «Группа → Адрес и сертификат». Песни, текущий слайд и пометки появятся здесь в следующих версиях программы.';
-</script>
+
+<!-- Вход: имя и роль → запрос оператору -->
+<div class="scr" id="scrJoin" hidden>
+  <header class="bar"><img class="logo" src="icon-192.png" alt=""><h1>multiplayerSHOW — группа</h1></header>
+  <main class="pad">
+    <p class="msg" id="joinMsg" hidden></p>
+    <label class="lbl" for="joinName">Как вас зовут</label>
+    <input id="joinName" class="field" maxlength="40" autocomplete="name" enterkeyhint="done" placeholder="Имя (его увидит оператор)">
+    <div class="lbl">Кто вы в группе</div>
+    <div class="roles" id="joinRoles"></div>
+    <button class="big primary" id="joinGo">Попросить доступ</button>
+    <p class="hint">Оператор увидит запрос в программе (окно «Группа») и нажмёт «Пустить». Дальше телефон входит сам.</p>
+  </main>
+</div>
+
+<!-- Ждём оператора -->
+<div class="scr" id="scrWait" hidden>
+  <header class="bar"><img class="logo" src="icon-192.png" alt=""><h1>multiplayerSHOW — группа</h1></header>
+  <main class="pad center">
+    <div class="spin" aria-hidden="true"></div>
+    <h2>Ждём оператора</h2>
+    <p class="hint" id="waitText">Попросите оператора открыть в программе окно «Группа» и нажать «Пустить».</p>
+    <button class="big" id="waitCancel">Отменить</button>
+  </main>
+</div>
+
+<!-- Песни -->
+<div class="scr" id="scrLib" hidden>
+  <header class="bar">
+    <h1 class="grow">Песни <span class="count" id="libCount"></span></h1>
+    <button class="conn" id="conn" aria-label="Связь с программой"><i class="dot"></i><span id="connText">…</span></button>
+    <button class="icon" id="menuBtn" aria-label="Сведения и настройки">
+      <svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>
+    </button>
+  </header>
+  <div class="tools">
+    <div class="search">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M15.5 15.5 21 21" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      <input id="q" type="search" placeholder="Слова или номер" enterkeyhint="search" autocomplete="off" autocapitalize="off" spellcheck="false" aria-label="Поиск песни">
+    </div>
+    <select id="libSel" aria-label="Библиотека"></select>
+  </div>
+  <div class="prog" id="prog" hidden><i id="progBar"></i></div>
+  <div class="banner" id="banner" hidden><span id="bannerText"></span><button id="bannerBtn" hidden></button></div>
+  <div class="list" id="list" role="list"></div>
+  <p class="empty" id="empty" hidden></p>
+</div>
+
+<!-- Песня -->
+<div class="scr" id="scrSong" hidden>
+  <header class="bar">
+    <button class="icon" id="back" aria-label="Назад к песням">
+      <svg viewBox="0 0 24 24"><path d="M15 5 8 12l7 7" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </button>
+    <h1 class="grow" id="songTitle"></h1>
+    <button class="icon txt" id="fsMinus" aria-label="Мельче">A−</button>
+    <button class="icon txt" id="fsPlus" aria-label="Крупнее">A+</button>
+  </header>
+  <main class="song" id="songBody"></main>
+</div>
+
+<!-- Сведения и настройки -->
+<dialog class="sheet" id="sheet">
+  <div class="sheet-head"><h2>Сведения</h2><button class="icon" id="sheetX" aria-label="Закрыть">
+    <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg></button></div>
+  <div class="sheet-body">
+    <div class="row-i"><span>Вы</span><b id="iWho"></b></div>
+    <div class="row-i"><span>Устройство</span><b id="iDev"></b></div>
+    <div class="row-i"><span>Связь</span><b id="iConn"></b></div>
+    <div class="row-i"><span>Адрес</span><b id="iAddr"></b></div>
+    <div class="row-i"><span>Песен на телефоне</span><b id="iSongs"></b></div>
+    <div class="row-i"><span>Обновлено</span><b id="iAt"></b></div>
+    <div class="btns"><button id="iSync">Обновить песни</button><button id="iResync">Загрузить всё заново</button></div>
+    <p class="hint" id="iStore"></p>
+    <p class="hint" id="iVer"></p>
+    <div class="btns"><button class="danger" id="iForget">Отключить этот телефон</button></div>
+  </div>
+</dialog>
+
+<!-- Вопрос «Да / Отмена» -->
+<dialog class="ask" id="ask">
+  <p id="askText"></p>
+  <div class="btns"><button id="askNo">Отмена</button><button class="primary" id="askOk">Да</button></div>
+</dialog>
+
+<div class="toast" id="toast" hidden></div>
+
+<script src="vendor/minisearch.js"></script>
+<script src="db.js"></script>
+<script src="app.js"></script>
 </body>
 </html>

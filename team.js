@@ -4,7 +4,10 @@
    Раздел «Подключить телефон»: QR-код. Простой адрес http://<IP>:8090/app/ работает без аккаунта (но без установки
    и офлайна); защищённый https://<домен>/app/ — когда настроен адрес и сертификат. Какой в коде — cp.teamQr.
    Раздел «Адрес и сертификат»: домен deSEC / Duck DNS, токен (хранится зашифрованным, сюда не возвращается),
-   адрес компьютера, порт, «Записать адрес в DNS», «Проверить адрес», «Получить сертификат». */
+   адрес компьютера, порт, «Записать адрес в DNS», «Проверить адрес», «Получить сертификат».
+   Раздел «Люди и устройства» (teamapi.js, данные — grInfo.grp): ожидают подтверждения («Пустить» / «Отклонить»,
+   они же — под QR-кодом), люди с ролью, их телефоны: в сети, приостановить, отозвать. «Журнал» — team-log.jsonl.
+   Новый запрос, пока окно закрыто, — число на кнопке «Группа» и строка состояния. */
 
 let grInfo = null;
 let grFwSt = null;   // брандмауэр: { rule — порты пульта (простой адрес), pub, team — порт https }
@@ -48,6 +51,7 @@ function grPaint() {
   ips.value = c.ip && n.ips.includes(c.ip) ? c.ip : '';
 
   grQrPaint();
+  grGrpPaint();
   // Сервер
   if (!c.on) grSt('tmSrv', 'Выключен. Телефоны группы не подключатся.', '');
   else if (n.srv.running) grSt('tmSrv', `Защищённый адрес работает: ${n.url}`, 'ok');
@@ -133,10 +137,129 @@ function grQrPaint() {
   if (fwBad) $('tmQrFwText').textContent = 'Брандмауэр Windows не пускает телефоны к программе' + (grFwSt.pub ? ' (сеть Wi-Fi отмечена как общественная)' : '') + '. Нажмите кнопку и подтвердите в окне Windows.';
 }
 
+/* ----- Люди и устройства ----- */
+
+const grRole = (id) => ((grInfo && grInfo.grp.roles.find((r) => r.id === id)) || { name: id || '' }).name;
+const grEl = (tag, cls, text) => Object.assign(document.createElement(tag), cls ? { className: cls } : {}, text != null ? { textContent: text } : {});
+function grBtn(text, fn, primary) {
+  const b = grEl('button', primary ? 'primary' : '', text);
+  b.addEventListener('click', fn);
+  return b;
+}
+const grDo = (a, okText) => grCall(window.api.teamDo(a), okText);
+
+// Ожидают подтверждения — в разделе «Подключить телефон» (рядом с QR-кодом) и в «Люди и устройства»
+function grPendList(list) {
+  if (!list.length) return [];
+  const out = [grEl('h3', '', `Ожидают подтверждения (${list.length})`)];
+  for (const r of list) {
+    const row = grEl('div', 'tm-req');
+    const who = grEl('span', 'who');
+    who.append(grEl('b', '', r.name), document.createTextNode(' · ' + grRole(r.role)), grEl('span', 'tm-sub', `${r.dev} · ${r.ip} · ${grFmt(r.at)}`));
+    const acts = grEl('span', 'acts');
+    acts.append(grBtn('Пустить', () => grDo({ act: 'approve', id: r.id }, `«${r.name}» — доступ открыт`), true),
+      grBtn('Отклонить', () => grDo({ act: 'reject', id: r.id }, 'Запрос отклонён')));
+    row.append(who, acts);
+    out.push(row);
+  }
+  return out;
+}
+
+function grGrpPaint() {
+  const g = grInfo.grp;
+  $('tmQrPend').replaceChildren(...grPendList(g.pending));
+  $('tmDevPend').replaceChildren(...grPendList(g.pending));
+  $('tmDevCnt').textContent = g.pending.length ? String(g.pending.length) : '';
+  const devs = g.people.reduce((n, p) => n + p.devices.length, 0);
+  grSt('tmQrOnline', devs ? `В сети: ${g.online} из ${devs} (раздел «Люди и устройства»)` : '', g.online ? 'ok' : '');
+
+  const box = $('tmPeople');
+  if (!g.people.length) {
+    box.replaceChildren(grEl('p', 'hint', 'Пока никого. Покажите QR-код из раздела «Подключить телефон» — телефон попросит доступ, и он появится здесь.'));
+    return;
+  }
+  // Человек выбирает роль в списке — не перерисовывать под рукой
+  if (box.contains(document.activeElement) && document.activeElement.tagName === 'SELECT') return;
+  box.replaceChildren(grEl('h3', '', `Люди (${g.people.length}), в сети: ${g.online}`), ...g.people.map((p) => {
+    const card = grEl('div', 'tm-person');
+    const head = grEl('div', 'tm-p-head');
+    const role = grEl('select');
+    role.setAttribute('aria-label', 'Роль: ' + p.name);
+    role.append(...g.roles.map((r) => Object.assign(grEl('option', '', r.name), { value: r.id, selected: r.id === p.role })));
+    role.addEventListener('change', () => grDo({ act: 'person', id: p.id, role: role.value }, 'Роль изменена'));
+    head.append(grEl('b', '', p.name), role, grEl('span', 'spacer'),
+      grBtn('Переименовать', async () => {
+        const n = await askName('Имя', p.name);
+        if (n && n !== p.name) grDo({ act: 'person', id: p.id, name: n }, 'Имя изменено');
+      }),
+      grBtn('Удалить', async () => {
+        if (await askYes(`Удалить «${p.name}»? Все телефоны этого человека потеряют доступ. Попросить доступ снова можно по QR-коду.`, 'Удалить', true)) grDo({ act: 'delPerson', id: p.id }, `«${p.name}» больше не в группе`);
+      }));
+    card.append(head);
+    if (!p.devices.length) card.append(grEl('div', 'tm-dev', 'Нет телефонов'));
+    for (const d of p.devices) {
+      const row = grEl('div', 'tm-dev');
+      const who = grEl('span', 'who');
+      const st = d.off ? 'доступ приостановлен' : d.online ? 'в сети' : d.seen ? 'последний раз: ' + grFmt(d.seen) : 'подключений ещё не было';
+      const sub = [d.synced ? 'песни получены ' + grFmt(d.synced) : 'песни ещё не получены', d.ip].filter(Boolean).join(' · ');
+      who.append(grEl('i', 'tm-dot' + (d.off ? ' off' : d.online ? ' on' : '')), grEl('b', '', d.name), document.createTextNode(' — ' + st), grEl('span', 'tm-sub', sub));
+      const acts = grEl('span', 'acts');
+      acts.append(d.off ? grBtn('Включить', () => grDo({ act: 'off', id: d.id, off: false }, 'Доступ снова открыт'))
+          : grBtn('Приостановить', () => grDo({ act: 'off', id: d.id, off: true }, 'Доступ приостановлен — «Включить», чтобы вернуть')),
+        grBtn('Отозвать', () => grDo({ act: 'revoke', id: d.id }, 'Доступ отозван — телефон может попросить его снова по QR-коду')));
+      row.append(who, acts);
+      row.title = d.at ? 'Пустили ' + grFmt(d.at) : '';
+      card.append(row);
+    }
+    return card;
+  }));
+}
+
+// Число ожидающих — на кнопке «Группа»; новый запрос при закрытом окне — строка состояния
+let grPendSeen = new Set();
+function grBadge() {
+  const list = grInfo && grInfo.grp ? grInfo.grp.pending : [];
+  const b = $('teamOpen');
+  if (list.length) b.dataset.n = String(list.length); else delete b.dataset.n;
+  const fresh = list.filter((r) => !grPendSeen.has(r.id));
+  grPendSeen = new Set(list.map((r) => r.id));
+  if (fresh.length && !$('teamDialog').open) flashStatus(`«${fresh[0].name}» просит доступ к приложению группы — окно «Группа»`);
+}
+
+// Журнал: читаем, когда раздел открыт (и после перемен, не чаще раза в секунду)
+const GR_EV = {
+  join: (x) => `${x.name} (${grRole(x.role)}) просит доступ — ${x.dev}, ${x.ip}`,
+  approve: (x) => `Пустили: ${x.name} — ${x.dev}`,
+  admit: (x) => `${x.name}: телефон получил ключ — ${x.dev}, ${x.ip}`,
+  reject: (x) => `Отклонили: ${x.name} — ${x.dev}`,
+  off: (x) => `Приостановили: ${x.name} — ${x.dev}`,
+  on: (x) => `Снова открыли доступ: ${x.name} — ${x.dev}`,
+  revoke: (x) => `Отозвали доступ: ${x.name} — ${x.dev}`,
+  delPerson: (x) => `Удалили из группы: ${x.name}`,
+  bad: (x) => `Попытка войти с чужим или отозванным ключом — ${x.ip}`,
+};
+let grLogT = 0;
+function grJournal() {
+  clearTimeout(grLogT);
+  grLogT = setTimeout(async () => {
+    if (grTab !== 'log' || !$('teamDialog').open) return;
+    const r = await window.api.teamDo({ act: 'log' }).catch(() => null);
+    const list = (r && r.ok && r.info.res) || [];
+    const box = $('tmJournal');
+    if (!list.length) { box.replaceChildren(grEl('div', '', 'Пока пусто')); return; }
+    box.replaceChildren(...list.map((x) => {
+      const row = grEl('div', 'ev');
+      row.append(grEl('time', '', grFmt(x.at)), grEl('span', '', (GR_EV[x.ev] || ((y) => y.ev))(x)));
+      return row;
+    }));
+  }, 300);
+}
+
 function grShowTab(tab) {
   grTab = tab;
   document.querySelectorAll('.tm-nav button').forEach((b) => b.setAttribute('aria-current', String(b.dataset.tm === tab)));
   document.querySelectorAll('.tm-sec').forEach((s) => { s.hidden = s.dataset.tm !== tab; });
+  if (tab === 'log') grJournal();
 }
 
 function grOpen() {
@@ -158,7 +281,8 @@ async function grCall(p, okText) {
 }
 const grSet = (p) => grCall(window.api.teamSet(p));
 
-window.api.onTeamInfo((n) => { grInfo = n; grPaint(); });
+window.api.onTeamInfo((n) => { grInfo = n; grBadge(); grPaint(); if (grTab === 'log') grJournal(); });
+window.api.teamInfo().then((n) => { grInfo = n; grBadge(); }).catch(() => {});
 
 $('teamOpen').addEventListener('click', grOpen);
 document.querySelectorAll('.tm-nav button').forEach((b) => b.addEventListener('click', () => grShowTab(b.dataset.tm)));
