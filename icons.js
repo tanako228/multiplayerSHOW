@@ -74,7 +74,9 @@ const Icons = (() => {
     cast: ['#7ee0a8', '#16a35a', `<rect x="7.6" y="4.4" width="8.8" height="15.2" rx="2" fill="none" stroke="${W}" stroke-width="1.7"/><rect x="9.4" y="6.8" width="5.2" height="8.6" rx=".6" fill="${W}" opacity=".4"/>` + line('M11 17.6h2', 1.5)],
     // Пульт с телефона (remote.js): телефон и волны связи
     phone: ['#ffb36b', '#e0571b', `<rect x="6.4" y="4.4" width="7.6" height="15.2" rx="1.8" fill="none" stroke="${W}" stroke-width="1.7"/>` + line('M9.4 17.4h1.6', 1.5) + line('M16.4 8.6a4 4 0 0 1 0 6.8M18.4 6.6a7 7 0 0 1 0 10.8', 1.4)],
-    mic: ['#ff8fc0', '#d23a7a', `<rect x="9.4" y="4.6" width="5.2" height="9.4" rx="2.6" fill="${W}"/>` + line('M7 11.8a5 5 0 0 0 10 0M12 16.8v2.6M9.4 19.4h5.2', 1.6)],
+    // Группа (team.js): телефоны музыкантов — два человека
+    team: ['#5fe0b4', '#0d8f68', `<circle cx="9.4" cy="8.9" r="2.7" fill="${W}"/><path d="M4.4 18c.3-3 2.4-4.8 5-4.8s4.7 1.8 5 4.8z" fill="${W}"/><circle cx="15.8" cy="9.6" r="2.2" fill="${W}" opacity=".65"/><path d="M15.2 13.5c2.4-.2 4.2 1.4 4.5 4.5h-3.9c-.1-1.8-.3-3.3-.6-4.5z" fill="${W}" opacity=".65"/>`],
+    mic: ['#ff8fc0', '#d23a7a',`<rect x="9.4" y="4.6" width="5.2" height="9.4" rx="2.6" fill="${W}"/>` + line('M7 11.8a5 5 0 0 0 10 0M12 16.8v2.6M9.4 19.4h5.2', 1.6)],
     // Разделы настроек
     show: ['#5ea2ff', '#2a5fe0', `<path d="M9 6.8v10.4l8.4-5.2z" fill="${W}"/>`],
     text: ['#ffb45e', '#de731c', `<path d="M5.4 17.6L9 6.6h1.6l3.6 11" stroke="${W}" stroke-width="1.9" fill="none" stroke-linejoin="round" stroke-linecap="round"/>` + line('M6.7 14h6.2', 1.7) + `<circle cx="16.8" cy="15.6" r="2.2" fill="none" stroke="${W}" stroke-width="1.7"/>` + line('M19 13.2v4.4', 1.7)],

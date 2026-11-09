@@ -6,11 +6,12 @@
 
 ## Структура (всё в корне)
 - `main.js` — главный процесс: окна, IPC, файлы, PowerPoint→PNG, Библии, `library.json`, окна выходов экранов (`syncScreens`). `ndi.js` — NDI приём/отправка (koffi). `cast.js` — AirPlay/Miracast. `preload.js` — единственный мост `window.api`.
-- `index.html` — окно оператора; скрипты строго по порядку (общие глобальные функции): icons → iconlib → scene → compose → bible → slides → themes → renderer → playlist → songs → tools → music → sources → layers → themeeditor → quick → macros → screens → audioeditor → stage → qr → remote → splash.
+- `index.html` — окно оператора; скрипты строго по порядку (общие глобальные функции): icons → iconlib → scene → compose → bible → slides → themes → renderer → playlist → songs → tools → music → sources → layers → themeeditor → quick → macros → screens → audioeditor → stage → qr → remote → team → splash.
 - `scene.js` — отрисовка слайдов и слоёв. `compose.js` — экраны и экранные сцены (общая для вывода и оператора).
 - `renderer.js` — настройки, слои вывода, вкладки, горячие клавиши (`ACTIONS`). `playlist.js` — плейлисты/библиотеки, лента, отмена (`HIST_KEYS`).
 - Вкладки: `bible.js`, `music.js`; вкладка «Редактор ▾» (меню `edMenu`) — `themeeditor.js` (редактор тем), `screens.js` (редактор сцен: экраны, сцены-выходы, пресеты сцен = макеты, `tab = 'scenes'`), `macros.js` (редактор макросов), `audioeditor.js` (аудиоредактор, `tab = 'audio'`: волна, обрезка, скорость/тон с «Сохранить тон» — WSOLA, встроенные плагины `AE_FX`; сохраняет новым WAV в `media/`, исходник не трогает); `songs.js`, `sources.js`, `layers.js`, `quick.js`, `tools.js` (медиапул, рисование, пресеты).
 - `remote.js` + `phone.html` + `qr.js` + `thumb.html/js` — пульт с телефона: доступ к одной презентации по QR-коду (сервер `rmHandle` в main.js, `cp.remote`).
+- Приложение для группы (телефоны музыкантов) — по этапам, план и решения в `ТЗ-8-Группа.md`, владельцу — `ИНСТРУКЦИЯ-ГРУППА.md`. `teamsrv.js` (главный процесс: домен deSEC/Duck DNS, A-запись на локальный IP, сертификат Let's Encrypt DNS-01 через `acme-client`, HTTPS на постоянном порту, `/app/…` через `rmHandle`), `team.js` (окно «Группа», глобальные имена `gr*`), `app/` — само приложение (PWA). Данные группы — `team.json` и `tls\`, не в `lib`.
 - `stage.js` — сценический экран (Stage Display): данные инфоблоков (`stSend`), таймеры, сообщение, «только на сцену», панель «Сцена» под предпросмотром, ноды макросов.
 - `output.html/js` — окно вывода = один экран (`?screen=id`). `editor.html/js` — окно «Картинка» (правка фото); слайды правятся в редакторе тем (`slide.look`, `openSlideLook`), старого редактора слайдов нет. `brand/` — логотипы, иконка (не перерисовывать).
 
@@ -25,7 +26,7 @@
 - `APP_ID` в main.js = `build.appId` (иначе ломаются закреплённые ярлыки); значок для Windows — из exe, не из `app.asar`; старые ярлыки чинит `fixShortcuts()`.
 
 ## Данные (не терять!)
-- `%APPDATA%\church-presenter`: `library.json` (items, libraries, playlists, themes, themesLive, macros, screens, scenes, timers, verseSplits…), `bibles/`, `fonts/`, `images/`, `media/`, `slides/`, `thumbs/` (кэш).
+- `%APPDATA%\church-presenter`: `library.json` (items, libraries, playlists, themes, themesLive, macros, screens, scenes, timers, verseSplits…), `bibles/`, `fonts/`, `images/`, `media/`, `slides/`, `thumbs/` (кэш), `team.json` + `tls\` (группа: адрес, токен зашифрован, сертификат).
 - `localStorage`: `cp.settings` и др. Меняешь формат — добавь перенос старых данных (как `Slides.migrate`).
 - Запасная копия всех `cp.*` — `settings-backup.json` (preload.js пишет раз в 5 с и при закрытии; пропало хранилище — возвращает при запуске). Вторая копия программы не запускается (`requestSingleInstanceLock`) — две копии стирали localStorage.
 - Имя папки данных и метки `app: 'church-presenter'` не менять — по ним узнаются старые файлы.

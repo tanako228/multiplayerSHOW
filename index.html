@@ -772,6 +772,23 @@
     .set-nav button:hover { background: var(--field); }
     .set-nav button[aria-current=true] { background: var(--live-soft); color: var(--live); font-weight: 600; }
     .set-body { flex: 1; min-width: 0; overflow-y: auto; padding: 16px 22px; }
+    /* Окно «Группа» (team.js): разделы слева, как в настройках */
+    .tm-wrap { flex: 1; min-height: 0; display: flex; }
+    .tm-nav { width: 200px; flex: none; display: flex; flex-direction: column; gap: 2px; padding: 12px; border-right: 1px solid var(--line); }
+    .tm-nav button { text-align: left; background: none; border: 0; border-radius: calc(6px * var(--rk, 1)); padding: 9px 12px; }
+    .tm-nav button:hover { background: var(--field); }
+    .tm-nav button[aria-current=true] { background: var(--live-soft); color: var(--live); font-weight: 600; }
+    .tm-body { flex: 1; min-width: 0; overflow-y: auto; padding: 16px 22px; }
+    .tm-body .set-group .field > input:not([type=checkbox]) { width: 260px; }
+    .tm-tok { display: flex; gap: 6px; }
+    .tm-tok input { width: 180px !important; }
+    .tm-btns { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+    .tm-st { margin: 6px 0 0; font-size: 13px; }
+    .tm-st.ok { color: var(--ok, #3fb950); }
+    .tm-st.bad { color: var(--warn); }
+    .tm-log { max-width: 560px; font-size: 12px; line-height: 1.5; border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; white-space: pre-wrap; user-select: text; }
+    .tm-log:empty { display: none; }
+    .tm-log .tip { color: var(--muted); margin: 0 0 4px 16px; }
     .set-sec[hidden] { display: none; }
     .set-group { margin-bottom: 22px; max-width: 560px; }
     .set-group h2 { margin: 0 0 10px; font-size: 14px; font-weight: 600; }
@@ -1780,6 +1797,7 @@
     <button id="addMenu" class="tab-btn add-menu" data-icon="add" title="Добавить: песню, импорт, источник, файл, библиотеку…" aria-haspopup="menu">＋</button>
     <button id="svcTheme" class="tab-btn icon-only" data-icon="theme" title="Тема: для выделенных пунктов «Содержания» (Ctrl/Shift+щелчок, Ctrl+A), а если ничего не выделено — для того, что на экране"></button>
     <button id="poolToggle" class="tab-btn" data-icon="pool" title="Медиапул: файлы из закреплённых папок (F8)">Медиапул</button>
+    <button id="teamOpen" class="tab-btn" data-icon="team" title="Группа: приложение для телефонов музыкантов и певцов — адрес, сертификат, доступ">Группа</button>
     <button id="openSettings" class="tab-btn" data-icon="settings" title="Настройки: монитор и вывод, показ, звук, горячие клавиши">Настройки</button>
     </div>
   </div>
@@ -2719,6 +2737,55 @@
     </div>
   </dialog>
 
+  <!-- Группа: приложение для телефонов музыкантов (team.js, сервер — teamsrv.js). ТЗ-8-Группа.md -->
+  <dialog id="teamDialog" class="wide">
+    <div class="dlg-head">
+      <h2 data-icon="team">Группа</h2>
+      <button class="dlg-x" title="Закрыть">×</button>
+    </div>
+    <div class="tm-wrap">
+      <nav class="tm-nav" aria-label="Разделы окна «Группа»">
+        <button data-tm="addr" data-icon="web" aria-current="true">Адрес и сертификат</button>
+      </nav>
+      <div class="tm-body">
+        <section class="tm-sec" data-tm="addr">
+          <p class="hint" style="margin:0 0 12px">Телефоны группы открывают приложение по адресу в интернете (домену), который указывает на этот компьютер в сети церкви. Нужны: бесплатный адрес у deSEC или Duck DNS, его токен и сертификат — программа получит его сама. Как завести адрес — ИНСТРУКЦИЯ-ГРУППА.md.</p>
+          <div id="tmFw" class="rm-fw" hidden><span id="tmFwText"></span> <button id="tmFwFix" class="primary">Разрешить в брандмауэре</button></div>
+          <div class="set-group">
+            <h2>Сервер</h2>
+            <div class="field"><label class="check"><input type="checkbox" id="tmOn"> Включить сервер группы (HTTPS)</label></div>
+            <p class="tm-st" id="tmSrv"></p>
+          </div>
+          <div class="set-group">
+            <h2>Адрес (домен)</h2>
+            <div class="field"><span>DNS-провайдер</span><select id="tmProv" aria-label="DNS-провайдер"></select></div>
+            <div class="field"><span>Адрес</span><input id="tmDomain" placeholder="moya-cerkov.dedyn.io" spellcheck="false" autocomplete="off"></div>
+            <div class="field"><span>Токен провайдера</span><span class="tm-tok"><input id="tmToken" type="password" autocomplete="off" spellcheck="false"><button id="tmTokenSave">Сохранить</button></span></div>
+            <p class="hint" id="tmTokHint"></p>
+            <div class="field"><span>Адрес компьютера в сети</span><select id="tmIp" aria-label="Адрес компьютера в сети"></select></div>
+            <div class="field"><span>Порт</span><input id="tmPort" type="number" min="1" max="65535" style="width:100px"></div>
+            <p class="hint">Адрес и порт не меняйте после того, как группа установила приложение: телефон хранит пометки «на адрес», с новым адресом приложение откроется пустым.</p>
+            <p class="tm-st" id="tmDnsSt"></p>
+            <div class="tm-btns"><button id="tmDnsNow">Записать адрес в DNS</button><button id="tmCheck">Проверить адрес</button></div>
+          </div>
+          <div class="set-group">
+            <h2>Сертификат (Let's Encrypt)</h2>
+            <div class="field"><span>Почта (необязательно)</span><input id="tmEmail" type="email" placeholder="письма о сроке сертификата" spellcheck="false"></div>
+            <div class="field"><label class="check"><input type="checkbox" id="tmStaging"> Тестовый сертификат — для проб (телефоны ему не доверяют)</label></div>
+            <p class="tm-st" id="tmCertSt"></p>
+            <div class="tm-btns"><button id="tmCert" class="primary">Получить сертификат</button></div>
+            <p class="hint">Нажимая «Получить сертификат», вы принимаете условия Let's Encrypt (letsencrypt.org/repository). Дальше сертификат продлевается сам, пока программа хотя бы иногда запускается с интернетом.</p>
+          </div>
+          <div class="tm-log" id="tmLog"></div>
+        </section>
+      </div>
+    </div>
+    <div class="dlg-foot">
+      <span class="spacer"></span>
+      <button class="dlg-x primary">Готово</button>
+    </div>
+  </dialog>
+
   <!-- Короткая инструкция к редактору макросов (macros.js: кнопка «?») -->
   <dialog id="mcHelpDialog" class="wide">
     <div class="dlg-head">
@@ -3031,6 +3098,7 @@
   <script src="stage.js"></script>
   <script src="qr.js"></script>
   <script src="remote.js"></script>
+  <script src="team.js"></script>
   <script src="splash.js"></script>
 </body>
 </html>

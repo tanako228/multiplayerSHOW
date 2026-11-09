@@ -1,7 +1,8 @@
-const { app, BrowserWindow, ipcMain, dialog, screen, nativeImage, clipboard, shell, desktopCapturer, powerMonitor } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, screen, nativeImage, clipboard, shell, desktopCapturer, powerMonitor, safeStorage } = require('electron');
 const dgram = require('dgram');
 const ndi = require('./ndi');
 const cast = require('./cast');
+const team = require('./teamsrv');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
@@ -1902,6 +1903,15 @@ app.whenReady().then(() => {
   // Приём экрана с телефона: AirPlay (UxPlay, имя «MP SHOW») и Miracast (cast.js)
   cast.setup(ipcMain, () => control, APP_ICON);
   app.on('will-quit', cast.stop);
+  // Сервер группы (teamsrv.js): адрес-домен, HTTPS, сертификат. Запросы https — в тот же обработчик, что у пульта.
+  // Токен DNS-провайдера — зашифрован Windows (safeStorage), без шифрования — только если его нет в системе
+  team.setup(ipcMain, {
+    dir: app.getPath('userData'), appDir: path.join(__dirname, 'app'), ips: rmIps, handler: rmHandle,
+    seal: (s) => (safeStorage.isEncryptionAvailable() ? 'dp:' + safeStorage.encryptString(s).toString('base64') : 'raw:' + Buffer.from(s).toString('base64')),
+    unseal: (s) => (s.startsWith('dp:') ? safeStorage.decryptString(Buffer.from(s.slice(3), 'base64')) : s.startsWith('raw:') ? Buffer.from(s.slice(4), 'base64').toString() : ''),
+    notify: (i) => { if (control && !control.isDestroyed()) control.webContents.send('team:info', i); },
+  });
+  app.on('will-quit', team.shutdown);
 
   ipcMain.handle('pool:list', async (_e, dir) => {
     try {
@@ -2430,6 +2440,7 @@ function rmHandle(req, res) {
     if (!old || old.ip !== ip || rmSeen.at - old.at > 3000) rmNotify();
   }
   const u = new URL(req.url, 'http://x');
+  if (team.route(req, res, u)) return; // приложение группы: /app/… (teamsrv.js)
   const t = u.searchParams.get('t');
   const m = /^\/r\/([0-9a-z]+)\/?$/.exec(u.pathname);
   if (m) {
@@ -2558,19 +2569,22 @@ ipcMain.handle('remote:state', (_e, st) => {
 });
 ipcMain.handle('remote:info', () => rmInfo());
 // Брандмауэр Windows: без правила телефон не достучится (особенно в «общественной» сети Wi-Fi).
-// Правило по портам пульта (8090–8110), для любых сетей; ставит его сам владелец кнопкой — Windows спрашивает разрешение (UAC)
+// Правило по портам пульта (8090–8110) и порту HTTPS группы (teamsrv.js, обычно 443), для любых сетей;
+// ставит его сам владелец кнопкой — Windows спрашивает разрешение (UAC). team — в правиле есть порт группы
 const RM_FW = 'multiplayerSHOW — пульт с телефона';
 const rmPs = (cmd) => new Promise((ok) => execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', '[Console]::OutputEncoding=[Text.Encoding]::UTF8; ' + cmd],
   { windowsHide: true, timeout: 60000 }, (err, out) => ok(err ? '' : String(out || ''))));
 async function rmFw() {
-  if (process.platform !== 'win32') return { rule: true, pub: false };
-  const out = await rmPs(`$r = @(Get-NetFirewallRule -DisplayName '${RM_FW}' -ErrorAction SilentlyContinue | Where-Object { $_.Enabled -eq 'True' -and $_.Action -eq 'Allow' }).Count; $p = @(Get-NetConnectionProfile -ErrorAction SilentlyContinue | Where-Object { $_.NetworkCategory -eq 'Public' }).Count; "$r|$p"`);
-  const [r, p] = out.trim().split('|').map(Number);
-  return { rule: r > 0, pub: p > 0 };
+  if (process.platform !== 'win32') return { rule: true, pub: false, team: true };
+  const out = await rmPs(`$r = @(Get-NetFirewallRule -DisplayName '${RM_FW}' -ErrorAction SilentlyContinue | Where-Object { $_.Enabled -eq 'True' -and $_.Action -eq 'Allow' }); $ports = @($r | Get-NetFirewallPortFilter | ForEach-Object { $_.LocalPort }) -join ','; $p = @(Get-NetConnectionProfile -ErrorAction SilentlyContinue | Where-Object { $_.NetworkCategory -eq 'Public' }).Count; "$($r.Count)|$p|$ports"`);
+  const [r, p, ports] = out.trim().split('|');
+  const tp = team.port();
+  const has = String(ports || '').split(',').some((x) => { const m = /^(\d+)(?:-(\d+))?$/.exec(x.trim()); return m && tp >= +m[1] && tp <= +(m[2] || m[1]); });
+  return { rule: Number(r) > 0, pub: Number(p) > 0, team: Number(r) > 0 && has };
 }
 ipcMain.handle('remote:fw', () => rmFw());
 ipcMain.handle('remote:fwFix', async () => {
-  const inner = `Remove-NetFirewallRule -DisplayName '${RM_FW}' -ErrorAction SilentlyContinue; New-NetFirewallRule -DisplayName '${RM_FW}' -Direction Inbound -Protocol TCP -LocalPort ${RM_PORT}-${RM_PORT + 20} -Action Allow -Profile Any | Out-Null`;
+  const inner = `Remove-NetFirewallRule -DisplayName '${RM_FW}' -ErrorAction SilentlyContinue; New-NetFirewallRule -DisplayName '${RM_FW}' -Direction Inbound -Protocol TCP -LocalPort '${RM_PORT}-${RM_PORT + 20}','${team.port()}' -Action Allow -Profile Any | Out-Null`;
   const enc = Buffer.from(inner, 'utf16le').toString('base64');
   await rmPs(`try { Start-Process powershell.exe -Verb RunAs -WindowStyle Hidden -Wait -ArgumentList '-NoProfile','-EncodedCommand','${enc}' } catch {}`);
   return rmFw();

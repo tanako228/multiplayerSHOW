@@ -160,6 +160,15 @@ contextBridge.exposeInMainWorld('api', {
   remoteFwFix: () => ipcRenderer.invoke('remote:fwFix'),
   onRemoteInfo: (cb) => on('remote:info', cb),
   onRemoteCmd: (cb) => on('remote:cmd', cb),
+  // Сервер группы (teamsrv.js, окно «Группа» — team.js): адрес, токен, сертификат, запись в DNS, проверка.
+  // set/token/cert/dns/check → { ok, error?, info }
+  teamInfo: () => ipcRenderer.invoke('team:info'),
+  teamSet: (p) => ipcRenderer.invoke('team:set', p),
+  teamToken: (t) => ipcRenderer.invoke('team:token', t),
+  teamCert: () => ipcRenderer.invoke('team:cert'),
+  teamDns: () => ipcRenderer.invoke('team:dns'),
+  teamCheck: () => ipcRenderer.invoke('team:check'),
+  onTeamInfo: (cb) => on('team:info', cb),
   onThumbDraw: (cb) => on('thumb:draw', cb),
   thumbReady: () => ipcRenderer.send('thumb:ready'),
 });
