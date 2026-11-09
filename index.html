@@ -789,6 +789,16 @@
     .tm-log { max-width: 560px; font-size: 12px; line-height: 1.5; border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; white-space: pre-wrap; user-select: text; }
     .tm-log:empty { display: none; }
     .tm-log .tip { color: var(--muted); margin: 0 0 4px 16px; }
+    .tm-sec[hidden] { display: none; }
+    .tm-qr-wrap { display: flex; gap: 22px; align-items: flex-start; flex-wrap: wrap; }
+    .tm-qr { width: 300px; flex: none; display: flex; flex-direction: column; align-items: center; gap: 8px; text-align: center; }
+    .tm-qr svg { width: 280px; height: 280px; border-radius: 8px; display: block; }
+    .tm-qr .rm-url { font-size: 13px; }
+    .tm-qr-empty { width: 280px; height: 280px; border: 1px dashed var(--line); border-radius: 8px; display: grid; place-items: center; padding: 20px; color: var(--muted); font-size: 13px; }
+    .tm-qr-side { flex: 1; min-width: 260px; }
+    .tm-qr-side .field { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 8px; }
+    .tm-qr-side .field[hidden] { display: none; }
+    .tm-qr-side .field > span { white-space: nowrap; }
     .set-sec[hidden] { display: none; }
     .set-group { margin-bottom: 22px; max-width: 560px; }
     .set-group h2 { margin: 0 0 10px; font-size: 14px; font-weight: 600; }
@@ -2745,15 +2755,34 @@
     </div>
     <div class="tm-wrap">
       <nav class="tm-nav" aria-label="Разделы окна «Группа»">
-        <button data-tm="addr" data-icon="web" aria-current="true">Адрес и сертификат</button>
+        <button data-tm="qr" data-icon="phone" aria-current="true">Подключить телефон</button>
+        <button data-tm="addr" data-icon="web" aria-current="false">Адрес и сертификат</button>
       </nav>
       <div class="tm-body">
-        <section class="tm-sec" data-tm="addr">
-          <p class="hint" style="margin:0 0 12px">Телефоны группы открывают приложение по адресу в интернете (домену), который указывает на этот компьютер в сети церкви. Нужны: бесплатный адрес у deSEC или Duck DNS, его токен и сертификат — программа получит его сама. Как завести адрес — ИНСТРУКЦИЯ-ГРУППА.md.</p>
+        <section class="tm-sec" data-tm="qr">
+          <div class="tm-qr-wrap">
+            <div class="tm-qr" id="tmQr"></div>
+            <div class="tm-qr-side">
+              <p class="hint" style="margin:0 0 12px">Музыкант наводит камеру телефона на код — открывается приложение группы. Телефон должен быть в той же сети Wi-Fi, что и компьютер.</p>
+              <div class="field"><label class="check"><input type="checkbox" id="tmQrOn"> Включить доступ для группы</label></div>
+              <div class="field" id="tmQrModeRow"><span>Адрес в коде</span>
+                <select id="tmQrMode" aria-label="Какой адрес в QR-коде">
+                  <option value="safe">Защищённый (можно установить)</option>
+                  <option value="plain">Простой по Wi-Fi (без аккаунта)</option>
+                </select>
+              </div>
+              <p class="tm-st" id="tmQrSt"></p>
+              <div id="tmQrFw" class="rm-fw" hidden><span id="tmQrFwText"></span> <button id="tmQrFwFix" class="primary">Разрешить в брандмауэре</button></div>
+              <div class="tm-btns"><button id="tmQrCopy">Копировать ссылку</button></div>
+            </div>
+          </div>
+        </section>
+        <section class="tm-sec" data-tm="addr" hidden>
+          <p class="hint" style="margin:0 0 12px">Необязательно: без этого телефоны открывают приложение по простому адресу (раздел «Подключить телефон»). Защищённый адрес нужен, чтобы приложение можно было установить на экран «Домой» и открывать без сети. Нужны бесплатный адрес у deSEC или Duck DNS и его токен, сертификат программа получит сама. Как завести адрес — ИНСТРУКЦИЯ-ГРУППА.md.</p>
           <div id="tmFw" class="rm-fw" hidden><span id="tmFwText"></span> <button id="tmFwFix" class="primary">Разрешить в брандмауэре</button></div>
           <div class="set-group">
             <h2>Сервер</h2>
-            <div class="field"><label class="check"><input type="checkbox" id="tmOn"> Включить сервер группы (HTTPS)</label></div>
+            <div class="field"><label class="check"><input type="checkbox" id="tmOn"> Включить доступ для группы</label></div>
             <p class="tm-st" id="tmSrv"></p>
           </div>
           <div class="set-group">

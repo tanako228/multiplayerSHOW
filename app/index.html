@@ -17,7 +17,7 @@
   h1 { margin: 0; font-size: 20px; }
   .row { display: flex; gap: 10px; align-items: baseline; padding: 12px 14px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; margin-bottom: 10px; }
   .row b { flex: none; width: 1.2em; }
-  .ok b { color: var(--ok); } .bad b { color: var(--bad); }
+  .ok b { color: var(--ok); } .bad b { color: var(--bad); } .na b { color: var(--muted); }
   p { color: var(--muted); font-size: 14px; }
 </style>
 </head>
@@ -27,14 +27,18 @@
   <div class="row" id="https"><b>…</b><span>Защищённое соединение</span></div>
   <div class="row" id="link"><b>…</b><span>Связь с программой</span></div>
   <div class="row" id="sw"><b>…</b><span>Можно установить как приложение</span></div>
-  <p>Это проверочная страница. Если все три строки зелёные — адрес и сертификат настроены верно. Песни, текущий слайд и пометки появятся здесь в следующих версиях программы.</p>
+  <p id="about">Это проверочная страница. Если все три строки зелёные — адрес и сертификат настроены верно. Песни, текущий слайд и пометки появятся здесь в следующих версиях программы.</p>
 </main>
 <script>
-const mark = (id, ok, text) => { const el = document.getElementById(id); el.className = 'row ' + (ok ? 'ok' : 'bad'); el.querySelector('b').textContent = ok ? '✓' : '✗'; if (text) el.querySelector('span').textContent = text; };
-mark('https', location.protocol === 'https:', location.protocol === 'https:' ? 'Защищённое соединение (' + location.host + ')' : 'Без защиты (http) — установить приложение не получится');
+// ok: true — ✓, false — ✗, null — «не для этого адреса» (простой адрес по Wi-Fi, так и задумано)
+const mark = (id, ok, text) => { const el = document.getElementById(id); el.className = 'row ' + (ok === null ? 'na' : ok ? 'ok' : 'bad'); el.querySelector('b').textContent = ok === null ? '–' : ok ? '✓' : '✗'; if (text) el.querySelector('span').textContent = text; };
+const safe = location.protocol === 'https:';
+mark('https', safe ? true : null, safe ? 'Защищённое соединение (' + location.host + ')' : 'Простой адрес по Wi-Fi (' + location.host + ')');
 fetch('/app/ping', { cache: 'no-store' }).then((r) => r.json()).then((j) => mark('link', j.app === 'church-presenter', 'Связь с программой есть'))
   .catch(() => mark('link', false, 'Нет связи с программой'));
-mark('sw', window.isSecureContext && 'serviceWorker' in navigator, window.isSecureContext ? 'Можно установить как приложение' : 'Установка недоступна: нужен https-адрес');
+if (safe) mark('sw', window.isSecureContext && 'serviceWorker' in navigator, 'Можно установить как приложение');
+else mark('sw', null, 'Установить как приложение — только на защищённом адресе');
+if (!safe) document.getElementById('about').textContent = 'Это проверочная страница. Связь с программой есть — значит, QR-код работает. Чтобы установить приложение на экран «Домой» и открывать без сети, в программе настройте «Группа → Адрес и сертификат». Песни, текущий слайд и пометки появятся здесь в следующих версиях программы.';
 </script>
 </body>
 </html>

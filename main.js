@@ -1907,6 +1907,7 @@ app.whenReady().then(() => {
   // Токен DNS-провайдера — зашифрован Windows (safeStorage), без шифрования — только если его нет в системе
   team.setup(ipcMain, {
     dir: app.getPath('userData'), appDir: path.join(__dirname, 'app'), ips: rmIps, handler: rmHandle,
+    want: () => rmWant(), http: () => ({ running: !!rmSrv && !!rmPort, port: rmPort, err: rmErr }),
     seal: (s) => (safeStorage.isEncryptionAvailable() ? 'dp:' + safeStorage.encryptString(s).toString('base64') : 'raw:' + Buffer.from(s).toString('base64')),
     unseal: (s) => (s.startsWith('dp:') ? safeStorage.decryptString(Buffer.from(s.slice(3), 'base64')) : s.startsWith('raw:') ? Buffer.from(s.slice(4), 'base64').toString() : ''),
     notify: (i) => { if (control && !control.isDestroyed()) control.webContents.send('team:info', i); },
@@ -2414,7 +2415,9 @@ function rmStop() {
   rmMirrorClose();
   rmNotify();
 }
-const rmNotify = () => { if (control && !control.isDestroyed()) control.webContents.send('remote:info', rmInfo()); };
+const rmNotify = () => { if (control && !control.isDestroyed()) control.webContents.send('remote:info', rmInfo()); team.changed(); };
+// Сервер нужен, пока есть хоть один доступ к презентации или включён доступ для группы (простой адрес /app/ по Wi-Fi)
+const rmWant = () => { if (rmState.grants.length || team.on()) rmStart(); else rmStop(); };
 
 // Что видит телефон: только своя презентация
 function rmView(g) {
@@ -2564,7 +2567,7 @@ ipcMain.handle('remote:state', (_e, st) => {
     const g = rmGrant(w.t);
     try { if (g) rmJson(w.res, rmView(g)); else rmSend(w.res, 403, 'application/json', '{"gone":true}'); } catch {}
   }
-  if (grants.length) rmStart(); else rmStop();
+  rmWant();
   return rmInfo();
 });
 ipcMain.handle('remote:info', () => rmInfo());

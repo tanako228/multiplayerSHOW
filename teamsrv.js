@@ -6,6 +6,8 @@
    Настройки — team.json в папке данных (раздел net; другие разделы файла не трогаем), ключи и сертификат — tls\.
    Токен провайдера хранится зашифрованным (safeStorage из main.js) и в окно оператора не уходит.
    Запросы https идут в общий обработчик пульта (main.js: rmHandle); он отдаёт сюда /app/… (route).
+   Без домена тоже можно: пока доступ включён, работает простой адрес http://<IP>:8090/app/ (http-сервер пульта,
+   opt.want/opt.http) — открывается по QR сразу, но установить приложение и работать без сети на нём нельзя.
    Модуль работает и без Electron: init() — для проверки в Node, setup() — из main.js. */
 'use strict';
 const fs = require('fs');
@@ -402,8 +404,12 @@ function route(req, res, u) {
 
 function info() {
   const url = cfg.domain ? `https://${cfg.domain}${cfg.port === 443 ? '' : ':' + cfg.port}/app/` : '';
+  // Простой адрес по Wi-Fi (http-сервер пульта в main.js): без аккаунта и сертификата, но без установки и офлайна
+  const h = opt.http ? opt.http() : { running: false, port: 0, err: '' };
+  const ip = curIp();
   return {
-    cfg: { ...cfg }, hasToken: !!token, ip: curIp(), ips: opt.ips ? opt.ips() : [],
+    cfg: { ...cfg }, hasToken: !!token, ip, ips: opt.ips ? opt.ips() : [],
+    http: h, plainUrl: cfg.on && h.running && ip ? `http://${ip}:${h.port}/app/` : '',
     providers: Object.entries(PROVIDERS).map(([id, p]) => ({ id, name: p.name })),
     dns: { ...dnsSt },
     cert: cert ? { domain: cert.domain, staging: cert.staging, until: cert.until, ok: certOk(), days: Math.floor((cert.until - Date.now()) / DAY) } : null,
@@ -446,6 +452,7 @@ function set(p) {
   // Другой адрес или провайдер — прежняя запись в DNS уже не наша
   if (cfg.domain !== was.domain || cfg.provider !== was.provider) dnsSt = { ip: '', at: 0, err: '' };
   save();
+  if (cfg.on !== was.on && opt.want) opt.want(); // простой адрес (http) — включить или выключить вместе с доступом
   if (cfg.on !== was.on || cfg.port !== was.port || cfg.domain !== was.domain || cfg.staging !== was.staging) restart();
   if (cfg.on && (cfg.ip !== was.ip || !dnsSt.ip)) syncDns(false);
   return info();
@@ -468,6 +475,7 @@ function init(o) {
   load();
   loadCert();
   start();
+  if (opt.want) opt.want();
   const t = (fn, ms) => { const h = setInterval(fn, ms); if (h.unref) h.unref(); timers.push(h); };
   t(() => syncDns(false), 60e3);       // IP поменялся — новая A-запись
   t(renewTick, 6 * 3600e3);            // продление сертификата
@@ -493,4 +501,4 @@ function setup(ipcMain, o) {
   ipcMain.handle('team:check', wrap(async () => { const r = await check(); return { ...info(), check: r }; }));
 }
 
-module.exports = { setup, init, shutdown, route, info, set, setToken, issue, check, dnsNow, port: () => cfg.port, on: () => cfg.on, PROVIDERS, _test: { authServers, waitTxt, curIp } };
+module.exports = { setup, init, shutdown, route, info, set, setToken, issue, check, dnsNow, port: () => cfg.port, on: () => cfg.on, changed: notify, PROVIDERS, _test: { authServers, waitTxt, curIp } };

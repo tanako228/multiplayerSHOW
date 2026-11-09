@@ -1,11 +1,15 @@
 /* ---------- Окно «Группа»: приложение для телефонов музыкантов (ТЗ-8-Группа.md) ----------
    Кнопка «Группа» в верхней строке → #teamDialog. Сервер, адрес-домен и сертификат живут в главном процессе
    (teamsrv.js); окно только показывает их состояние (window.api.teamInfo / onTeamInfo) и шлёт правки.
+   Раздел «Подключить телефон»: QR-код. Простой адрес http://<IP>:8090/app/ работает без аккаунта (но без установки
+   и офлайна); защищённый https://<домен>/app/ — когда настроен адрес и сертификат. Какой в коде — cp.teamQr.
    Раздел «Адрес и сертификат»: домен deSEC / Duck DNS, токен (хранится зашифрованным, сюда не возвращается),
    адрес компьютера, порт, «Записать адрес в DNS», «Проверить адрес», «Получить сертификат». */
 
 let grInfo = null;
-let grFwSt = null;   // брандмауэр: { rule, pub, team }
+let grFwSt = null;   // брандмауэр: { rule — порты пульта (простой адрес), pub, team — порт https }
+let grTab = 'qr';    // открытый раздел окна
+let grMode = localStorage.getItem('cp.teamQr') === 'plain' ? 'plain' : 'safe'; // какой адрес в QR-коде
 
 const grFmt = (t) => (t ? new Date(t).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '');
 const grDate = (t) => new Date(t).toLocaleDateString('ru-RU');
@@ -43,11 +47,12 @@ function grPaint() {
     ...n.ips.map((ip) => Object.assign(document.createElement('option'), { value: ip, textContent: ip })));
   ips.value = c.ip && n.ips.includes(c.ip) ? c.ip : '';
 
+  grQrPaint();
   // Сервер
   if (!c.on) grSt('tmSrv', 'Выключен. Телефоны группы не подключатся.', '');
-  else if (n.srv.running) grSt('tmSrv', `Работает: ${n.url}`, 'ok');
-  else if (n.srv.err) grSt('tmSrv', 'Не запустился: ' + n.srv.err, 'bad');
-  else if (!n.cert || !n.cert.ok) grSt('tmSrv', 'Ждёт сертификат для адреса ' + (c.domain || '(не указан)') + ' — нажмите «Получить сертификат».', 'bad');
+  else if (n.srv.running) grSt('tmSrv', `Защищённый адрес работает: ${n.url}`, 'ok');
+  else if (n.srv.err) grSt('tmSrv', 'Защищённый адрес не запустился: ' + n.srv.err, 'bad');
+  else if (!n.cert || !n.cert.ok) grSt('tmSrv', 'Защищённый адрес ждёт сертификат' + (c.domain ? ` для ${c.domain}` : '') + '. Пока телефоны подключаются по простому адресу (раздел «Подключить телефон»).', '');
   else grSt('tmSrv', 'Запускается…', '');
 
   // Запись в DNS
@@ -69,7 +74,7 @@ function grPaint() {
   $('tmCert').textContent = busy && n.job.kind === 'cert' ? 'Получаю…' : ct && ct.ok && ct.domain === c.domain && ct.staging === c.staging ? 'Получить заново' : 'Получить сертификат';
 
   // Брандмауэр: без правила для порта группы телефон видит «Не удаётся открыть страницу»
-  const fwBad = c.on && grFwSt && !grFwSt.team;
+  const fwBad = c.on && n.cert && n.cert.ok && grFwSt && !grFwSt.team;
   $('tmFw').hidden = !fwBad;
   if (fwBad) $('tmFwText').textContent = `Брандмауэр Windows не пускает телефоны на порт ${c.port}` + (grFwSt.pub ? ' (сеть Wi-Fi отмечена как общественная)' : '') + '. Нажмите кнопку и подтвердите в окне Windows.';
 
@@ -84,7 +89,49 @@ function grPaint() {
   }
 }
 
+// Раздел «Подключить телефон»: QR-код с адресом приложения
+function grQrPaint() {
+  const n = grInfo;
+  const c = n.cfg;
+  const safe = n.srv.running ? n.url : '';
+  const plain = n.plainUrl || '';
+  let mode = grMode;
+  if (mode === 'safe' && !safe) mode = 'plain';
+  if (mode === 'plain' && !plain && safe) mode = 'safe';
+  const url = c.on ? (mode === 'safe' ? safe : plain) : '';
+  $('tmQrOn').checked = c.on;
+  $('tmQrModeRow').hidden = !(safe && plain);
+  $('tmQrMode').value = mode;
+  const box = $('tmQr');
+  box.replaceChildren();
+  if (url) {
+    const img = document.createElement('div');
+    img.innerHTML = QR.svg(url, 7);
+    box.append(img, Object.assign(document.createElement('div'), { className: 'rm-url', textContent: url }));
+  } else {
+    const why = !c.on ? 'Доступ выключен. Поставьте галочку «Включить доступ для группы».'
+      : n.http.err ? 'Сервер не запустился: ' + n.http.err
+      : !n.ip ? 'Компьютер не подключён к сети (Wi-Fi или кабель).' : 'Сервер запускается…';
+    box.append(Object.assign(document.createElement('div'), { className: 'tm-qr-empty', textContent: why }));
+  }
+  $('tmQrCopy').disabled = !url;
+  if (!url) grSt('tmQrSt', '', '');
+  else if (mode === 'safe') grSt('tmQrSt', 'Защищённый адрес: приложение можно установить на экран «Домой» и открывать без сети.' + (n.cert && n.cert.staging ? ' Сертификат тестовый — телефон покажет предупреждение.' : ''), n.cert && n.cert.staging ? 'bad' : 'ok');
+  else grSt('tmQrSt', 'Простой адрес: открывается сразу, без аккаунта. Установить приложение и пользоваться им без сети на нём нельзя' + (safe ? '.' : ' — для этого настройте раздел «Адрес и сертификат».'), '');
+  // Брандмауэр — для того порта, что в коде
+  const fwBad = !!url && grFwSt && !(mode === 'safe' ? grFwSt.team : grFwSt.rule);
+  $('tmQrFw').hidden = !fwBad;
+  if (fwBad) $('tmQrFwText').textContent = 'Брандмауэр Windows не пускает телефоны к программе' + (grFwSt.pub ? ' (сеть Wi-Fi отмечена как общественная)' : '') + '. Нажмите кнопку и подтвердите в окне Windows.';
+}
+
+function grShowTab(tab) {
+  grTab = tab;
+  document.querySelectorAll('.tm-nav button').forEach((b) => b.setAttribute('aria-current', String(b.dataset.tm === tab)));
+  document.querySelectorAll('.tm-sec').forEach((s) => { s.hidden = s.dataset.tm !== tab; });
+}
+
 function grOpen() {
+  grShowTab(grTab);
   if (!$('teamDialog').open) $('teamDialog').showModal();
   window.api.teamInfo().then((n) => { grInfo = n; grPaint(); }).catch(() => {});
   window.api.remoteFw().then((f) => { grFwSt = f; grPaint(); }).catch(() => {});
@@ -105,7 +152,19 @@ const grSet = (p) => grCall(window.api.teamSet(p));
 window.api.onTeamInfo((n) => { grInfo = n; grPaint(); });
 
 $('teamOpen').addEventListener('click', grOpen);
-$('tmOn').addEventListener('change', (e) => grSet({ on: e.target.checked }).then(() => window.api.remoteFw().then((f) => { grFwSt = f; grPaint(); }).catch(() => {})));
+document.querySelectorAll('.tm-nav button').forEach((b) => b.addEventListener('click', () => grShowTab(b.dataset.tm)));
+const grOnChange = (e) => grSet({ on: e.target.checked }).then(() => window.api.remoteFw().then((f) => { grFwSt = f; grPaint(); }).catch(() => {}));
+$('tmOn').addEventListener('change', grOnChange);
+$('tmQrOn').addEventListener('change', grOnChange);
+$('tmQrMode').addEventListener('change', (e) => {
+  grMode = e.target.value === 'plain' ? 'plain' : 'safe';
+  try { localStorage.setItem('cp.teamQr', grMode); } catch { /* не страшно */ }
+  grPaint();
+});
+$('tmQrCopy').addEventListener('click', () => {
+  const url = $('tmQr').querySelector('.rm-url');
+  if (url) navigator.clipboard.writeText(url.textContent).then(() => flashStatus('Ссылка скопирована'), () => {});
+});
 $('tmStaging').addEventListener('change', (e) => grSet({ staging: e.target.checked }));
 $('tmProv').addEventListener('change', (e) => grSet({ provider: e.target.value }));
 $('tmIp').addEventListener('change', (e) => grSet({ ip: e.target.value }));
@@ -129,10 +188,14 @@ $('tmCheck').addEventListener('click', async () => {
   if (r && r.ok) flashStatus(r.info.check.ok ? 'Адрес в порядке' : 'Проверка: есть замечания — см. окно «Группа»');
 });
 $('tmCert').addEventListener('click', () => grCall(window.api.teamCert(), 'Сертификат получен'));
-$('tmFwFix').addEventListener('click', async () => {
-  $('tmFwFix').disabled = true;
+// Одно правило брандмауэра на оба адреса (порты пульта и порт https) — main.js: remote:fwFix
+async function grFwFix(e) {
+  const b = e.currentTarget;
+  b.disabled = true;
   try { const f = await window.api.remoteFwFix(); if (f) grFwSt = f; } catch { /* отказались в окне Windows */ }
-  $('tmFwFix').disabled = false;
-  flashStatus(grFwSt && grFwSt.team ? 'Брандмауэр: телефоны группы пропускаются' : 'Брандмауэр не изменён');
+  b.disabled = false;
+  flashStatus(grFwSt && grFwSt.rule && grFwSt.team ? 'Брандмауэр: телефоны группы пропускаются' : 'Брандмауэр не изменён');
   grPaint();
-});
+}
+$('tmFwFix').addEventListener('click', grFwFix);
+$('tmQrFwFix').addEventListener('click', grFwFix);
