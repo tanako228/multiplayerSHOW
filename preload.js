@@ -165,7 +165,7 @@ contextBridge.exposeInMainWorld('api', {
   teamInfo: () => ipcRenderer.invoke('team:info'),
   teamSet: (p) => ipcRenderer.invoke('team:set', p),
   teamToken: (t) => ipcRenderer.invoke('team:token', t),
-  teamCert: () => ipcRenderer.invoke('team:cert'),
+  teamCert: (o) => ipcRenderer.invoke('team:cert', o), // o.staging: false — настоящий после тестового
   teamDns: () => ipcRenderer.invoke('team:dns'),
   teamCheck: () => ipcRenderer.invoke('team:check'),
   onTeamInfo: (cb) => on('team:info', cb),

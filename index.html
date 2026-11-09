@@ -797,8 +797,12 @@
     .tm-qr-empty { width: 280px; height: 280px; border: 1px dashed var(--line); border-radius: 8px; display: grid; place-items: center; padding: 20px; color: var(--muted); font-size: 13px; }
     .tm-qr-side { flex: 1; min-width: 260px; }
     .tm-qr-side .field { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 8px; }
-    .tm-qr-side .field[hidden] { display: none; }
+    .tm-qr-side .field[hidden], .tm-btns[hidden], .tm-btns button[hidden] { display: none; }
     .tm-qr-side .field > span { white-space: nowrap; }
+    .tm-qr-side .field { flex-wrap: wrap; }
+    .tm-qr-side select { min-width: 0; max-width: 100%; }
+    .tm-qr-side .rm-fw { flex-wrap: wrap; }
+    .tm-qr-side .rm-fw span { min-width: 200px; }
     .set-sec[hidden] { display: none; }
     .set-group { margin-bottom: 22px; max-width: 560px; }
     .set-group h2 { margin: 0 0 10px; font-size: 14px; font-weight: 600; }
@@ -2772,6 +2776,7 @@
                 </select>
               </div>
               <p class="tm-st" id="tmQrSt"></p>
+              <div class="tm-btns" id="tmQrRealRow" hidden><button id="tmQrReal" class="primary">Получить настоящий сертификат</button></div>
               <div id="tmQrFw" class="rm-fw" hidden><span id="tmQrFwText"></span> <button id="tmQrFwFix" class="primary">Разрешить в брандмауэре</button></div>
               <div class="tm-btns"><button id="tmQrCopy">Копировать ссылку</button></div>
             </div>
@@ -2800,9 +2805,9 @@
           <div class="set-group">
             <h2>Сертификат (Let's Encrypt)</h2>
             <div class="field"><span>Почта (необязательно)</span><input id="tmEmail" type="email" placeholder="письма о сроке сертификата" spellcheck="false"></div>
-            <div class="field"><label class="check"><input type="checkbox" id="tmStaging"> Тестовый сертификат — для проб (телефоны ему не доверяют)</label></div>
+            <div class="field"><label class="check"><input type="checkbox" id="tmStaging"> Тестовый сертификат — только если что-то не получается (замка на телефоне не будет)</label></div>
             <p class="tm-st" id="tmCertSt"></p>
-            <div class="tm-btns"><button id="tmCert" class="primary">Получить сертификат</button></div>
+            <div class="tm-btns"><button id="tmCert" class="primary">Получить сертификат</button><button id="tmCertReal" class="primary" hidden>Получить настоящий сертификат</button></div>
             <p class="hint">Нажимая «Получить сертификат», вы принимаете условия Let's Encrypt (letsencrypt.org/repository). Дальше сертификат продлевается сам, пока программа хотя бы иногда запускается с интернетом.</p>
           </div>
           <div class="tm-log" id="tmLog"></div>

@@ -252,18 +252,21 @@ function loadCert() {
 // Сертификат подходит к нынешним настройкам (тот же адрес, тот же вид — настоящий или тестовый) и ещё действует
 const certOk = () => !!(cert && cert.domain === cfg.domain && cert.staging === cfg.staging && cert.until > Date.now());
 
-const issue = () => runJob('cert', async (say) => {
+// o.staging — какой получить (настоящий после тестового): галочка «Тестовый» меняется только после успеха,
+// а до того работает прежний сертификат — телефоны не остаются без связи
+const issue = (o) => runJob('cert', async (say) => {
   need();
+  const staging = o && typeof o.staging === 'boolean' ? o.staging : cfg.staging;
   const acme = require('acme-client'); // нужен только здесь — не грузим при каждом запуске
   fs.mkdirSync(tlsDir(), { recursive: true });
-  const accFile = path.join(tlsDir(), cfg.staging ? 'account-staging.key' : 'account.key');
+  const accFile = path.join(tlsDir(), staging ? 'account-staging.key' : 'account.key');
   let accountKey;
   try { accountKey = fs.readFileSync(accFile); } catch {
     accountKey = await acme.crypto.createPrivateKey();
     fs.writeFileSync(accFile, accountKey);
   }
-  const client = new acme.Client({ directoryUrl: cfg.staging ? acme.directory.letsencrypt.staging : acme.directory.letsencrypt.production, accountKey });
-  say(`Заказываю ${cfg.staging ? 'тестовый ' : ''}сертификат для ${cfg.domain}…`);
+  const client = new acme.Client({ directoryUrl: staging ? acme.directory.letsencrypt.staging : acme.directory.letsencrypt.production, accountKey });
+  say(`Заказываю ${staging ? 'тестовый' : 'настоящий'} сертификат для ${cfg.domain}…`);
   const [key, csr] = await acme.crypto.createCsr({ commonName: cfg.domain });
   const host = cfg.domain;
   const p = prov();
@@ -286,10 +289,11 @@ const issue = () => runJob('cert', async (say) => {
   const put = (n, data) => { fs.writeFileSync(path.join(tlsDir(), n + '.tmp'), data); };
   put('cert.pem', pem);
   put('cert.key', key);
-  put('cert.json', JSON.stringify({ domain: host, staging: cfg.staging, at: Date.now() }));
+  put('cert.json', JSON.stringify({ domain: host, staging, at: Date.now() }));
   for (const n of ['cert.pem', 'cert.key', 'cert.json']) fs.renameSync(path.join(tlsDir(), n + '.tmp'), path.join(tlsDir(), n));
   loadCert();
-  say('Сертификат получен, действует до ' + new Date(cert.until).toLocaleDateString('ru-RU'));
+  if (cfg.staging !== staging) { cfg.staging = staging; save(); }
+  say((staging ? 'Тестовый сертификат получен (замка на телефоне не будет)' : 'Сертификат получен — на телефоне будет замок') + ', действует до ' + new Date(cert.until).toLocaleDateString('ru-RU'));
   restart();
   return { until: cert.until };
 });
@@ -496,7 +500,7 @@ function setup(ipcMain, o) {
   ipcMain.handle('team:info', () => info());
   ipcMain.handle('team:set', wrap((_e, p) => set(p)));
   ipcMain.handle('team:token', wrap((_e, t) => setToken(t)));
-  ipcMain.handle('team:cert', wrap(async () => { await issue(); return info(); }));
+  ipcMain.handle('team:cert', wrap(async (_e, o) => { await issue(o); return info(); }));
   ipcMain.handle('team:dns', wrap(async () => { await dnsNow(); return info(); }));
   ipcMain.handle('team:check', wrap(async () => { const r = await check(); return { ...info(), check: r }; }));
 }

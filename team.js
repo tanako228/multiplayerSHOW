@@ -68,10 +68,16 @@ function grPaint() {
   else if (ct.domain !== c.domain) grSt('tmCertSt', `Есть сертификат для другого адреса (${ct.domain}) — получите новый.`, 'bad');
   else if (ct.staging !== c.staging) grSt('tmCertSt', ct.staging ? 'Есть только тестовый сертификат — получите настоящий.' : 'Есть настоящий сертификат; для тестового — получите его отдельно.', 'bad');
   else if (!ct.ok) grSt('tmCertSt', `Сертификат истёк ${grDate(ct.until)} — получите новый.`, 'bad');
-  else grSt('tmCertSt', `${ct.staging ? 'Тестовый сертификат' : 'Сертификат'} для ${ct.domain}, действует до ${grDate(ct.until)} (осталось ${ct.days} дн.)`, ct.days < 14 ? 'bad' : 'ok');
+  else if (ct.staging) grSt('tmCertSt', `Тестовый сертификат для ${ct.domain} — телефоны ему не доверяют, замка в адресной строке не будет. Нажмите «Получить настоящий сертификат».`, 'bad');
+  else grSt('tmCertSt', `Сертификат для ${ct.domain}, действует до ${grDate(ct.until)} (осталось ${ct.days} дн.), продлевается сам`, ct.days < 14 ? 'bad' : 'ok');
 
-  for (const id of ['tmDnsNow', 'tmCheck', 'tmCert']) $(id).disabled = busy;
-  $('tmCert').textContent = busy && n.job.kind === 'cert' ? 'Получаю…' : ct && ct.ok && ct.domain === c.domain && ct.staging === c.staging ? 'Получить заново' : 'Получить сертификат';
+  // Включён «Тестовый» — главная кнопка получает настоящий (галочка снимется после успеха)
+  const getting = busy && n.job.kind === 'cert';
+  for (const id of ['tmDnsNow', 'tmCheck', 'tmCert', 'tmCertReal', 'tmQrReal']) $(id).disabled = busy;
+  $('tmCertReal').hidden = !c.staging;
+  $('tmCertReal').textContent = getting ? 'Получаю…' : 'Получить настоящий сертификат';
+  $('tmCert').classList.toggle('primary', !c.staging);
+  $('tmCert').textContent = getting && !c.staging ? 'Получаю…' : c.staging ? 'Получить тестовый' : ct && ct.ok && ct.domain === c.domain && !ct.staging ? 'Получить заново' : 'Получить сертификат';
 
   // Брандмауэр: без правила для порта группы телефон видит «Не удаётся открыть страницу»
   const fwBad = c.on && n.cert && n.cert.ok && grFwSt && !grFwSt.team;
@@ -116,8 +122,11 @@ function grQrPaint() {
   }
   $('tmQrCopy').disabled = !url;
   if (!url) grSt('tmQrSt', '', '');
-  else if (mode === 'safe') grSt('tmQrSt', 'Защищённый адрес: приложение можно установить на экран «Домой» и открывать без сети.' + (n.cert && n.cert.staging ? ' Сертификат тестовый — телефон покажет предупреждение.' : ''), n.cert && n.cert.staging ? 'bad' : 'ok');
+  else if (mode === 'safe' && n.cert && n.cert.staging) grSt('tmQrSt', 'Сертификат пока тестовый: телефон покажет предупреждение, замка не будет, установить приложение нельзя. Нажмите «Получить настоящий сертификат» — 1–5 минут.', 'bad');
+  else if (mode === 'safe') grSt('tmQrSt', 'Защищённый адрес: замок в адресной строке, приложение можно установить на экран «Домой» и открывать без сети.', 'ok');
   else grSt('tmQrSt', 'Простой адрес: открывается сразу, без аккаунта. Установить приложение и пользоваться им без сети на нём нельзя' + (safe ? '.' : ' — для этого настройте раздел «Адрес и сертификат».'), '');
+  $('tmQrRealRow').hidden = !(c.on && n.cert && n.cert.staging && n.cert.domain === c.domain);
+  $('tmQrReal').textContent = n.job && n.job.kind === 'cert' ? 'Получаю… (1–5 минут)' : 'Получить настоящий сертификат';
   // Брандмауэр — для того порта, что в коде
   const fwBad = !!url && grFwSt && !(mode === 'safe' ? grFwSt.team : grFwSt.rule);
   $('tmQrFw').hidden = !fwBad;
@@ -188,6 +197,10 @@ $('tmCheck').addEventListener('click', async () => {
   if (r && r.ok) flashStatus(r.info.check.ok ? 'Адрес в порядке' : 'Проверка: есть замечания — см. окно «Группа»');
 });
 $('tmCert').addEventListener('click', () => grCall(window.api.teamCert(), 'Сертификат получен'));
+// Тестовый → настоящий: прежний работает, пока не придёт новый; галочку «Тестовый» снимает сервер после успеха
+const grReal = () => grCall(window.api.teamCert({ staging: false }), 'Настоящий сертификат получен — на телефоне будет замок');
+$('tmCertReal').addEventListener('click', grReal);
+$('tmQrReal').addEventListener('click', grReal);
 // Одно правило брандмауэра на оба адреса (порты пульта и порт https) — main.js: remote:fwFix
 async function grFwFix(e) {
   const b = e.currentTarget;
