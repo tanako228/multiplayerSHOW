@@ -11,7 +11,8 @@
    Текст слайда — строки (.ln) из слов (.w): к словам привязаны пометки (pen.js, этап 3).
    Аккорды (этап 4): song.chords раскладывает по строкам chords.js (общий с программой); аккорд — пустой значок .cd
    внутри слова (номера слов не меняются — пометки на месте). Транспонирование и капо — на песню (localStorage mps.tr);
-   тональность строки сетлиста сама сдвигает аккорды. Аккорды по умолчанию: Музыкант, Лидер — да, остальные — нет. */
+   тональность строки сетлиста сама сдвигает аккорды. Аккорды по умолчанию: Музыкант, Лидер — да, остальные — нет.
+   «Моя версия» (этап 5, mine.js): переключатель «Оригинал / Моя версия» над песней, редактор, «Оригинал изменился». */
 'use strict';
 const $ = (id) => document.getElementById(id);
 const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
@@ -570,6 +571,51 @@ function rerender() {
   markLive(false);
 }
 
+/* ----- «Моя версия»: переключатель и плашка «Оригинал изменился» ----- */
+
+function mineBar(v, mine) {
+  const bar = el('div', 'mvbar');
+  const seg = el('div', 'seg');
+  const bo = el('button', '', 'Оригинал');
+  const bm = el('button', '', 'Моя версия');
+  bo.setAttribute('aria-pressed', String(!mine));
+  bm.setAttribute('aria-pressed', String(mine));
+  bo.onclick = () => { if (mine) { Mine.setOn(v.id, false); rerender(); } };
+  bm.onclick = () => { if (mine) return; if (Mine.has(v.id)) { Mine.setOn(v.id, true); rerender(); } else openMine(v); };
+  seg.append(bo, bm);
+  bar.append(seg);
+  if (mine) { const be = el('button', 'mv-ed', 'Изменить'); be.onclick = () => openMine(v); bar.append(be); }
+  return bar;
+}
+function openMine(v) {
+  if (Pen.isOpen) Pen.close();
+  Mine.edit(v);
+}
+function mineChanged(v, list) {
+  const box = el('div', 'mvchg');
+  box.append(el('b', '', 'Оригинал изменился'), el('span', 'hint', ' — ' + list.map((c) => c.label || 'текст').join(', ')));
+  const det = el('div', 'mvdiff');
+  det.hidden = true;
+  for (const c of list) {
+    det.append(el('h4', '', c.label || 'Текст'));
+    for (const [op, t] of Mine.diff(c.was, c.now)) det.append(el('div', 'df ' + { '-': 'del', '+': 'add', '=': 'same' }[op], (op === '=' ? '  ' : op + ' ') + (t || ' ')));
+  }
+  const btns = el('div', 'btns');
+  const bShow = el('button', '', 'Что изменилось');
+  bShow.onclick = () => { det.hidden = !det.hidden; bShow.textContent = det.hidden ? 'Что изменилось' : 'Скрыть'; };
+  const bKeep = el('button', '', 'Оставить мою');
+  bKeep.onclick = () => { Mine.keep(v.id, list, false); toast('Ваша версия оставлена'); rerender(); };
+  const bNew = el('button', '', 'Взять из оригинала');
+  bNew.onclick = async () => {
+    if (!(await ask('Изменённые части станут как в новом оригинале — ваши правки в них пропадут.', 'Взять'))) return;
+    Mine.keep(v.id, list, true);
+    rerender();
+  };
+  btns.append(bShow, bKeep, bNew);
+  box.append(det, btns);
+  return box;
+}
+
 /* ----- Песня (и то, что на экране: Библия, свои слайды) ----- */
 
 let listY = 0;
@@ -603,16 +649,28 @@ function openView(v, push) {
     v.tr.capo && `капо ${v.tr.capo}`, src.tempo && `♩ = ${src.tempo}`, src.time].filter(Boolean);
   if (v.song && info.length) body.append(el('p', 'meta', info.join(' · ')));
   paintKey();
+  // «Моя версия»: свой текст с оформлением, свои пометки
+  let slides = v.slides;
+  let rich = false;
+  v.markKey = '';
+  if (v.song && v.id) {
+    const mv = Mine.has(v.id) ? Mine.view(v) : null;
+    const mine = !!mv && Mine.on(v.id);
+    body.append(mineBar(v, mine));
+    if (mv && mv.changed.length) body.append(mineChanged(v, mv.changed));
+    if (mine) { slides = mv.slides; rich = true; v.markKey = 'my:' + v.id; }
+  }
   // Порядок частей (аранжировка), если части подписаны
   const order = v.song ? v.slides.filter((z) => z.pi === 0 && (z.label || z.part)).map((z) => z.label || z.part) : [];
   if (order.length > 1) body.append(el('p', 'order', order.join(' → ')));
   const verses = v.kind === 'bible';
-  for (const z of v.slides) {
+  for (const z of slides) {
+    if (rich && !String(z.text).trim()) continue; // часть убрана в моей версии
     const head = v.song ? z.pi === 0 && (z.label || z.part) : !!z.label && !(verses && /^\d+$/.test(z.label));
     const sec = el('section', 'sl' + (head ? ' part' : ''));
     sec.dataset.id = z.id;
     if (head) sec.append(el('h3', '', v.song ? z.label || z.part : z.label));
-    const tx = textBlock(z.text || (z.label && !head ? '' : '—'), sheet ? Chords.forText(sheet, z.text) : null, n, flat);
+    const tx = textBlock(z.text || (z.label && !head ? '' : '—'), sheet ? Chords.forText(sheet, rich ? Mine.plain(z.text) : z.text) : null, n, flat, rich);
     if (verses && /^\d+$/.test(z.label || '') && tx.firstChild) tx.firstChild.prepend(el('b', 'vn', z.label + ' '));
     sec.append(tx);
     body.append(sec);
@@ -624,32 +682,49 @@ function openView(v, push) {
   else if (!history.state || !history.state.song) history.pushState({ song: v.id || 'live' }, '');
   Pen.show(v);
 }
-// Текст слайда: строка — .ln, слово — .w (по словам держатся пометки); аккорды — значки .cd внутри слов
+// Текст слайда: строка — .ln, слово — .w (по словам держатся пометки); аккорды — значки .cd внутри слов;
+// rich — разметка «Моей версии» (Mine.parse): выделить / замазать / подчеркнуть — обёртки внутри слов, подписи — между словами
 const cdEl = (c) => { const i = el('i', 'cd'); i.dataset.c = c; return i; };
-function textBlock(text, chordLines, n, flat) {
+function textBlock(text, chordLines, n, flat, rich) {
   const tx = el('div', 'tx');
   let k = 0; // аккорды приложены к непустым строкам слайда
-  for (const line of String(text).split('\n')) {
+  for (const raw of String(text).split('\n')) {
+    const p = rich ? Mine.parse(raw) : { text: raw, fx: [], caps: [] };
+    const line = p.text;
     const ln = el('div', 'ln');
     const marks = chordLines && chordLines.length && line.trim() ? chordMarks(line, chordLines[k++] || '', n, flat) : [];
     let i = 0;
     let m = 0;
+    let c = 0;
+    // кусок строки [a, b) — в обёртках оформления
+    const piece = (box, a, b) => {
+      if (b <= a) return;
+      const cls = p.fx.filter((f) => f.a < b && f.b > a).map((f) => 'f-' + f.k);
+      box.append(cls.length ? el('span', cls.join(' '), line.slice(a, b)) : line.slice(a, b));
+    };
+    const cuts = (a, b, extra) => [...new Set([a, b, ...p.fx.flatMap((f) => [f.a, f.b]), ...extra])].filter((x) => x >= a && x <= b).sort((x, y) => x - y);
     for (const part of line.split(/(\s+)/)) {
       if (!part) continue;
       const end = i + part.length;
+      while (c < p.caps.length && p.caps[c].at <= i) ln.append(el('span', 'cap', p.caps[c++].t));
       if (/^\s+$/.test(part)) {
         while (m < marks.length && marks[m].at < end) ln.append(cdEl(marks[m++].c));
-        ln.append(part);
+        const pts = cuts(i, end, []);
+        for (let j = 0; j + 1 < pts.length; j++) piece(ln, pts[j], pts[j + 1]);
       } else {
         const w = el('span', 'w');
-        let last = 0;
-        while (m < marks.length && marks[m].at < end) { const at = Math.max(0, marks[m].at - i); w.append(part.slice(last, at), cdEl(marks[m++].c)); last = at; }
-        w.append(part.slice(last));
+        const pts = cuts(i, end, marks.slice(m).filter((x) => x.at < end).map((x) => x.at));
+        for (let j = 0; j + 1 < pts.length; j++) {
+          while (m < marks.length && marks[m].at <= pts[j]) w.append(cdEl(marks[m++].c));
+          piece(w, pts[j], pts[j + 1]);
+        }
         ln.append(w);
+        while (c < p.caps.length && p.caps[c].at < end) ln.append(el('span', 'cap', p.caps[c++].t));
       }
       i = end;
     }
     while (m < marks.length) ln.append(cdEl(marks[m++].c));
+    while (c < p.caps.length) ln.append(el('span', 'cap', p.caps[c++].t));
     if (marks.length) ln.classList.add('ch');
     tx.append(ln);
   }
@@ -677,6 +752,8 @@ function paintPick() {
   }
 }
 function onSlideTap(e) {
+  const cov = e.target.closest('.f-cov');
+  if (cov) { cov.classList.toggle('peek'); return; } // замазанное — подсмотреть
   if (e.target.closest('.show-btn')) {
     const sec = e.target.closest('.sl');
     if (cur && sec && wsSend({ t: 'cmd', cmd: 'show', item: cur.id, sid: sec.dataset.id, pl: cur.pl || '', eid: cur.eid || '' })) { picked = ''; paintPick(); }
@@ -788,6 +865,7 @@ function wire() {
     document.body.classList.toggle('paper', $('iPaper').checked || Pen.isOpen);
   };
   Pen.init();
+  Mine.wire(rerender);
   Pen.onChange = () => { paintBar(); markLive(false); };
   document.addEventListener('visibilitychange', () => { if (!document.hidden) wake(); });
   window.addEventListener('online', wake);
@@ -811,6 +889,7 @@ function registerSW() {
   try {
     await Store.open();
     await Store.load();
+    await Mine.init();
     sets = (await Store.getMeta('sets')) || [];
   } catch (e) {
     showJoin('Браузер не даёт хранить данные (' + (e.message || e) + '). Откройте не в режиме «Инкогнито».');

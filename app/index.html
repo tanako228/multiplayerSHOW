@@ -19,6 +19,7 @@
      на телефоне (IndexedDB), поиск, работа без сети. Этап 2: WebSocket — что на экране («Следовать» / «Листать самому»),
      сетлисты, листать с телефона. Этап 3: цифровой пенал — пометки поверх текста песни, заметка (pen.js, pen.css).
      Этап 4: аккорды над словами, транспонирование, капо (chords.js — общий с программой).
+     Этап 5: «Моя версия» песни (mine.js).
      Хранилище и синхронизация — db.js, экраны и связь — app.js, кэш — sw.js -->
 </head>
 <body>
@@ -124,6 +125,25 @@
   <button class="done" id="penDone">Готово</button>
 </div>
 
+<!-- Моя версия песни: текст по частям, оформление, просмотр -->
+<dialog class="full" id="myDlg">
+  <div class="sheet-head"><h2>Моя версия</h2><button class="icon" id="myX" aria-label="Закрыть">
+    <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg></button></div>
+  <div class="my-body" id="myBody"></div>
+  <div class="my-tools" id="myTools">
+    <button data-f="=="><span class="f-hl">Выделить</span></button>
+    <button data-f="~~"><span class="f-cov peek">Замазать</span></button>
+    <button data-f="__"><span class="f-ul">Подчеркнуть</span></button>
+    <button data-f="^^"><span class="cap">Подписать</span></button>
+    <button data-f="">Убрать</button>
+  </div>
+  <div class="my-foot">
+    <p class="hint">Выделите слова и нажмите кнопку (без выделения — слово под курсором). «Подписать» — выделенное станет
+      мелкой подписью. Пустая часть — не показывается. Видно только на этом телефоне.</p>
+    <div class="btns"><button class="danger" id="myDel">Удалить</button><button class="primary" id="mySave">Сохранить</button></div>
+  </div>
+</dialog>
+
 <!-- Аккорды и тональность песни -->
 <dialog class="sheet" id="keyDlg">
   <div class="sheet-head"><h2>Аккорды и тональность</h2><button class="icon" id="keyX" aria-label="Закрыть">
@@ -175,6 +195,7 @@
 <script src="db.js"></script>
 <script src="chords.js"></script>
 <script src="pen.js"></script>
+<script src="mine.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

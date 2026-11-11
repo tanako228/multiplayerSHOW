@@ -3,7 +3,7 @@
    телефон скачает новые файлы, старый кэш удалит. Запросы к /api/… сюда не попадают (идут в сеть как есть). */
 const VER = '__VER__';
 const CACHE = 'mps-' + VER;
-const FILES = ['./', 'app.css', 'pen.css', 'db.js', 'chords.js', 'pen.js', 'app.js', 'vendor/minisearch.js', 'manifest.webmanifest', 'icon-192.png', 'icon-256.png', 'icon-512.png'];
+const FILES = ['./', 'app.css', 'pen.css', 'db.js', 'chords.js', 'pen.js', 'mine.js', 'app.js', 'vendor/minisearch.js', 'manifest.webmanifest', 'icon-192.png', 'icon-256.png', 'icon-512.png'];
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(CACHE)

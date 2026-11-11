@@ -92,6 +92,41 @@ svg { width: 22px; height: 22px; fill: currentColor; }
 .cd { position: relative; display: inline-block; width: 0; }
 .cd::before { content: attr(data-c); position: absolute; left: 0; bottom: 1.3em; font-size: .72em; font-style: normal; font-weight: 700; line-height: 1; color: var(--live); white-space: nowrap; }
 .song .meta { margin: 0 0 6px; color: var(--muted); font-size: 14px; }
+/* Моя версия (этап 5): переключатель, «Оригинал изменился», оформление, редактор */
+.mvbar { display: flex; align-items: center; gap: 8px; margin: 2px 0 10px; }
+.seg { display: inline-flex; gap: 2px; padding: 3px; border-radius: 10px; background: var(--field); border: 1px solid var(--line); }
+.seg button { border: 0; background: none; padding: 6px 12px; border-radius: 8px; font-size: 14px; color: var(--muted); }
+.seg button[aria-pressed=true] { background: var(--panel); color: var(--text); font-weight: 600; box-shadow: 0 1px 3px rgba(0, 0, 0, .25); }
+.mv-ed { padding: 6px 12px; font-size: 14px; }
+.mvchg { margin: 0 0 12px; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--live); background: color-mix(in srgb, var(--live) 12%, transparent); font-size: 14px; }
+.mvchg .btns { margin-top: 8px; }
+.mvchg .btns button { min-height: 38px; padding: 6px 10px; font-size: 14px; }
+.mvdiff { margin-top: 8px; }
+.mvdiff h4 { margin: 8px 0 2px; font-size: 12px; text-transform: uppercase; color: var(--live); }
+.df { white-space: pre-wrap; padding: 1px 6px; border-radius: 4px; }
+.df.del { background: color-mix(in srgb, var(--warn) 22%, transparent); text-decoration: line-through; }
+.df.add { background: color-mix(in srgb, var(--ok) 22%, transparent); }
+.df.same { color: var(--muted); }
+.f-hl { background: rgba(255, 214, 10, .32); border-radius: .15em; -webkit-box-decoration-break: clone; box-decoration-break: clone; }
+body.paper .f-hl { background: rgba(255, 214, 10, .55); }
+.f-ul { text-decoration: underline; text-decoration-color: var(--live); text-decoration-thickness: .09em; text-underline-offset: .18em; }
+.f-cov { background: var(--muted); color: transparent; border-radius: .2em; cursor: pointer; }
+.f-cov.peek { background: color-mix(in srgb, var(--muted) 30%, transparent); color: inherit; }
+.cap { display: inline-block; margin: 0 .25em; padding: 0 .3em; font-size: .55em; font-style: italic; line-height: 1.3; vertical-align: .45em;
+  color: var(--live); border-radius: .3em; background: color-mix(in srgb, var(--live) 14%, transparent); }
+dialog.full { width: min(720px, 100%); max-width: 100%; height: 100dvh; max-height: 100dvh; margin: 0 auto; border: 0; border-radius: 0; }
+dialog.full[open] { display: flex; flex-direction: column; }
+.my-body { flex: 1; overflow: auto; padding: 0 16px 16px; }
+.my-part h3 { margin: 16px 0 6px; font-size: 13px; letter-spacing: .04em; text-transform: uppercase; color: var(--live); }
+.my-ta { display: block; resize: none; font-size: 16px; line-height: 1.4; font-family: inherit; }
+.my-pv { margin: 6px 0 0; padding: 2px 2px 4px; }
+.my-pv .tx { font-size: 18px; }
+.my-tools { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 12px; border-top: 1px solid var(--line); }
+.my-tools button { flex: 1 0 auto; padding: 8px 10px; font-size: 14px; }
+.my-tools .cap { font-size: .9em; vertical-align: 0; }
+.my-foot { padding: 0 12px calc(10px + env(safe-area-inset-bottom)); }
+.my-foot .hint { margin: 6px 4px 0; font-size: 12px; }
+.my-foot .btns { margin-top: 8px; }
 .row-i.step { align-items: center; }
 .stepper { display: flex; align-items: center; gap: 6px; }
 .stepper button { min-width: 44px; min-height: 40px; padding: 0; font-size: 20px; font-weight: 600; }
