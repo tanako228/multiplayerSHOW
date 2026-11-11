@@ -1912,6 +1912,8 @@ app.whenReady().then(() => {
     seal: (s) => (safeStorage.isEncryptionAvailable() ? 'dp:' + safeStorage.encryptString(s).toString('base64') : 'raw:' + Buffer.from(s).toString('base64')),
     unseal: (s) => (s.startsWith('dp:') ? safeStorage.decryptString(Buffer.from(s.slice(3), 'base64')) : s.startsWith('raw:') ? Buffer.from(s.slice(4), 'base64').toString() : ''),
     notify: (i) => { if (control && !control.isDestroyed()) control.webContents.send('team:info', i); },
+    // Телефон с правом «листать» нажал «Дальше» / слайд — окну оператора (team.js: onTeamCmd)
+    cmd: (c) => { if (control && !control.isDestroyed()) control.webContents.send('team:cmd', c); },
   });
   app.on('will-quit', team.shutdown);
 
@@ -2405,6 +2407,7 @@ function rmStart() {
     rmNotify();
   });
   rmSrv.on('listening', () => { rmPort = port; rmNotify(); });
+  rmSrv.on('upgrade', (req, sock, head) => { if (!team.upgrade(req, sock, head)) sock.destroy(); }); // WebSocket группы /ws
   rmSrv.listen(port, '0.0.0.0');
 }
 function rmStop() {

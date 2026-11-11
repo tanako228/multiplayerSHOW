@@ -22,7 +22,8 @@
   "dependencies": {
     "acme-client": "^5.4.0",
     "electron-updater": "^6.8.11",
-    "koffi": "^3.3.6"
+    "koffi": "^3.3.6",
+    "ws": "8.22.0"
   },
   "build": {
     "appId": "org.multiplayershow.app",

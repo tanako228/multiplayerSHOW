@@ -1,4 +1,4 @@
-/* ---------- Доступ телефонов группы и данные для приложения (главный процесс) — ТЗ-8-Группа.md, этап 1 ----------
+/* ---------- Доступ телефонов группы и данные для приложения (главный процесс) — ТЗ-8-Группа.md, этапы 1–2 ----------
    Вход: телефон просит доступ (имя, роль) → «Ожидают подтверждения» в окне «Группа» → оператор «Пустить» →
    телефон получает свой ключ. На компьютере хранится только отпечаток ключа (sha256), сам ключ — только на телефоне.
    Все /api/v1/… кроме входа — с заголовком Authorization: Bearer <ключ>; права проверяются здесь, не на телефоне.
@@ -7,7 +7,10 @@
    Номер изменения каждой песни ведём здесь: отпечаток того, что уходит на телефон, сравниваем с прошлым
    (team-sync.json); удалённые помним, чтобы телефон удалил их тоже. Песни берём из library.json
    (main.js: lib:save зовёт libSaved). Данные группы — team.json (разделы people, devices; пишет teamsrv.js),
-   журнал — team-log.jsonl. Подключает teamsrv.js (route → handle, info → state, окно «Группа» → act). */
+   журнал — team-log.jsonl. Подключает teamsrv.js (route → handle, info → state, окно «Группа» → act).
+   Этап 2 — связь в реальном времени: WebSocket /ws (npm ws), протокол v1 (см. «WebSocket» ниже): что на экране (live —
+   от окна оператора, team.js), «библиотека поменялась», сетлисты (плейлисты с пометкой «для группы»), листать с телефона
+   (право «управлять показом» — галочка у человека, ctl). */
 'use strict';
 const fs = require('fs');
 const path = require('path');
@@ -22,14 +25,15 @@ const ROLES = [
   { id: 'sound', name: 'Звук' },
   { id: 'tech', name: 'Техник' },
 ];
-// Право → у каких ролей есть. Этап 1 — только песни; дальше: управлять презентацией, сообщения группе
-const PERMS = { songs: ROLES.map((r) => r.id) };
-const ONLINE_MS = 45e3;      // телефон спрашивает раз в 15 с — не было 45 с, значит, не в сети
+// Право → у каких ролей есть; «управлять показом» (control) — не по роли, а галочкой у человека (ctl)
+const PERMS = { songs: ROLES.map((r) => r.id), control: [] };
+const ONLINE_MS = 20e3;      // без WebSocket и запросов 20 с — не в сети (телефон шлёт ping раз в 15 с)
+const PING_MS = 45e3;        // по WebSocket тишина 45 с — связь оборвалась, закрыть
 const PEND_MS = 10 * 60e3;   // запрос на вход живёт 10 минут
 const LOG_MAX = 512 * 1024;  // журнал больше — старое в team-log.old.jsonl
 
-let o = {};        // { dir, libFile, store: { read, write }, notify(), on(), ver }
-let people = [];   // [{ id, name, role, at }]
+let o = {};        // { dir, libFile, store: { read, write }, notify(), on(), ver, cmd(c) }
+let people = [];   // [{ id, name, role, at, ctl }]
 let devices = [];  // [{ id, person, name, hash, at, seen, ip, off, synced }]
 const byHash = new Map();
 const pending = new Map(); // id → { id, sh, name, role, dev, ip, at, ok, no, waits: Set }
@@ -43,7 +47,7 @@ const newKey = () => crypto.randomBytes(24).toString('base64url');
 const clean = (s, n) => String(s == null ? '' : s).replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, n);
 const roleOk = (r) => ROLES.some((x) => x.id === r);
 const roleName = (r) => (ROLES.find((x) => x.id === r) || ROLES[0]).name;
-const can = (person, perm) => !!person && (PERMS[perm] || []).includes(person.role);
+const can = (person, perm) => !!person && (perm === 'control' ? !!person.ctl : (PERMS[perm] || []).includes(person.role));
 const personOf = (d) => people.find((p) => p.id === d.person) || null;
 
 /* ----- Люди и устройства: team.json ----- */
@@ -51,7 +55,7 @@ const personOf = (d) => people.find((p) => p.id === d.person) || null;
 function load() {
   const j = o.store.read();
   people = (Array.isArray(j.people) ? j.people : []).filter((p) => p && p.id && p.name)
-    .map((p) => ({ id: String(p.id), name: clean(p.name, 40), role: roleOk(p.role) ? p.role : 'musician', at: Number(p.at) || 0 }));
+    .map((p) => ({ id: String(p.id), name: clean(p.name, 40), role: roleOk(p.role) ? p.role : 'musician', at: Number(p.at) || 0, ctl: !!p.ctl }));
   devices = (Array.isArray(j.devices) ? j.devices : []).filter((d) => d && d.id && /^[0-9a-f]{64}$/.test(d.hash) && people.some((p) => p.id === d.person))
     .map((d) => ({ id: String(d.id), person: String(d.person), name: clean(d.name, 60), hash: d.hash, at: Number(d.at) || 0, seen: Number(d.seen) || 0, ip: String(d.ip || ''), off: !!d.off, synced: Number(d.synced) || 0 }));
   byHash.clear();
@@ -174,7 +178,7 @@ function flush(r) {
 function admit(r) {
   pending.delete(r.id);
   let p = people.find((x) => x.name.toLowerCase() === r.name.toLowerCase());
-  if (!p) { p = { id: newId(), name: r.name, role: r.role, at: Date.now() }; people.push(p); }
+  if (!p) { p = { id: newId(), name: r.name, role: r.role, at: Date.now(), ctl: false }; people.push(p); }
   const key = newKey();
   const d = { id: newId(), person: p.id, name: r.dev, hash: sha(key), at: Date.now(), seen: Date.now(), ip: r.ip, off: false, synced: 0 };
   devices.push(d);
@@ -195,6 +199,8 @@ let libs = [];       // библиотеки с песнями: [{ id, name, son
 let lh = '';         // отпечаток библиотек — телефон берёт их заново, только если поменялись
 let libSeen = -1;    // время изменения library.json, которое уже разобрано
 let fresh = null;    // { data, mtime } — свежая библиотека из lib:save (не читать файл заново)
+let sets = [];       // сетлисты: плейлисты с пометкой «для группы» (pl.team = { date }), тональность строки — entry.key
+let sh = '';         // отпечаток сетлистов
 
 function loadSync() {
   sync = null;
@@ -247,6 +253,18 @@ function apply(lib) {
     .map((l) => ({ id: String(l.id), name: clean(l.name, 80), songs: (Array.isArray(l.items) ? l.items : []).map(String).filter((id) => now.has(id)) }))
     .filter((l) => l.songs.length);
   lh = sha(JSON.stringify(libs)).slice(0, 12);
+  // Сетлисты: строки — что угодно из плейлиста (песня, Библия, видео); у песни телефон откроет текст
+  const byId = (id) => (Array.isArray(items) ? items.find((x) => x && String(x.id) === String(id)) : items[id]) || null;
+  sets = (Array.isArray(lib && lib.playlists) ? lib.playlists : []).filter((pl) => pl && pl.id && pl.team)
+    .map((pl) => ({
+      id: String(pl.id), name: clean(pl.name, 80), date: /^\d{4}-\d{2}-\d{2}$/.test(pl.team.date) ? pl.team.date : '',
+      entries: (Array.isArray(pl.entries) ? pl.entries : []).map((e) => {
+        const it = e && byId(e.item);
+        return it ? { eid: String(e.eid), item: String(it.id), name: clean(it.name, 200), kind: String(it.kind || ''), key: clean(e.key, 12) } : null;
+      }).filter(Boolean),
+    }))
+    .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+  sh = sha(JSON.stringify(sets)).slice(0, 12);
   if (ch) saveSync();
 }
 
@@ -266,6 +284,8 @@ function libSaved(data) {
   let m = 0;
   try { m = fs.statSync(o.libFile).mtimeMs; } catch { /* нет файла */ }
   fresh = data && typeof data === 'object' ? { data, mtime: m } : null;
+  // Кто-то на связи — сказать сразу (через 1,5 с: правки идут пачкой, разбор ~35 мс)
+  if (socks.size) { clearTimeout(pushT); pushT = setTimeout(pushLib, 1500); }
 }
 
 function changes(req, res, u, d) {
@@ -306,17 +326,28 @@ function touch(d, ip) {
   if (!was) o.notify(); // появился в сети — окно «Группа»
 }
 
+// Ключ устройства → { d, p } или { code, http } (401 — нет такого, 403 — приостановлен)
+const ERR = { auth: 'Доступ отозван оператором', off: 'Оператор приостановил доступ этого телефона', closed: 'Доступ для группы выключен в программе' };
+function authKey(key, ip) {
+  const ok = /^[\w-]{20,100}$/.test(String(key || ''));
+  const d = ok ? byHash.get(sha(key)) : null;
+  const p = d && personOf(d);
+  if (!d || !p) { if (key) logBad(ip); return { code: 'auth', http: 401 }; }
+  if (d.off) return { code: 'off', http: 403 };
+  return { d, p };
+}
+
 function handle(req, res, u) {
   const p = u.pathname.slice('/api/v1'.length);
-  if (!o.on()) return send(req, res, 403, { error: 'closed', text: 'Доступ для группы выключен в программе' });
+  if (!o.on()) return send(req, res, 403, { error: 'closed', text: ERR.closed });
   if (p === '/join' && req.method === 'POST') { join(req, res); return; }
   if (p === '/join/wait' && req.method === 'POST') { joinWait(req, res); return; }
   const ip = ipOf(req);
-  const m = /^Bearer ([\w-]{20,100})$/.exec(String(req.headers.authorization || ''));
-  const d = m ? byHash.get(sha(m[1])) : null;
-  const person = d && personOf(d);
-  if (!d || !person) { if (m) logBad(ip); return send(req, res, 401, { error: 'auth', text: 'Доступ отозван оператором' }); }
-  if (d.off) return send(req, res, 403, { error: 'off', text: 'Оператор приостановил доступ этого телефона' });
+  const m = /^Bearer (\S+)$/.exec(String(req.headers.authorization || ''));
+  const a = authKey(m ? m[1] : '', ip);
+  if (a.code) return send(req, res, a.http, { error: a.code, text: ERR[a.code] });
+  const { d } = a;
+  const person = a.p;
   touch(d, ip);
   if (p === '/me') { refresh(); return send(req, res, 200, me(d, person)); }
   if (p === '/songs/changes') {
@@ -328,6 +359,7 @@ function handle(req, res, u) {
 
 /* ----- Окно «Группа»: состояние и действия оператора ----- */
 
+const isOn = (d, now) => !d.off && ([...socks].some((c) => c.d === d) || now - d.seen < ONLINE_MS);
 function state() {
   expire();
   const now = Date.now();
@@ -336,9 +368,10 @@ function state() {
     pending: [...pending.values()].filter((r) => !r.ok && !r.no).map((r) => ({ id: r.id, name: r.name, role: r.role, dev: r.dev, ip: r.ip, at: r.at })),
     people: people.map((p) => ({
       id: p.id, name: p.name, role: p.role, at: p.at,
-      devices: devices.filter((d) => d.person === p.id).map((d) => ({ id: d.id, name: d.name, ip: d.ip, at: d.at, seen: d.seen, off: d.off, synced: d.synced, online: !d.off && now - d.seen < ONLINE_MS })),
+      ctl: !!p.ctl,
+      devices: devices.filter((d) => d.person === p.id).map((d) => ({ id: d.id, name: d.name, ip: d.ip, at: d.at, seen: d.seen, off: d.off, synced: d.synced, online: isOn(d, now) })),
     })),
-    online: devices.filter((d) => !d.off && now - d.seen < ONLINE_MS).length,
+    online: devices.filter((d) => isOn(d, now)).length,
     songs: pay.size,
   };
 }
@@ -351,13 +384,14 @@ function act(a) {
   switch (a.act) {
     case 'approve': { const r = req(); r.ok = true; r.at = Date.now(); log('approve', { name: r.name, dev: r.dev, ip: r.ip }); flush(r); break; }
     case 'reject': { const r = req(); r.no = true; r.at = Date.now(); log('reject', { name: r.name, dev: r.dev, ip: r.ip }); flush(r); break; }
-    case 'off': { const d = dev(); d.off = !!a.off; saveTeam(); log(d.off ? 'off' : 'on', { name: (personOf(d) || {}).name, dev: d.name }); break; }
+    case 'off': { const d = dev(); d.off = !!a.off; saveTeam(); log(d.off ? 'off' : 'on', { name: (personOf(d) || {}).name, dev: d.name }); if (d.off) kick((c) => c.d === d, 'off'); break; }
     case 'revoke': {
       const d = dev();
       devices = devices.filter((x) => x !== d);
       byHash.delete(d.hash);
       saveTeam();
       log('revoke', { name: (personOf(d) || {}).name, dev: d.name });
+      kick((c) => c.d === d, 'auth');
       break;
     }
     case 'person': {
@@ -369,12 +403,15 @@ function act(a) {
         p.name = n;
       }
       if (roleOk(a.role)) p.role = a.role;
+      if (typeof a.ctl === 'boolean' && a.ctl !== p.ctl) { p.ctl = a.ctl; log(p.ctl ? 'ctlOn' : 'ctlOff', { name: p.name }); }
       saveTeam();
+      for (const c of socks) if (c.d.person === p.id) wsSend(c, { t: 'me', me: me(c.d, p) }); // роль и права — телефону сразу
       break;
     }
     case 'delPerson': {
       const p = per();
       for (const d of devices.filter((x) => x.person === p.id)) byHash.delete(d.hash);
+      kick((c) => c.d.person === p.id, 'auth');
       devices = devices.filter((x) => x.person !== p.id);
       people = people.filter((x) => x !== p);
       saveTeam();
@@ -386,6 +423,125 @@ function act(a) {
   }
   o.notify();
   return null;
+}
+
+/* ----- WebSocket /ws: протокол v1 ----------
+   Телефон → программа: { t: 'hello', v: 1, token } (первым, иначе закрываем), { t: 'ping', id } раз в 15 с,
+   { t: 'cmd', cmd: 'next'|'prev'|'show'|'clear', item, sid } — только с правом «управлять показом».
+   Программа → телефон: welcome { v, me, live, sets, sh, time } · live { live } — что на экране (у песни — id слайда,
+   у Библии и своих слайдов — ещё и их текст, когда пункт сменился; same: true — текст тот же, что в прошлый раз) ·
+   lib { lib, seq, lh } — песни поменялись, докачать · sets { sets, sh } · me { me } — роль или права поменялись ·
+   pong { id, time } · err { text } · bye { code, text } — перед закрытием: auth (ключ отозван), off (приостановлен),
+   closed (доступ выключен). Ключ — в первом сообщении, не в адресе (адреса попадают в журналы). */
+
+let WSS = null;
+const socks = new Set(); // { ws, d, ip, last } — только вошедшие (hello принят)
+let live = { kind: 'none' };
+let liveSig = '';
+let slidesSig = '';
+let sent = { lib: '', seq: -1, lh: '', sh: '' }; // что разослали последним
+let pushT = 0;
+
+function wsSend(c, m) {
+  try { if (c.ws.readyState === 1) c.ws.send(JSON.stringify(m)); } catch { /* закрылся */ }
+}
+function broadcast(m, perm) {
+  const s = JSON.stringify(m);
+  for (const c of socks) {
+    if (perm && !can(personOf(c.d), perm)) continue;
+    try { if (c.ws.readyState === 1) c.ws.send(s); } catch { /* закрылся */ }
+  }
+}
+// Отключить телефоны (отозвали, приостановили, выключили доступ): сначала сказать почему
+function kick(test, code) {
+  for (const c of [...socks]) {
+    if (!test(c)) continue;
+    wsSend(c, { t: 'bye', code, text: ERR[code] || '' });
+    socks.delete(c);
+    try { c.ws.close(code === 'off' ? 4003 : code === 'closed' ? 4004 : 4001, code); } catch { /* уже */ }
+  }
+  o.notify();
+}
+const closeAll = () => kick(() => true, 'closed');
+
+// Из teamsrv.js: запрос на /ws (адрес и Origin уже проверены)
+function upgrade(req, sock, head) {
+  if (!o.on()) { sock.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n'); return; }
+  if (!WSS) WSS = new (require('ws').WebSocketServer)({ noServer: true, maxPayload: 64 * 1024, perMessageDeflate: false });
+  WSS.handleUpgrade(req, sock, head, (ws) => attach(ws, ipOf(req)));
+}
+function attach(ws, ip) {
+  const c = { ws, d: null, ip, last: Date.now() };
+  const t = setTimeout(() => { if (!c.d) try { ws.close(4001, 'hello'); } catch { /* уже */ } }, 10000);
+  ws.on('message', (buf) => {
+    c.last = Date.now();
+    let m = null;
+    try { m = JSON.parse(String(buf)); } catch { return; }
+    if (m && typeof m === 'object') onMsg(c, m);
+  });
+  ws.on('close', () => { clearTimeout(t); if (socks.delete(c)) o.notify(); });
+  ws.on('error', () => { /* оборвалось — close придёт */ });
+}
+function onMsg(c, m) {
+  if (!c.d) {
+    if (m.t !== 'hello') { try { c.ws.close(4001, 'hello'); } catch { /* уже */ } return; }
+    if (!o.on()) { wsSend(c, { t: 'bye', code: 'closed', text: ERR.closed }); c.ws.close(4004, 'closed'); return; }
+    const a = authKey(m.token, c.ip);
+    if (a.code) { wsSend(c, { t: 'bye', code: a.code, text: ERR[a.code] }); c.ws.close(a.code === 'off' ? 4003 : 4001, a.code); return; }
+    c.d = a.d;
+    socks.add(c);
+    touch(c.d, c.ip);
+    o.notify();
+    refresh();
+    wsSend(c, { t: 'welcome', v: 1, me: me(c.d, a.p), live, sets, sh, time: Date.now() });
+    return;
+  }
+  const p = personOf(c.d);
+  if (!p || !byHash.has(c.d.hash) || c.d.off) { kick((x) => x === c, c.d.off ? 'off' : 'auth'); return; }
+  touch(c.d, c.ip);
+  if (m.t === 'ping') { wsSend(c, { t: 'pong', id: m.id, time: Date.now() }); return; }
+  if (m.t === 'cmd') {
+    if (!can(p, 'control')) { wsSend(c, { t: 'err', text: 'Нет права листать — его даёт оператор в окне «Группа»' }); return; }
+    const cmd = String(m.cmd || '');
+    if (!['next', 'prev', 'show', 'clear'].includes(cmd)) return;
+    if (o.cmd) o.cmd({ cmd, item: clean(m.item, 40), sid: clean(m.sid, 40), pl: clean(m.pl, 40), eid: clean(m.eid, 40), who: p.name });
+  }
+}
+
+// Что на экране — от окна оператора (team.js). Текст слайдов шлём, только когда пункт или его слайды поменялись
+const LIVE_KINDS = ['song', 'text', 'bible', 'media', 'none'];
+function setLive(l) {
+  const x = l && typeof l === 'object' ? l : {};
+  const kind = LIVE_KINDS.includes(x.kind) ? x.kind : 'none';
+  const nl = { kind, item: clean(x.item, 40), name: clean(x.name, 200), sid: clean(x.sid, 40),
+    idx: Math.max(-1, Math.floor(Number(x.idx)) || 0), n: Math.max(0, Math.floor(Number(x.n)) || 0),
+    pl: clean(x.pl, 40), eid: clean(x.eid, 40) };
+  if (kind === 'text' || kind === 'bible') {
+    let total = 0;
+    nl.slides = (Array.isArray(x.slides) ? x.slides : []).slice(0, 400).map((z) => {
+      const t = String((z && z.text) || '').slice(0, 4000);
+      total += t.length;
+      return { id: clean(z && z.id, 40), label: clean(z && z.label, 80), text: total > 300000 ? '' : t };
+    });
+  }
+  const sig = JSON.stringify(nl);
+  if (sig === liveSig) return false;
+  liveSig = sig;
+  live = { ...nl, at: Date.now() };
+  const ss = JSON.stringify([nl.item, nl.slides || null]);
+  const same = ss === slidesSig;
+  slidesSig = ss;
+  broadcast({ t: 'live', live: same && nl.slides ? { ...live, slides: undefined, same: true } : live }, 'songs');
+  return true;
+}
+
+// Библиотека поменялась — телефонам: докачать песни, новые сетлисты
+function pushLib() {
+  if (!socks.size) return;
+  refresh();
+  if (sent.lib !== sync.lib || sent.seq !== sync.seq || sent.lh !== lh) broadcast({ t: 'lib', lib: sync.lib, seq: sync.seq, lh }, 'songs');
+  if (sent.sh !== sh) broadcast({ t: 'sets', sets, sh }, 'songs');
+  sent = { lib: sync.lib, seq: sync.seq, lh, sh };
 }
 
 /* ----- Запуск ----- */
@@ -401,17 +557,26 @@ function init(opt) {
   // Кто в сети: поменялось — окно «Группа»; когда телефон был последний раз — в файл раз в минуту
   t(() => {
     const now = Date.now();
-    const k = devices.filter((d) => !d.off && now - d.seen < ONLINE_MS).map((d) => d.id).join(',');
+    const k = devices.filter((d) => isOn(d, now)).map((d) => d.id).join(',');
     if (k !== onlineKey) { onlineKey = k; o.notify(); }
     if (pending.size) { const n = pending.size; expire(); if (pending.size !== n) o.notify(); }
   }, 5e3);
   t(() => { if (seenDirty) saveTeam(); }, 60e3);
+  // Телефон пропал без «до свидания» (ушёл из Wi-Fi) — закрыть
+  t(() => {
+    const now = Date.now();
+    for (const c of [...socks]) if (now - c.last > PING_MS) { socks.delete(c); try { c.ws.terminate(); } catch { /* уже */ } o.notify(); }
+  }, 10e3);
 }
 function shutdown() {
   for (const h of timers) clearInterval(h);
   timers = [];
   if (seenDirty) saveTeam();
   for (const r of pending.values()) for (const w of r.waits) { clearTimeout(w.timer); send(w.req, w.res, 200, { wait: true }); }
+  clearTimeout(pushT);
+  for (const c of socks) { try { c.ws.terminate(); } catch { /* уже */ } }
+  socks.clear();
 }
 
-module.exports = { init, shutdown, handle, state, act, libSaved, ROLES, _test: { refresh, apply, pending, sync: () => sync } };
+module.exports = { init, shutdown, handle, state, act, libSaved, upgrade, setLive, closeAll, ROLES,
+  _test: { refresh, apply, pending, sync: () => sync, socks, sets: () => sets, live: () => live } };

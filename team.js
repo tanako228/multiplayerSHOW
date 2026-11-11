@@ -7,7 +7,11 @@
    адрес компьютера, порт, «Записать адрес в DNS», «Проверить адрес», «Получить сертификат».
    Раздел «Люди и устройства» (teamapi.js, данные — grInfo.grp): ожидают подтверждения («Пустить» / «Отклонить»,
    они же — под QR-кодом), люди с ролью, их телефоны: в сети, приостановить, отозвать. «Журнал» — team-log.jsonl.
-   Новый запрос, пока окно закрыто, — число на кнопке «Группа» и строка состояния. */
+   Новый запрос, пока окно закрыто, — число на кнопке «Группа» и строка состояния.
+   Этап 2: что на экране — телефонам (grLive → window.api.teamLive, раз в 0,4 с, если поменялось); команды с телефона
+   человека с галочкой «Может листать» (onTeamCmd: next / prev / show / clear) — тем же путём, что клавиши и щелчок.
+   Раздел «Сетлисты»: плейлист с пометкой «Для группы» (pl.team = { date }) и тональностью строк (entry.key) — правка lib,
+   Ctrl+Z работает; телефоны получают их от teamapi.js. */
 
 let grInfo = null;
 let grFwSt = null;   // брандмауэр: { rule — порты пульта (простой адрес), pub, team — порт https }
@@ -187,7 +191,13 @@ function grGrpPaint() {
     role.setAttribute('aria-label', 'Роль: ' + p.name);
     role.append(...g.roles.map((r) => Object.assign(grEl('option', '', r.name), { value: r.id, selected: r.id === p.role })));
     role.addEventListener('change', () => grDo({ act: 'person', id: p.id, role: role.value }, 'Роль изменена'));
-    head.append(grEl('b', '', p.name), role, grEl('span', 'spacer'),
+    // Право листать слайды с телефона (Дальше / Назад / показать слайд / убрать текст) — у человека, не у роли
+    const ctl = grEl('label', 'check');
+    const cb = Object.assign(grEl('input'), { type: 'checkbox', checked: !!p.ctl });
+    cb.addEventListener('change', () => grDo({ act: 'person', id: p.id, ctl: cb.checked }, cb.checked ? `«${p.name}» может листать слайды с телефона` : 'Листать с телефона больше нельзя'));
+    ctl.append(cb, document.createTextNode(' Может листать'));
+    ctl.title = 'Дальше / Назад, показать слайд, убрать текст с экрана — с телефона';
+    head.append(grEl('b', '', p.name), role, ctl, grEl('span', 'spacer'),
       grBtn('Переименовать', async () => {
         const n = await askName('Имя', p.name);
         if (n && n !== p.name) grDo({ act: 'person', id: p.id, name: n }, 'Имя изменено');
@@ -237,6 +247,8 @@ const GR_EV = {
   revoke: (x) => `Отозвали доступ: ${x.name} — ${x.dev}`,
   delPerson: (x) => `Удалили из группы: ${x.name}`,
   bad: (x) => `Попытка войти с чужим или отозванным ключом — ${x.ip}`,
+  ctlOn: (x) => `${x.name}: можно листать слайды с телефона`,
+  ctlOff: (x) => `${x.name}: листать с телефона больше нельзя`,
 };
 let grLogT = 0;
 function grJournal() {
@@ -260,6 +272,7 @@ function grShowTab(tab) {
   document.querySelectorAll('.tm-nav button').forEach((b) => b.setAttribute('aria-current', String(b.dataset.tm === tab)));
   document.querySelectorAll('.tm-sec').forEach((s) => { s.hidden = s.dataset.tm !== tab; });
   if (tab === 'log') grJournal();
+  if (tab === 'sets') grSetsPaint();
 }
 
 function grOpen() {
@@ -336,3 +349,160 @@ async function grFwFix(e) {
 }
 $('tmFwFix').addEventListener('click', grFwFix);
 $('tmQrFwFix').addEventListener('click', grFwFix);
+
+/* ----- Сетлисты: плейлист «для группы», дата служения, тональность строки ----- */
+
+const grToday = () => { const d = new Date(); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0, 10); };
+function grSetsPaint() {
+  const box = $('tmSets');
+  if (!$('teamDialog').open || grTab !== 'sets' || typeof lib === 'undefined' || !lib) return;
+  if (box.contains(document.activeElement) && document.activeElement.tagName === 'INPUT' && document.activeElement.type !== 'checkbox') return; // печатают
+  if (!lib.playlists.length) { box.replaceChildren(grEl('p', 'hint', 'Плейлистов пока нет — создайте плейлист в библиотеке.')); return; }
+  // Сначала сетлисты (новые сверху), потом остальные плейлисты
+  const list = [...lib.playlists].sort((a, b) => (!!b.team - !!a.team) || ((b.team && b.team.date) || '').localeCompare((a.team && a.team.date) || ''));
+  box.replaceChildren(...list.map((pl) => {
+    const card = grEl('div', 'tm-person tm-set' + (pl.team ? ' on' : ''));
+    const head = grEl('div', 'tm-p-head');
+    const lab = grEl('label', 'check');
+    const cb = Object.assign(grEl('input'), { type: 'checkbox', checked: !!pl.team });
+    cb.addEventListener('change', () => {
+      if (cb.checked) pl.team = { date: (pl.team && pl.team.date) || grToday() };
+      else delete pl.team;
+      saveLib();
+      flashStatus(cb.checked ? `«${pl.name}» — сетлист для группы` : `«${pl.name}» больше не виден группе (Ctrl+Z — вернуть)`);
+      grSetsPaint();
+    });
+    lab.append(cb, document.createTextNode(' Для группы'));
+    head.append(grEl('b', '', pl.name), grEl('span', 'tm-sub', `${pl.entries.length} пунктов`), grEl('span', 'spacer'), lab);
+    if (pl.team) {
+      const date = Object.assign(grEl('input'), { type: 'date', value: pl.team.date || '' });
+      date.setAttribute('aria-label', 'Дата служения: ' + pl.name);
+      date.addEventListener('change', () => { if (!pl.team) return; pl.team.date = date.value; saveLib(); });
+      head.insertBefore(date, lab);
+    }
+    card.append(head);
+    if (!pl.team) return card;
+    if (!pl.entries.length) card.append(grEl('div', 'tm-dev', 'Пусто — перетащите песни в плейлист'));
+    for (const e of pl.entries) {
+      const it = lib.items[e.item];
+      if (!it) continue;
+      const row = grEl('div', 'tm-dev');
+      row.append(grEl('span', 'who', it.name));
+      card.append(row);
+      // Тональность — только у песен; у Библии и видео — что это
+      if (it.kind !== 'song') { row.append(grEl('span', 'kind', Slides.PRES_NAMES[it.kind] || '')); continue; }
+      const key = Object.assign(grEl('input', 'tm-key'), { value: e.key || '', maxLength: 12, placeholder: 'Тон.' });
+      key.title = 'Тональность для группы — например G, Am, C#';
+      key.setAttribute('aria-label', 'Тональность: ' + it.name);
+      key.addEventListener('change', () => {
+        const v = key.value.trim();
+        if (v) e.key = v; else delete e.key;
+        saveLib();
+      });
+      row.append(key);
+    }
+    return card;
+  }));
+}
+
+/* ----- Что на экране — телефонам группы (teamapi.js: setLive, протокол v1 — live) ----- */
+
+// Текст слайда для телефона: у Библии — стихи, у своего слайда — его текстовые блоки
+function grSlideText(s) {
+  if (s.k === 'text') return s.text || '';
+  if (s.k === 'bible') return (s.verses || []).map((v) => ((s.verses.length > 1 ? v.n + ' ' : '') + v.t)).join(' ');
+  if (s.k === 'custom') return (s.elements || []).filter((x) => x.kind === 'text').map((x) => x.text).join('\n');
+  return '';
+}
+function grLive() {
+  // Пункт из плейлиста или библиотеки
+  const x = plShown && entryByKey(plShown.key, keyView(plShown.view));
+  if (x && x.item) {
+    const it = x.item;
+    const idx = it.slides.findIndex((s) => s.id === plShown.sid);
+    const s = it.slides[idx];
+    const pl = plShown.view.startsWith('pl:') ? plShown.view.slice(3) : '';
+    const base = { item: it.id, name: it.name, sid: plShown.sid, idx, n: it.slides.length, pl, eid: pl ? plShown.key : '' };
+    if (it.kind === 'song') return { kind: 'song', ...base };
+    if (!s || ['image', 'video', 'audio', 'live'].includes(s.k)) return { kind: 'media', ...base, name: it.slides.length > 1 ? it.name : (s && s.name) || it.name };
+    return { kind: it.kind === 'bible' ? 'bible' : 'text', ...base,
+      slides: it.slides.map((z) => ({ id: z.id, label: z.k === 'bible' ? z.ref || z.label || '' : z.label || z.name || '', text: grSlideText(z) })) };
+  }
+  // Библия со вкладки «Библия»: глава целиком, на экране — стих
+  if (bShown) {
+    const lay = Object.values(layerOn).find((l) => l.marks && l.marks.bShown === bShown);
+    const label = (lay && lay.label) || 'Библия';
+    if (!bible || bShown.bid !== bible.id) return { kind: 'bible', item: 'b:' + bShown.bid, name: label, slides: [] };
+    const book = bible.books[bShown.bi];
+    const keys = bShown.keys || (book.chapters[bShown.ci] || []).map((t, i) => (t ? vkey(bShown.bi, bShown.ci, i + 1) : null)).filter(Boolean);
+    const slides = keys.map((k) => { const u = unkey(k); return { id: 'v' + k, label: bShown.keys ? `${bible.books[u.bi].name} ${u.ci + 1}:${u.v}` : String(u.v), text: verseText(k) }; });
+    const sid = 'v' + vkey(bShown.bi, bShown.ci, bShown.v1);
+    return { kind: 'bible', item: bShown.keys ? 'bx:' + bible.id : `b:${bible.id}:${bShown.bi}:${bShown.ci}`, name: bShown.keys ? label : `${book.name} ${bShown.ci + 1}`,
+      sid, idx: slides.findIndex((z) => z.id === sid), n: slides.length, slides };
+  }
+  // Другое: видео, картинка, источник
+  const ids = Object.keys(layerOn);
+  if (ids.length) return { kind: 'media', name: layerOn[ids[ids.length - 1]].label || '' };
+  return { kind: 'none' };
+}
+let grLiveSig = '';
+let grLiveHist = null;
+let grSetsHist = null;
+setInterval(() => {
+  if (!grInfo || !grInfo.cfg.on || typeof lib === 'undefined' || !lib) { grLiveSig = ''; return; }
+  if (histCur !== grLiveHist) { grLiveHist = histCur; grLiveSig = ''; } // библиотеку сохранили — текст мог поменяться
+  const sig = [plShown && plShown.view + '|' + plShown.key + '|' + plShown.sid, bShown && JSON.stringify(bShown), bible && bible.id, Object.keys(layerOn).join(',')].join('§');
+  if (sig !== grLiveSig) {
+    grLiveSig = sig;
+    let l;
+    try { l = grLive(); } catch { l = { kind: 'none' }; }
+    window.api.teamLive(l).catch(() => {});
+  }
+  if (grTab === 'sets' && $('teamDialog').open && histCur !== grSetsHist) { grSetsHist = histCur; grSetsPaint(); } // Ctrl+Z, правка плейлиста
+}, 400);
+
+/* ----- Команды с телефона (право «Может листать»): тем же путём, что стрелки и щелчок по слайду ----- */
+
+function grStep(d) {
+  if (bShown && bible && bShown.bid === bible.id) { bibleStep(d); return; }
+  // Пункт не из ленты (из библиотеки слева) — листаем внутри него
+  if (plShown && plShown.view !== workKey()) {
+    const x = entryByKey(plShown.key, keyView(plShown.view));
+    if (!x) return;
+    const s = x.item.slides[x.item.slides.findIndex((z) => z.id === plShown.sid) + d];
+    if (s) showSlide(plShown.key, s.id, plShown.view);
+    return;
+  }
+  plStep(d);
+}
+function grShow(c) {
+  // Стих со вкладки «Библия»: пункт b:<перевод>:<книга>:<глава> (или bx:<перевод> — стихи вразброс), слайд v<книга>:<глава>:<стих>
+  if (/^bx?:/.test(c.item)) {
+    const k = /^v(\d+):(\d+):(\d+)$/.exec(c.sid);
+    const mine = bible && (c.item === 'bx:' + bible.id || c.item.startsWith('b:' + bible.id + ':'));
+    if (!mine || !k || !verseText(c.sid.slice(1))) return false;
+    showVerses(Number(k[1]), Number(k[2]), Number(k[3]), Number(k[3]), (bShown && bShown.pane) || 'main');
+    return true;
+  }
+  let at = null;
+  if (c.pl && c.eid) { const x = entryByKey(c.eid, { kind: 'pl', id: c.pl }); if (x && x.item.id === c.item) at = { key: c.eid, vk: 'pl:' + c.pl }; }
+  if (!at && plShown) { const x = entryByKey(plShown.key, keyView(plShown.view)); if (x && x.item.id === c.item) at = { key: plShown.key, vk: plShown.view }; }
+  if (!at) at = rmPlace(c.item);
+  const item = lib.items[c.item];
+  if (!at || !item || !item.slides.some((s) => s.id === c.sid)) return false;
+  sel = [{ key: at.key, sid: c.sid }];
+  selAnchor = sel[0];
+  showSlide(at.key, c.sid, at.vk);
+  return true;
+}
+function grClear() {
+  const id = Object.keys(layerOn).find((k) => { const m = layerOn[k].marks; return m && ((plShown && m.plShown === plShown) || (bShown && m.bShown === bShown)); });
+  if (id) clearLayer(id); else clearKind('pres');
+}
+window.api.onTeamCmd((c) => {
+  if (!c || typeof lib === 'undefined' || !lib) return;
+  const who = `Телефон${c.who ? ` (${c.who})` : ''}`;
+  if (c.cmd === 'next' || c.cmd === 'prev') { grStep(c.cmd === 'next' ? 1 : -1); flashStatus(`${who}: ${c.cmd === 'next' ? 'дальше' : 'назад'}`); }
+  else if (c.cmd === 'clear') { grClear(); flashStatus(`${who}: текст убран с экрана`); }
+  else if (c.cmd === 'show') { if (grShow(c)) flashStatus(`${who}: показан слайд`); else flashStatus(`${who}: этого слайда уже нет`); }
+});

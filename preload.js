@@ -169,6 +169,8 @@ contextBridge.exposeInMainWorld('api', {
   teamDns: () => ipcRenderer.invoke('team:dns'),
   teamCheck: () => ipcRenderer.invoke('team:check'),
   teamDo: (a) => ipcRenderer.invoke('team:do', a), // люди и устройства: { act, id, … } (teamapi.js: act)
+  teamLive: (l) => ipcRenderer.invoke('team:live', l), // что на экране — телефонам группы
+  onTeamCmd: (cb) => on('team:cmd', cb), // телефон листает: { cmd: next|prev|show|clear, item, sid, pl, eid, who }
   onTeamInfo: (cb) => on('team:info', cb),
   onThumbDraw: (cb) => on('thumb:draw', cb),
   thumbReady: () => ipcRenderer.send('thumb:ready'),

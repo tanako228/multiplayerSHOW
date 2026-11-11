@@ -1,7 +1,12 @@
-/* Экраны приложения группы. Данные и связь — db.js (Store).
+/* Экраны приложения группы. Данные и синхронизация песен — db.js (Store).
    Вход: имя и роль → «Попросить доступ» → ждём оператора (долгий запрос /join/wait) → ключ устройства.
-   Песни: сразу то, что лежит на телефоне (без сети тоже); раз в 15 с /me — «на связи?» и номер изменений:
-   поменялось у оператора — докачиваем только изменения. Ключ отозван / приостановлен / доступ выключен —
+   Песни: сразу то, что лежит на телефоне (без сети тоже). Связь — WebSocket /ws (протокол v1, teamapi.js):
+   hello с ключом → welcome; ping раз в 15 с; оборвалось — снова через 1 → 2 → 4 … 30 с (между попытками —
+   /me по http: узнать, что случилось, и докачать песни, даже если WebSocket не проходит).
+   Программа присылает: live (что на экране), lib (песни поменялись — докачать изменения), sets (сетлисты), me, bye.
+   «Следовать» — телефон сам открывает то, что на экране, и держит текущий слайд перед глазами;
+   «Листать самому» — смотреть своё, внизу полоса «На экране: …». Право «Может листать» (оператор, окно «Группа») —
+   кнопки ◀ ▶ «Убрать» и «Показать на экране» у слайда. Ключ отозван / приостановлен / доступ выключен —
    полоса сверху, песни на телефоне остаются. Назад (кнопка телефона) — из песни в список (history). */
 'use strict';
 const $ = (id) => document.getElementById(id);
@@ -11,16 +16,17 @@ const PING_MS = 15000;
 const fmt = (t) => (t ? new Date(t).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—');
 const ls = { get: (k, d) => { try { const v = localStorage.getItem(k); return v == null ? d : v; } catch { return d; } }, set: (k, v) => { try { localStorage.setItem(k, v); } catch { /* приватный режим */ } } };
 const standalone = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+const BAD = ['auth', 'off', 'closed'];
 
 let screen = '';
 let conn = 'start';   // ok | net | auth | off | closed | start
 let prog = null;      // { got, total } — идёт загрузка
-let pingT = 0;
 let updated = false;  // пришли новые файлы приложения (sw.js) — предложить перезапуск
 
 function show(name) {
   screen = name;
   for (const s of document.querySelectorAll('.scr')) s.hidden = s.id !== 'scr' + name;
+  paintBar();
 }
 
 let toastT = 0;
@@ -120,12 +126,12 @@ async function showWait() {
   }
 }
 
-/* ----- Связь и синхронизация ----- */
+/* ----- Связь: состояние ----- */
 
 function paintConn() {
   const c = $('conn');
   const busy = !!prog;
-  const bad = ['auth', 'off', 'closed'].includes(conn);
+  const bad = BAD.includes(conn);
   c.className = 'conn' + (busy ? ' busy' : conn === 'ok' ? ' ok' : bad ? ' bad' : '');
   $('connText').textContent = busy ? (prog.total > 50 ? `Загружаю ${prog.got} из ${prog.total}` : 'Обновляю…')
     : conn === 'ok' ? 'На связи' : conn === 'net' ? 'Нет связи' : bad ? 'Нет доступа' : 'Подключаюсь…';
@@ -142,27 +148,12 @@ function paintConn() {
   $('bannerBtn').hidden = !upd && conn !== 'auth';
   $('bannerBtn').textContent = upd ? 'Перезапустить' : 'Попросить доступ снова';
   if ($('sheet').open) paintSheet();
+  paintBar();
 }
 
-async function ping() {
-  clearTimeout(pingT);
-  pingT = setTimeout(ping, PING_MS);
-  if (!Store.token) return;
-  try {
-    const me = await Store.api('/me', { timeout: 8000 });
-    conn = 'ok';
-    Store.saveMe(me).catch(() => {});
-    const m = Store.meta;
-    if (me.lib !== m.lib || me.seq !== m.since || me.lh !== m.lh) runSync();
-  } catch (e) {
-    conn = ['auth', 'off', 'closed'].includes(e.code) ? e.code : 'net';
-    if (conn === 'auth') await Store.dropAuth();
-  }
-  paintConn();
-}
-
+let syncAgain = false;
 async function runSync(full) {
-  if (Store.busy) return;
+  if (Store.busy) { syncAgain = true; return; } // во время загрузки пришло «песни поменялись» — ещё раз после
   const first = !Store.meta.at;
   prog = { got: 0, total: 0 };
   paintConn();
@@ -171,8 +162,16 @@ async function runSync(full) {
     if (r.got || r.reset) {
       fillLibs();
       renderList();
+      renderSets();
       // Оператор поправил открытую песню — показать новый текст, не теряя места
-      if (screen === 'Song' && Store.songs.has(curId)) { const y = window.scrollY; openSong(curId, false); window.scrollTo(0, y); }
+      if (screen === 'Song' && cur && cur.song && Store.songs.has(cur.id) && Store.songs.get(cur.id) !== cur.src) {
+        const y = window.scrollY;
+        openSong(cur.id, false, { pl: cur.pl, eid: cur.eid, key: cur.key });
+        window.scrollTo(0, y);
+        markLive(false);
+      }
+      // На экране песня, которой не было на телефоне, — пришла
+      if (follow && live.kind === 'song' && screen === 'Song' && cur && cur.note) followLive();
     }
     if (first || full) {
       toast(`Песни загружены: ${Store.songs.size}`);
@@ -180,13 +179,252 @@ async function runSync(full) {
       if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
     }
   } catch (e) {
-    if (['auth', 'off', 'closed'].includes(e.code)) { conn = e.code; if (conn === 'auth') await Store.dropAuth(); }
+    if (BAD.includes(e.code)) { conn = e.code; if (conn === 'auth') await Store.dropAuth(); }
     else if (e.code === 'net') conn = 'net';
     else toast('Песни не обновились: ' + e.message);
   } finally {
     prog = null;
     paintConn();
+    if (syncAgain) { syncAgain = false; runSync(); }
   }
+}
+// Номер изменений у программы другой — докачать
+function syncIf(x) {
+  const m = Store.meta;
+  if (x && (x.lib !== m.lib || x.seq !== m.since || x.lh !== m.lh)) runSync();
+}
+
+/* ----- Связь: WebSocket ----- */
+
+let ws = null;
+let wsTry = 0;   // неудачных попыток подряд: следующая через 1 → 2 → 4 … 30 с
+let wsT = 0;
+let wsPing = 0;
+let wsLast = 0;  // когда пришло последнее сообщение
+
+function connect() {
+  clearTimeout(wsT);
+  if (!Store.token || ws || conn === 'auth') return;
+  let s;
+  try { s = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws'); } catch { lost(); return; }
+  ws = s;
+  let bye = '';
+  s.onopen = () => { wsLast = Date.now(); s.send(JSON.stringify({ t: 'hello', v: 1, token: Store.token })); };
+  s.onmessage = (e) => {
+    wsLast = Date.now();
+    let m = null;
+    try { m = JSON.parse(e.data); } catch { return; }
+    if (!m || typeof m !== 'object') return;
+    if (m.t === 'bye') bye = m.code;
+    onMsg(m);
+  };
+  s.onerror = () => { /* close придёт следом */ };
+  s.onclose = () => {
+    if (ws !== s) return;
+    ws = null;
+    clearInterval(wsPing);
+    if (bye === 'auth') return; // ключ отозван — не стучаться
+    lost(bye);
+  };
+}
+// Связь оборвалась (или не открылась): спросить по http, что случилось, и попробовать снова позже
+async function lost(code) {
+  clearTimeout(wsT);
+  const wait = Math.min(30, 2 ** wsTry) * 1000;
+  wsTry++;
+  if (!code) {
+    try {
+      const me = await Store.api('/me', { timeout: 8000 });
+      conn = 'ok'; // http проходит, WebSocket — нет (прокси?): песни всё равно докачаем
+      Store.saveMe(me).catch(() => {});
+      syncIf(me);
+    } catch (e) {
+      conn = BAD.includes(e.code) ? e.code : 'net';
+      if (conn === 'auth') { await Store.dropAuth(); paintConn(); return; }
+    }
+    paintConn();
+  }
+  wsT = setTimeout(connect, wait);
+}
+function wsSend(m) {
+  if (!ws || ws.readyState !== 1) { toast('Нет связи с программой'); return false; }
+  ws.send(JSON.stringify(m));
+  return true;
+}
+// Раз в 15 с «ты тут?»; ответа нет 8 с — связь мёртвая (ушли из Wi-Fi), открыть заново
+function pingNow() {
+  if (!ws || ws.readyState !== 1) return;
+  const s = ws;
+  const t0 = Date.now();
+  s.send(JSON.stringify({ t: 'ping', id: t0 }));
+  setTimeout(() => { if (ws === s && wsLast < t0) s.close(); }, 8000);
+}
+// Вернулись в приложение, появилась сеть — сразу, без ожидания
+function wake() {
+  if (!Store.token) return;
+  if (ws && ws.readyState === 1) pingNow();
+  else if (!ws) { wsTry = 0; connect(); }
+}
+
+function onMsg(m) {
+  switch (m.t) {
+    case 'welcome':
+      wsTry = 0;
+      conn = 'ok';
+      clearInterval(wsPing);
+      wsPing = setInterval(pingNow, PING_MS);
+      Store.saveMe(m.me).catch(() => {});
+      setSets(m.sets);
+      applyLive(m.live);
+      syncIf(m.me);
+      paintConn();
+      break;
+    case 'live': applyLive(m.live); break;
+    case 'lib': syncIf({ lib: m.lib, seq: m.seq, lh: m.lh }); break;
+    case 'sets': setSets(m.sets); break;
+    case 'me': Store.saveMe(m.me).catch(() => {}); toast(m.me.perms.control ? 'Оператор разрешил листать слайды' : 'Права изменились'); paintBar(); if (screen === 'Song') paintPick(); break;
+    case 'err': toast(m.text || 'Ошибка'); break;
+    case 'bye':
+      conn = BAD.includes(m.code) ? m.code : 'net';
+      if (conn === 'auth') Store.dropAuth().catch(() => {});
+      paintConn();
+      break;
+    default: break; // pong и новое из будущих версий
+  }
+}
+
+/* ----- Что на экране: «Следовать» / «Листать самому» ----- */
+
+let live = { kind: 'none' };
+let liveSlides = null; // { item, slides } — текст Библии и своих слайдов (приходит, когда пункт сменился)
+let follow = ls.get('mps.follow', '1') === '1';
+let sets = [];
+
+function applyLive(l) {
+  live = l && typeof l === 'object' ? l : { kind: 'none' };
+  if (Array.isArray(live.slides)) liveSlides = { item: live.item, slides: live.slides };
+  else if (!live.same || !liveSlides || liveSlides.item !== live.item) liveSlides = null;
+  if (follow && (screen === 'Lib' || screen === 'Song')) followLive();
+  else markLive(false);
+  paintBar();
+  if (libTab === 'sets' && screen === 'Lib') markSets();
+}
+const canCtl = () => !!(Store.me && Store.me.perms && Store.me.perms.control) && conn === 'ok';
+
+// То, что на экране, — видом для экрана песни
+function liveView() {
+  const l = live;
+  if (l.kind === 'song' && Store.songs.has(l.item)) {
+    const s = Store.songs.get(l.item);
+    return { id: s.id, name: s.name, slides: s.slides, song: true, src: s, pl: l.pl, eid: l.eid, key: keyOf(l.eid) };
+  }
+  if ((l.kind === 'bible' || l.kind === 'text') && liveSlides && liveSlides.slides.length) {
+    return { id: l.item, name: l.name, kind: l.kind, src: liveSlides, pl: l.pl, eid: l.eid,
+      slides: liveSlides.slides.map((z) => ({ id: z.id, label: z.label, text: z.text, pi: 0 })) };
+  }
+  const note = l.kind === 'none' ? 'Экран пуст — ждём, что покажет оператор.'
+    : l.kind === 'song' ? `На экране песня «${l.name}» — её ещё нет на телефоне, загружаю…`
+      : `На экране: ${l.name || 'видео или картинка'}` + (l.n > 1 && l.idx >= 0 ? ` — слайд ${l.idx + 1} из ${l.n}` : '');
+  return { id: l.item || '', name: l.kind === 'none' ? 'Экран пуст' : l.name || 'На экране', slides: [], note, src: note };
+}
+function followLive() {
+  const v = liveView();
+  if (screen === 'Song' && cur && cur.id === v.id && cur.src === v.src) { markLive(true); return; } // тот же пункт — только слайд
+  // Экран очистили — песня остаётся перед глазами (доигрывают), снимается только отметка; в списке — остаёмся в списке
+  if (live.kind === 'none' && (screen === 'Lib' || (cur && !cur.note))) { markLive(false); return; }
+  openView(v, screen === 'Lib');
+  markLive(true);
+}
+function setFollow(on, quiet) {
+  follow = on;
+  ls.set('mps.follow', on ? '1' : '0');
+  if (on) followLive();
+  if (!quiet) toast(on ? 'Следую за экраном' : 'Листаете сами — «Следовать» внизу вернёт');
+  paintBar();
+}
+// Подпись текущего слайда для полосы внизу
+function liveLabel() {
+  const l = live;
+  if (l.kind === 'none') return 'экран пуст';
+  let z = null;
+  if (l.kind === 'song') { const s = Store.songs.get(l.item); z = s && s.slides.find((x) => x.id === l.sid); if (z) return [l.name, z.label || z.part].filter(Boolean).join(' — '); }
+  if (liveSlides) { z = liveSlides.slides.find((x) => x.id === l.sid); if (z && z.label) return /^\d+$/.test(z.label) ? `${l.name}:${z.label}` : `${l.name} — ${z.label}`; }
+  return l.name + (l.n > 1 && l.idx >= 0 ? ` — ${l.idx + 1} из ${l.n}` : '');
+}
+function paintBar() {
+  const bar = $('liveBar');
+  const on = !!Store.token && conn === 'ok' && (screen === 'Lib' || screen === 'Song');
+  bar.hidden = !on;
+  document.body.classList.toggle('has-bar', on);
+  if (!on) return;
+  $('liveText').textContent = (follow ? 'Следую: ' : 'На экране: ') + liveLabel();
+  $('liveText').disabled = follow && screen === 'Song';
+  $('liveMode').textContent = follow ? 'Листать самому' : 'Следовать';
+  $('liveMode').classList.toggle('primary', !follow);
+  const ctl = canCtl();
+  $('ctlRow').hidden = !ctl;
+  document.body.classList.toggle('has-ctl', ctl);
+}
+function markLive(scroll) {
+  const on = screen === 'Song' && cur && cur.id && cur.id === live.item;
+  let hit = null;
+  for (const sec of $('songBody').querySelectorAll('.sl')) {
+    const y = !!on && sec.dataset.id === live.sid;
+    sec.classList.toggle('cur', y);
+    if (y) hit = sec;
+  }
+  if (hit && scroll) hit.scrollIntoView({ block: 'center', behavior: 'smooth' });
+}
+
+/* ----- Сетлисты: плейлисты «для группы» ----- */
+
+function setSets(list) {
+  sets = Array.isArray(list) ? list : [];
+  Store.setMeta('sets', sets).catch(() => {});
+  renderSets();
+}
+const keyOf = (eid) => { for (const st of sets) for (const e of st.entries) if (e.eid === eid) return e.key || ''; return ''; };
+const dayName = (d) => { try { return new Date(d + 'T12:00').toLocaleDateString('ru-RU', { weekday: 'short', day: 'numeric', month: 'long' }); } catch { return d; } };
+const KIND = { song: '', bible: 'Библия', media: 'Видео', deck: 'Презентация', audio: 'Музыка', custom: 'Слайды', mixed: 'Слайды' };
+function renderSets() {
+  const box = $('setList');
+  $('setCount').textContent = sets.length ? String(sets.length) : '';
+  if (!sets.length) {
+    box.replaceChildren(el('p', 'empty', 'Сетлистов пока нет. Оператор отмечает плейлист галочкой «Для группы» (окно «Группа» → «Сетлисты»).'));
+    return;
+  }
+  box.replaceChildren(...sets.map((st) => {
+    const sec = el('section', 'set');
+    const h = el('h2', '', st.name);
+    if (st.date) h.prepend(el('span', 'date', dayName(st.date)));
+    sec.append(h);
+    if (!st.entries.length) sec.append(el('p', 'hint', 'Пока пусто'));
+    st.entries.forEach((e, i) => {
+      const b = el('button', 'item set-row');
+      b.type = 'button';
+      b.dataset.eid = e.eid;
+      b.dataset.set = st.id;
+      const has = e.kind === 'song' && Store.songs.has(e.item);
+      b.append(el('span', 'n', String(i + 1)), el('span', 't', e.name));
+      if (KIND[e.kind]) b.append(el('span', 'kind', KIND[e.kind]));
+      if (e.key) b.append(el('span', 'key', e.key));
+      if (e.kind === 'song' && !has) b.classList.add('dim');
+      sec.append(b);
+    });
+    return sec;
+  }));
+  markSets();
+}
+function markSets() {
+  for (const b of $('setList').querySelectorAll('.set-row')) b.classList.toggle('cur', !!live.eid && b.dataset.eid === live.eid);
+}
+function openSetRow(b) {
+  const st = sets.find((x) => x.id === b.dataset.set);
+  const e = st && st.entries.find((x) => x.eid === b.dataset.eid);
+  if (!e) return;
+  if (live.eid === e.eid || (live.item === e.item && live.kind !== 'song')) { if (follow) followLive(); else openView(liveView(), true); markLive(true); return; }
+  if (e.kind === 'song' && openSong(e.item, true, { pl: st.id, eid: e.eid, key: e.key })) { if (follow) setFollow(false); return; }
+  toast(e.kind === 'song' ? 'Этой песни ещё нет на телефоне — обновите песни (меню «…»)' : 'Это не песня — текст будет виден, когда оператор её покажет');
 }
 
 /* ----- Список песен ----- */
@@ -196,6 +434,18 @@ let shown = 0;
 const PAGE = 120;
 const io = 'IntersectionObserver' in window ? new IntersectionObserver((es) => { if (es.some((x) => x.isIntersecting)) more(); }, { rootMargin: '600px' }) : null;
 const sentinel = el('div');
+let libTab = ls.get('mps.tab', 'songs') === 'sets' ? 'sets' : 'songs';
+
+function setTab(t) {
+  libTab = t;
+  ls.set('mps.tab', t);
+  $('tabSongs').setAttribute('aria-selected', String(t === 'songs'));
+  $('tabSets').setAttribute('aria-selected', String(t === 'sets'));
+  $('songsPane').hidden = t !== 'songs';
+  $('setList').hidden = t !== 'sets';
+  window.scrollTo(0, 0);
+  if (t === 'sets') renderSets();
+}
 
 function fillLibs() {
   const sel = $('libSel');
@@ -247,51 +497,91 @@ function more() {
   } else if (io) io.disconnect();
 }
 
-/* ----- Песня ----- */
+/* ----- Песня (и то, что на экране: Библия, свои слайды) ----- */
 
 let listY = 0;
-let curId = '';       // открытая песня
+let cur = null;       // что открыто: { id, name, slides, song?, kind?, note?, src, pl?, eid?, key? }
 let fs = Math.min(44, Math.max(14, Number(ls.get('mps.fs', 22)) || 22));
 function setFs(v) {
   fs = Math.min(44, Math.max(14, v));
   document.documentElement.style.setProperty('--fs', fs + 'px');
   ls.set('mps.fs', String(fs));
 }
-function openSong(id, push) {
+function openSong(id, push, ctx) {
   const s = Store.songs.get(id);
-  if (!s) return;
+  if (!s) return false;
+  openView({ id, name: s.name, slides: s.slides, song: true, src: s, ...(ctx || {}) }, push);
+  return true;
+}
+function openView(v, push) {
   if (screen === 'Lib') listY = window.scrollY;
-  curId = id;
-  $('songTitle').textContent = s.name;
+  cur = v;
+  $('songTitle').textContent = v.name;
+  $('songKey').textContent = v.key || '';
+  $('songKey').hidden = !v.key;
   const body = $('songBody');
   body.replaceChildren();
+  if (v.note) body.append(el('p', 'note', v.note));
   // Порядок частей (аранжировка), если части подписаны
-  const order = s.slides.filter((z) => z.pi === 0 && (z.label || z.part)).map((z) => z.label || z.part);
+  const order = v.song ? v.slides.filter((z) => z.pi === 0 && (z.label || z.part)).map((z) => z.label || z.part) : [];
   if (order.length > 1) body.append(el('p', 'order', order.join(' → ')));
-  for (const z of s.slides) {
-    const sec = el('section', 'sl' + (z.pi === 0 && (z.label || z.part) ? ' part' : ''));
+  const verses = v.kind === 'bible';
+  for (const z of v.slides) {
+    const head = v.song ? z.pi === 0 && (z.label || z.part) : !!z.label && !(verses && /^\d+$/.test(z.label));
+    const sec = el('section', 'sl' + (head ? ' part' : ''));
     sec.dataset.id = z.id;
-    if (z.pi === 0 && (z.label || z.part)) sec.append(el('h3', '', z.label || z.part));
-    sec.append(el('p', '', z.text));
+    if (head) sec.append(el('h3', '', v.song ? z.label || z.part : z.label));
+    const p = el('p', '', z.text || (z.label && !head ? '' : '—'));
+    if (verses && /^\d+$/.test(z.label || '')) p.prepend(el('b', 'vn', z.label + ' '));
+    sec.append(p);
     body.append(sec);
   }
-  if (!s.slides.length) body.append(el('p', 'hint', 'В песне нет текста'));
+  if (!v.slides.length && !v.note) body.append(el('p', 'hint', 'Нет текста'));
   show('Song');
   window.scrollTo(0, 0);
-  if (push) history.pushState({ song: id }, '');
+  if (push) history.pushState({ song: v.id || 'live' }, '');
+  else if (!history.state || !history.state.song) history.pushState({ song: v.id || 'live' }, '');
 }
 function closeSong() {
+  if (follow) setFollow(false);
   show('Lib');
   window.scrollTo(0, listY);
+}
+
+// Слайд под пальцем (право «Может листать»): кнопка «Показать на экране»
+let picked = '';
+function paintPick() {
+  for (const sec of $('songBody').querySelectorAll('.sl')) {
+    const y = canCtl() && sec.dataset.id === picked;
+    sec.classList.toggle('pick', y);
+    const b = sec.querySelector('.show-btn');
+    if (y && !b) {
+      const btn = el('button', 'show-btn primary', 'Показать на экране');
+      btn.type = 'button';
+      sec.append(btn);
+    } else if (!y && b) b.remove();
+  }
+}
+function onSlideTap(e) {
+  if (e.target.closest('.show-btn')) {
+    const sec = e.target.closest('.sl');
+    if (cur && sec && wsSend({ t: 'cmd', cmd: 'show', item: cur.id, sid: sec.dataset.id, pl: cur.pl || '', eid: cur.eid || '' })) { picked = ''; paintPick(); }
+    return;
+  }
+  if (!canCtl() || !cur || !cur.id) return;
+  const sec = e.target.closest('.sl');
+  if (!sec || window.getSelection().toString()) return;
+  picked = picked === sec.dataset.id ? '' : sec.dataset.id;
+  paintPick();
 }
 
 /* ----- Сведения ----- */
 
 function paintSheet() {
   const me = Store.me;
-  $('iWho').textContent = me ? `${me.person.name} · ${me.person.roleName}` : '—';
+  $('iWho').textContent = me ? `${me.person.name} · ${me.person.roleName}` + (me.perms && me.perms.control ? ' · может листать' : '') : '—';
   $('iDev').textContent = me ? me.device.name : devName();
-  $('iConn').textContent = conn === 'ok' ? 'на связи с программой' : conn === 'net' ? 'нет связи (работаю с песнями на телефоне)'
+  $('iConn').textContent = conn === 'ok' ? (ws && ws.readyState === 1 ? 'на связи с программой' : 'на связи (без живого показа)') : conn === 'net' ? 'нет связи (работаю с песнями на телефоне)'
     : conn === 'auth' ? 'доступ отозван' : conn === 'off' ? 'доступ приостановлен' : conn === 'closed' ? 'доступ выключен в программе' : 'подключаюсь…';
   $('iAddr').textContent = location.host + (location.protocol === 'https:' ? ' (защищённый)' : ' (простой)');
   $('iSongs').textContent = String(Store.songs.size);
@@ -315,10 +605,12 @@ async function startLib() {
   history.replaceState({}, '');
   fillLibs();
   renderList();
+  setTab(libTab);
   Store.onIndex = () => { if ($('q').value.trim()) renderList(); };
   Store.indexAll();
   paintConn();
-  ping();
+  wsTry = 0;
+  connect();
 }
 
 function wire() {
@@ -329,11 +621,27 @@ function wire() {
   $('q').addEventListener('input', () => { clearTimeout(qT); qT = setTimeout(() => { window.scrollTo(0, 0); renderList(); }, 120); });
   $('q').addEventListener('keydown', (e) => { if (e.key === 'Enter') e.target.blur(); });
   $('libSel').onchange = () => { ls.set('mps.lib', $('libSel').value); window.scrollTo(0, 0); renderList(); };
-  $('list').addEventListener('click', (e) => { const b = e.target.closest('.item'); if (b) openSong(b.dataset.id, true); });
+  $('tabSongs').onclick = () => setTab('songs');
+  $('tabSets').onclick = () => setTab('sets');
+  $('list').addEventListener('click', (e) => {
+    const b = e.target.closest('.item');
+    if (!b) return;
+    if (follow && b.dataset.id !== live.item) setFollow(false); // открыли своё — значит, листаете сами
+    openSong(b.dataset.id, true);
+    markLive(follow);
+  });
+  $('setList').addEventListener('click', (e) => { const b = e.target.closest('.set-row'); if (b) openSetRow(b); });
+  $('songBody').addEventListener('click', onSlideTap);
   $('back').onclick = () => { if (history.state && history.state.song) history.back(); else closeSong(); };
   window.addEventListener('popstate', () => { if (screen === 'Song') closeSong(); });
   $('fsMinus').onclick = () => setFs(fs - 2);
   $('fsPlus').onclick = () => setFs(fs + 2);
+  // Полоса «На экране»: текст — посмотреть, что там; кнопка — следовать / листать самому
+  $('liveText').onclick = () => { openView(liveView(), screen === 'Lib'); markLive(true); };
+  $('liveMode').onclick = () => setFollow(!follow);
+  $('ctlPrev').onclick = () => wsSend({ t: 'cmd', cmd: 'prev' });
+  $('ctlNext').onclick = () => wsSend({ t: 'cmd', cmd: 'next' });
+  $('ctlClear').onclick = () => wsSend({ t: 'cmd', cmd: 'clear' });
   $('conn').onclick = () => $('menuBtn').click();
   $('menuBtn').onclick = () => { paintSheet(); $('sheet').showModal(); };
   $('sheetX').onclick = () => $('sheet').close();
@@ -343,13 +651,15 @@ function wire() {
   $('iForget').onclick = async () => {
     if (!(await ask('Отключить этот телефон?\nКлюч доступа и все песни будут стёрты с телефона. Подключиться снова можно по QR-коду.', 'Отключить'))) return;
     $('sheet').close();
+    if (ws) { const s = ws; ws = null; s.close(); }
+    clearTimeout(wsT);
     await Store.forget();
+    sets = [];
     showJoin();
   };
   $('bannerBtn').onclick = () => { if (conn === 'auth') showJoin(); else if (updated) location.reload(); };
-  // Вернулись в приложение / появилась сеть — сразу проверить связь
-  document.addEventListener('visibilitychange', () => { if (!document.hidden && Store.token) ping(); });
-  window.addEventListener('online', () => { if (Store.token) ping(); });
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) wake(); });
+  window.addEventListener('online', wake);
   setFs(fs);
 }
 
@@ -370,6 +680,7 @@ function registerSW() {
   try {
     await Store.open();
     await Store.load();
+    sets = (await Store.getMeta('sets')) || [];
   } catch (e) {
     showJoin('Браузер не даёт хранить данные (' + (e.message || e) + '). Откройте не в режиме «Инкогнито».');
     return;

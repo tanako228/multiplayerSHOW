@@ -15,7 +15,8 @@
 <link rel="stylesheet" href="app.css">
 <title>MP Show — группа</title>
 <!-- Приложение для телефонов группы (ТЗ-8-Группа.md). Этап 1: вход по QR с подтверждением оператора, все песни
-     на телефоне (IndexedDB), поиск, работа без сети. Хранилище и синхронизация — db.js, экраны — app.js, кэш — sw.js -->
+     на телефоне (IndexedDB), поиск, работа без сети. Этап 2: WebSocket — что на экране («Следовать» / «Листать самому»),
+     сетлисты, листать с телефона. Хранилище и синхронизация — db.js, экраны и связь — app.js, кэш — sw.js -->
 </head>
 <body>
 
@@ -44,15 +45,21 @@
   </main>
 </div>
 
-<!-- Песни -->
+<!-- Песни и сетлисты -->
 <div class="scr" id="scrLib" hidden>
   <header class="bar">
-    <h1 class="grow">Песни <span class="count" id="libCount"></span></h1>
+    <nav class="tabs grow" role="tablist" aria-label="Разделы">
+      <button id="tabSongs" role="tab" aria-selected="true">Песни <span class="count" id="libCount"></span></button>
+      <button id="tabSets" role="tab" aria-selected="false">Сетлист <span class="count" id="setCount"></span></button>
+    </nav>
     <button class="conn" id="conn" aria-label="Связь с программой"><i class="dot"></i><span id="connText">…</span></button>
     <button class="icon" id="menuBtn" aria-label="Сведения и настройки">
       <svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>
     </button>
   </header>
+  <div class="prog" id="prog" hidden><i id="progBar"></i></div>
+  <div class="banner" id="banner" hidden><span id="bannerText"></span><button id="bannerBtn" hidden></button></div>
+  <div id="songsPane">
   <div class="tools">
     <div class="search">
       <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M15.5 15.5 21 21" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
@@ -60,10 +67,10 @@
     </div>
     <select id="libSel" aria-label="Библиотека"></select>
   </div>
-  <div class="prog" id="prog" hidden><i id="progBar"></i></div>
-  <div class="banner" id="banner" hidden><span id="bannerText"></span><button id="bannerBtn" hidden></button></div>
   <div class="list" id="list" role="list"></div>
   <p class="empty" id="empty" hidden></p>
+  </div>
+  <div class="sets" id="setList" hidden></div>
 </div>
 
 <!-- Песня -->
@@ -73,10 +80,24 @@
       <svg viewBox="0 0 24 24"><path d="M15 5 8 12l7 7" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
     </button>
     <h1 class="grow" id="songTitle"></h1>
+    <span class="keyb" id="songKey" hidden title="Тональность"></span>
     <button class="icon txt" id="fsMinus" aria-label="Мельче">A−</button>
     <button class="icon txt" id="fsPlus" aria-label="Крупнее">A+</button>
   </header>
   <main class="song" id="songBody"></main>
+</div>
+
+<!-- Что на экране: следовать / листать самому; с правом «Может листать» — кнопки -->
+<div class="livebar" id="liveBar" hidden>
+  <div class="lb-row">
+    <button class="lb-text" id="liveText"></button>
+    <button id="liveMode">Следовать</button>
+  </div>
+  <div class="lb-row ctl" id="ctlRow" hidden>
+    <button id="ctlPrev" aria-label="Предыдущий слайд"><svg viewBox="0 0 24 24"><path d="M15 5 8 12l7 7" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>Назад</button>
+    <button id="ctlClear" aria-label="Убрать текст с экрана">Убрать</button>
+    <button id="ctlNext" class="primary" aria-label="Следующий слайд">Дальше<svg viewBox="0 0 24 24"><path d="M9 5l7 7-7 7" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+  </div>
 </div>
 
 <!-- Сведения и настройки -->

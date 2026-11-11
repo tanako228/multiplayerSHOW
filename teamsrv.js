@@ -9,6 +9,7 @@
    Без домена тоже можно: пока доступ включён, работает простой адрес http://<IP>:8090/app/ (http-сервер пульта,
    opt.want/opt.http) — открывается по QR сразу, но установить приложение и работать без сети на нём нельзя.
    Вход телефонов, люди, устройства, песни для телефона — teamapi.js (/api/v1/…), окно «Группа» видит их в info().grp.
+   Связь в реальном времени — WebSocket /ws (upgrade → teamapi.js), на обоих серверах: https здесь и http пульта в main.js.
    Модуль работает и без Electron: init() — для проверки в Node, setup() — из main.js. */
 'use strict';
 const fs = require('fs');
@@ -25,7 +26,7 @@ const DAY = 86400e3;
 
 let dir = '';      // папка данных (%APPDATA%\church-presenter)
 let appDir = '';   // папка приложения для телефона (app/)
-let opt = {};      // { ips(), handler(req, res), seal(str), unseal(str), notify(info), want(), http(), libFile, ver }
+let opt = {};      // { ips(), handler(req, res), seal(str), unseal(str), notify(info), want(), http(), libFile, ver, cmd(c) }
 let cfg = { ...DEF };
 let token = '';    // токен провайдера, расшифрованный, только в памяти
 let dnsSt = { ip: '', at: 0, err: '' }; // что программа записала в DNS
@@ -319,6 +320,7 @@ function start() {
     notify();
   });
   s.on('listening', () => { srvPort = cfg.port; notify(); });
+  s.on('upgrade', (req, sock, head) => { if (!upgrade(req, sock, head)) sock.destroy(); });
   s.listen(cfg.port, '0.0.0.0');
 }
 function stop() {
@@ -406,7 +408,24 @@ function appVer() {
   try { walk(appDir); } catch { /* нет папки — всё равно ответим */ }
   return h.digest('hex').slice(0, 12);
 }
-const CSP = "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'";
+// connect-src: свой адрес и его WebSocket (старый Safari не считает ws:// «своим» по 'self')
+const csp = (req) => {
+  const h = String(req.headers.host || '').toLowerCase().replace(/[^a-z0-9.:[\]-]/g, '');
+  return "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; connect-src 'self'" + (h ? ` ws://${h} wss://${h}` : '') +
+    "; object-src 'none'; base-uri 'none'; frame-ancestors 'none'";
+};
+// WebSocket /ws: только свой адрес и страница с него же (Origin) — чужой сайт не подключится от имени телефона
+function upgrade(req, sock, head) {
+  let p = '';
+  try { p = new URL(req.url, 'http://x').pathname; } catch { return false; }
+  if (p !== '/ws') return false;
+  sock.on('error', () => { /* оборвалось */ });
+  let oh = '';
+  try { oh = new URL(String(req.headers.origin || '')).host.toLowerCase(); } catch { /* нет Origin */ }
+  if (!hostOk(req) || oh !== String(req.headers.host || '').toLowerCase()) { sock.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n'); return true; }
+  api.upgrade(req, sock, head);
+  return true;
+}
 function route(req, res, u) {
   if (u.pathname.startsWith('/api/v1/')) {
     if (!hostOk(req)) { res.writeHead(403, { 'Content-Type': 'application/json' }); res.end('{"error":"host"}'); return true; }
@@ -430,7 +449,7 @@ function route(req, res, u) {
     if (err) { res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' }); res.end('нет такой страницы'); return; }
     if (rel === 'sw.js') buf = Buffer.from(buf.toString('utf8').replace('__VER__', appVer()));
     res.writeHead(200, { 'Content-Type': TYPES[path.extname(file).toLowerCase()] || 'application/octet-stream', 'Cache-Control': 'no-cache',
-      'Content-Security-Policy': CSP, 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer' });
+      'Content-Security-Policy': csp(req), 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer' });
     res.end(buf);
   });
   return true;
@@ -489,6 +508,7 @@ function set(p) {
   // Другой адрес или провайдер — прежняя запись в DNS уже не наша
   if (cfg.domain !== was.domain || cfg.provider !== was.provider) dnsSt = { ip: '', at: 0, err: '' };
   save();
+  if (was.on && !cfg.on) api.closeAll(); // телефоны на связи — «Доступ выключен»
   if (cfg.on !== was.on && opt.want) opt.want(); // простой адрес (http) — включить или выключить вместе с доступом
   if (cfg.on !== was.on || cfg.port !== was.port || cfg.domain !== was.domain || cfg.staging !== was.staging) restart();
   if (cfg.on && (cfg.ip !== was.ip || !dnsSt.ip)) syncDns(false);
@@ -511,7 +531,7 @@ function init(o) {
   fs.mkdirSync(dir, { recursive: true });
   load();
   loadCert();
-  api.init({ dir, libFile: o.libFile || path.join(dir, 'library.json'), ver: o.ver || '', on: () => cfg.on, notify,
+  api.init({ dir, libFile: o.libFile || path.join(dir, 'library.json'), ver: o.ver || '', on: () => cfg.on, notify, cmd: o.cmd,
     store: { read: readFile, write: writeFile } });
   start();
   if (opt.want) opt.want();
@@ -541,7 +561,9 @@ function setup(ipcMain, o) {
   ipcMain.handle('team:check', wrap(async () => { const r = await check(); return { ...info(), check: r }; }));
   // Люди и устройства: { act: 'approve'|'reject'|'off'|'revoke'|'person'|'delPerson'|'log', id, … } (teamapi.js: act)
   ipcMain.handle('team:do', wrap((_e, a) => { const res = api.act(a); return { ...info(), res }; }));
+  // Что на экране — телефонам (team.js шлёт, когда поменялось)
+  ipcMain.handle('team:live', (_e, l) => api.setLive(l));
 }
 
-module.exports = { setup, init, shutdown, route, info, set, setToken, issue, check, dnsNow, port: () => cfg.port, on: () => cfg.on, changed: notify,
+module.exports = { setup, init, shutdown, route, upgrade, info, set, setToken, issue, check, dnsNow, port: () => cfg.port, on: () => cfg.on, changed: notify,
   libSaved: (data) => api.libSaved(data), PROVIDERS, _test: { authServers, waitTxt, curIp, api } };

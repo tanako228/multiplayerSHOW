@@ -824,6 +824,13 @@
     .tm-dot.off { background: var(--warn); }
     .tm-person button, .tm-req button { padding: 4px 10px; font-size: 12px; }
     .tm-req .acts, .tm-dev .acts { display: flex; gap: 6px; }
+    .tm-set.on { border-color: var(--live); }
+    .tm-set .tm-p-head .tm-sub { display: inline; }
+    .tm-set .tm-dev { flex-wrap: nowrap; padding-top: 6px; margin-top: 6px; }
+    .tm-set .tm-dev .who { flex: 1 1 0; min-width: 0; }
+    .tm-set .tm-dev .kind { flex: none; color: var(--muted); font-size: 12px; }
+    .tm-set input[type=date] { width: 150px; }
+    .tm-key { width: 70px; text-align: center; }
     #tmJournal .ev { display: flex; gap: 10px; }
     #tmJournal .ev time { flex: none; width: 92px; color: var(--muted); }
     .set-sec[hidden] { display: none; }
@@ -2784,6 +2791,7 @@
       <nav class="tm-nav" aria-label="Разделы окна «Группа»">
         <button data-tm="qr" data-icon="phone" aria-current="true">Подключить телефон</button>
         <button data-tm="dev" data-icon="team" aria-current="false">Люди и устройства <b class="tm-cnt" id="tmDevCnt"></b></button>
+        <button data-tm="sets" data-icon="playlist" aria-current="false">Сетлисты</button>
         <button data-tm="log" data-icon="list" aria-current="false">Журнал</button>
         <button data-tm="addr" data-icon="web" aria-current="false">Адрес и сертификат</button>
       </nav>
@@ -2813,6 +2821,10 @@
           <p class="hint" style="margin:0 0 12px">Телефон, отсканировавший QR-код, просит доступ — нажмите «Пустить». Дальше он входит сам. Ключ доступа хранится только на телефоне, на компьютере — его отпечаток. Второй телефон с тем же именем попадает к тому же человеку.</p>
           <div class="tm-pend" id="tmDevPend"></div>
           <div id="tmPeople"></div>
+        </section>
+        <section class="tm-sec" data-tm="sets" hidden>
+          <p class="hint" style="margin:0 0 12px">Сетлист — плейлист с галочкой «Для группы»: его видят телефоны (вкладка «Сетлист») — с датой служения и тональностью каждой песни. Правки сразу уходят на телефоны, Ctrl+Z — вернуть.</p>
+          <div id="tmSets"></div>
         </section>
         <section class="tm-sec" data-tm="log" hidden>
           <p class="hint" style="margin:0 0 12px">Кто просил доступ, кого пустили, приостановили, отозвали; попытки войти с чужим ключом. Новые — сверху.</p>
