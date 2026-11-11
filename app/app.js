@@ -456,7 +456,7 @@ function paintMetro() {
   $('metroBar').hidden = !on;
   $('metroBar').classList.toggle('shared', on && !!mt.shared);
   $('mbText').textContent = on ? '♩ ' + mt.bpm : '';
-  $('mtBpm').textContent = String(on ? mt.bpm : mtBpm);
+  if (document.activeElement !== $('mtBpm')) $('mtBpm').value = String(on ? mt.bpm : mtBpm);
   $('mtSig').textContent = String(beats);
   $('mtSound').checked = mtSound();
   $('mtGo').textContent = on ? 'Стоп' : 'Старт';
@@ -1059,7 +1059,30 @@ function paintSheet() {
     }).catch(() => { st.textContent = ''; });
   }
   $('iVer').textContent = me && me.server ? `multiplayerSHOW ${me.server.ver}` : '';
-  $('iPaper').checked = ls.get('mps.paper', '0') === '1';
+  paintTheme();
+  $('iPenSnd').checked = Pen.sound;
+}
+
+/* ----- Фон: чёрный, серый, белый (сплошной). Старое «Песни на светлом листе» — белый ----- */
+
+const THEMES = { dark: '#051822', gray: '#e4e4e9', white: '#ffffff' };
+function theme() {
+  const t = ls.get('mps.theme', '');
+  return THEMES[t] ? t : ls.get('mps.paper', '0') === '1' ? 'white' : 'dark';
+}
+function setTheme(t) {
+  if (!THEMES[t]) t = 'dark';
+  ls.set('mps.theme', t);
+  document.documentElement.dataset.th = t;
+  document.body.classList.toggle('paper', t !== 'dark');
+  const m = document.querySelector('meta[name=theme-color]');
+  if (m) m.content = THEMES[t];
+  paintTheme();
+  if (typeof Pen !== 'undefined') Pen.relayout();
+}
+function paintTheme() {
+  const t = theme();
+  for (const b of $('iTheme').children) b.setAttribute('aria-pressed', String(b.dataset.th === t));
 }
 
 /* ----- Запуск ----- */
@@ -1127,6 +1150,15 @@ function wire() {
   $('metroDlg').addEventListener('click', (e) => { if (e.target === $('metroDlg')) $('metroDlg').close(); });
   $('mtDown').onclick = () => mtChange((mt ? mt.bpm : mtBpm) - 1, mt ? mt.beats : mtSig);
   $('mtUp').onclick = () => mtChange((mt ? mt.bpm : mtBpm) + 1, mt ? mt.beats : mtSig);
+  // Темп числом: ввели и нажали «Готово» (или ушли с поля); пусто или не число — как было
+  const bpmIn = () => {
+    const v = Math.round(Number($('mtBpm').value));
+    if (v > 0 && v !== (mt ? mt.bpm : mtBpm)) mtChange(v, mt ? mt.beats : mtSig);
+    else paintMetro();
+  };
+  $('mtBpm').onchange = bpmIn;
+  $('mtBpm').onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); $('mtBpm').blur(); } };
+  $('mtBpm').onfocus = () => $('mtBpm').select();
   $('mtBDown').onclick = () => mtChange(mt ? mt.bpm : mtBpm, (mt ? mt.beats : mtSig) - 1);
   $('mtBUp').onclick = () => mtChange(mt ? mt.bpm : mtBpm, (mt ? mt.beats : mtSig) + 1);
   $('mtSound').onchange = () => { ls.set('mps.mtSnd', $('mtSound').checked ? '1' : '0'); if ($('mtSound').checked) audio(); };
@@ -1171,10 +1203,9 @@ function wire() {
     showJoin();
   };
   $('bannerBtn').onclick = () => { if (conn === 'auth') showJoin(); else if (updated) location.reload(); };
-  $('iPaper').onchange = () => {
-    ls.set('mps.paper', $('iPaper').checked ? '1' : '0');
-    document.body.classList.toggle('paper', $('iPaper').checked || Pen.isOpen);
-  };
+  for (const b of $('iTheme').children) b.onclick = () => setTheme(b.dataset.th);
+  $('iPenSnd').onchange = () => { Pen.sound = $('iPenSnd').checked; };
+  setTheme(theme());
   Pen.init();
   Mine.wire(rerender);
   Pen.onChange = () => { paintBar(); markLive(false); };

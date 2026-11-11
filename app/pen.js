@@ -2,6 +2,11 @@
    Кнопка «Пенал» в шапке песни → лист становится светлым, на нём и вокруг него «раскладываются» предметы (вид сверху):
    стилус, карандаш, ручка, маркеры, текстовыделитель, ластик, линейка. Нажать на предмет — взять (инструмент),
    ещё раз — положить; перетащить — переложить. Раскладка — localStorage mps.desk (своя «стоя» и «лёжа»).
+   Держите предмет пальцем и коснитесь вторым — предмет поворачивается за пальцами (вокруг своей оси); мышью — колесо.
+   Звуки (выключаются в меню «…»): предметы высыпаются на лист, шорох бумаги под пером — WebAudio, без файлов.
+   Текстовыделитель красит слова целиком (от слова, где начали, до слова под пальцем — как выделение текста);
+   с линейкой — ровная полоса. Цвет — свои у предмета или любой из окна «Цвета» (как в iPadOS: сетка, спектр,
+   ползунки, непрозрачность, свои цвета, пипетка) — тогда в пометке #rrggbb и o (непрозрачность).
    Линейка — ровные линии (по 45° прилипают) тем, что в руке. Рисует палец или стилус, двумя пальцами — листать;
    «Только стилус» — пальцем листать (включается само, когда телефон увидел стилус).
    Привязка пометки — к слову песни: id слайда (a.s), номер слова в слайде (a.w), точки — в долях размера шрифта (em)
@@ -40,7 +45,14 @@ const Pen = (() => {
   const DRAW = (id) => !!TOOLS[id] && TOOLS[id].k !== 'eraser' && TOOLS[id].k !== 'ruler';
   let prefs = {};
   try { prefs = JSON.parse(lsGet('mps.tools', '{}')) || {}; } catch { prefs = {}; }
-  const colorOf = (id) => { const t = TOOLS[id]; const c = prefs[id] && prefs[id].c; return t.colors && t.colors.includes(c) ? c : t.c; };
+  const HEX = /^#[0-9a-f]{6}$/i;
+  const colorOf = (id) => { const t = TOOLS[id]; const c = prefs[id] && prefs[id].c; return t.colors && (t.colors.includes(c) || HEX.test(c)) ? c : t.c; };
+  const opOf = (id) => { const o = prefs[id] && prefs[id].o; return HEX.test(colorOf(id)) && o >= 0.05 && o < 1 ? o : 1; };
+  // Цвет пометки: имя (класс c-имя, свой на тёмном и светлом фоне) или #rrggbb
+  function tint(el, c, o, fill) {
+    if (HEX.test(c)) el.style.color = c; else el.classList.add('c-' + c);
+    if (o != null && o < 1) el.setAttribute(fill ? 'fill-opacity' : 'stroke-opacity', String(o));
+  }
   const sizeOf = (id) => { const s = prefs[id] && prefs[id].s; return SIZES[s] ? s : 1; };
   const widthOf = (id) => TOOLS[id].w * SIZES[sizeOf(id)];
   const setPref = (id, k, v) => { prefs[id] = { ...(prefs[id] || {}), [k]: v }; lsSet('mps.tools', JSON.stringify(prefs)); };
@@ -138,6 +150,7 @@ const Pen = (() => {
     const A = compact ? nearestWord((x0 + x1) / 2, (y0 + y1) / 2, br) : nearestWord(pts[0][0], pts[0][1], br);
     if (!A) return null;
     const st = { k: d.k, c: d.c, w: r2(d.w), a: { s: A.sid, w: A.i }, p: [] };
+    if (d.o < 1) st.o = r2(d.o);
     if (!compact) {
       const lp = pts[pts.length - 1];
       const B = nearestIn(A.sec, A.sid, lp[0], lp[1], br);
@@ -189,11 +202,45 @@ const Pen = (() => {
   }
   function pathFor(st, px) {
     const w = st.w * f;
-    const cls = `c-${st.c} k-${st.k}`;
-    if (st.k === 'ink') return S('path', { d: outline(px, w), class: cls, fill: 'currentColor' });
-    const p = S('path', { d: smooth(px), class: cls, fill: 'none', stroke: 'currentColor', 'stroke-width': r2(w),
+    if (st.k === 'ink') { const p = S('path', { d: outline(px, w), class: 'k-ink', fill: 'currentColor' }); tint(p, st.c, st.o, true); return p; }
+    const p = S('path', { d: smooth(px), class: 'k-' + st.k, fill: 'none', stroke: 'currentColor', 'stroke-width': r2(w),
       'stroke-linecap': st.k === 'hl' ? 'butt' : 'round', 'stroke-linejoin': 'round' });
+    tint(p, st.c, st.o, false);
     if (st.k === 'pencil') p.setAttribute('filter', 'url(#mkGrain)');
+    return p;
+  }
+  // Выделитель по словам: слова a.w…e слайда a.s → полосы по строкам (px от угла #songBody)
+  function wordRects(sid, i0, i1, br) {
+    const sec = secs.get(sid);
+    if (!sec) return [];
+    const ws = wordsOf(sec);
+    const lines = [];
+    for (let i = Math.max(0, Math.min(i0, i1)); i <= Math.min(ws.length - 1, Math.max(i0, i1)); i++) {
+      for (const cr of ws[i].getClientRects()) {
+        if (!cr.width) continue;
+        const r = { l: cr.left - br.left, t: cr.top - br.top, r: cr.right - br.left, b: cr.bottom - br.top };
+        const ln = lines.find((q) => Math.abs(q.t - r.t) < f * 0.45);
+        if (ln) { ln.l = Math.min(ln.l, r.l); ln.r = Math.max(ln.r, r.r); ln.t = Math.min(ln.t, r.t); ln.b = Math.max(ln.b, r.b); } else lines.push(r);
+      }
+    }
+    return lines;
+  }
+  const HLH = [0.42, 0.72, 0.96]; // высота полосы — доля строки (Тонко, Средне, Толсто)
+  function wordsPath(st, rects) {
+    const h0 = HLH[st.h] || HLH[1];
+    let d = '';
+    for (const q of rects) {
+      const h = (q.b - q.t) * h0;
+      const cy = q.t + (q.b - q.t) * (h0 > 0.9 ? 0.5 : 0.6);
+      const t = cy - h / 2;
+      const b = cy + h / 2;
+      const l = q.l - f * 0.1;
+      const r = q.r + f * 0.1;
+      const e = h * 0.22; // конец полосы — скошенный, как от плоского кончика выделителя
+      d += `M${r1(l + e)} ${r1(t)}L${r1(r)} ${r1(t + 0.5)}L${r1(r + e * 0.6)} ${r1(b)}L${r1(l)} ${r1(b - 0.5)}Z`;
+    }
+    const p = S('path', { d, class: 'k-hlw', fill: 'currentColor', 'stroke-linejoin': 'round' });
+    tint(p, st.c, st.o, true);
     return p;
   }
 
@@ -231,6 +278,12 @@ const Pen = (() => {
     ug.replaceChildren();
     og.replaceChildren();
     for (const st of rec.strokes) {
+      if (st.e != null) {
+        st._px = null;
+        st._rects = wordRects(st.a.s, st.a.w, st.e, br);
+        if (st._rects.length) ug.append(wordsPath(st, st._rects));
+        continue;
+      }
       const px = place(st, br);
       st._px = px;
       if (px) (st.k === 'hl' ? ug : og).append(pathFor(st, px));
@@ -269,14 +322,129 @@ const Pen = (() => {
     clearTimeout(saveT);
     saveT = 0;
     if (!rec) return;
-    const r = { id: rec.id, v: 1, strokes: rec.strokes.map(({ _px, ...x }) => x), note: rec.note || '', at: Date.now() };
+    const r = { id: rec.id, v: 1, strokes: rec.strokes.map(({ _px, _rects, ...x }) => x), note: rec.note || '', at: Date.now() };
     (r.strokes.length || r.note ? Store.putRec('marks', r) : Store.delRec('marks', r.id))
       .catch((e) => toast('Пометки не сохранились: ' + (e.message || e)));
   }
 
+  /* ----- Звуки: предметы высыпались на лист, шорох бумаги под пером (WebAudio, без файлов) ----- */
+
+  const Snd = (() => {
+    let on = lsGet('mps.penSnd', '1') !== '0';
+    let ac = null;
+    let buf = null;
+    let scr = null;
+    function ctx() {
+      if (!on) return null;
+      try {
+        if (!ac) ac = new (window.AudioContext || window.webkitAudioContext)();
+        if (ac.state === 'suspended') ac.resume();
+      } catch { ac = null; }
+      return ac;
+    }
+    // Шум бумаги: мягкий белый шум с «зерном» — громкость мелко скачет, как волокна листа под кончиком
+    function noise() {
+      if (buf) return buf;
+      const n = ac.sampleRate * 2;
+      buf = ac.createBuffer(1, n, ac.sampleRate);
+      const d = buf.getChannelData(0);
+      let g = 1;
+      let b = 0;
+      for (let i = 0; i < n; i++) {
+        if (i % 48 === 0) g = Math.random() < 0.06 ? 1.5 : 0.3 + Math.random() * 0.7;
+        b = 0.55 * b + 0.45 * (Math.random() * 2 - 1);
+        d[i] = b * g;
+      }
+      return buf;
+    }
+    const hold = (p, t) => { if (p.cancelAndHoldAtTime) p.cancelAndHoldAtTime(t); else { p.cancelScheduledValues(t); p.setValueAtTime(p.value, t); } };
+    // Удар предмета о тетрадь: щелчок корпуса (шум в полосе своего тона) + глухой стук листа
+    const HIT = { stylus: [2900, 260], pencil: [1700, 200], pen: [2400, 240], mRed: [1900, 210], mBlue: [2000, 215], mGreen: [1850, 205],
+      hl: [1500, 190], eraser: [650, 130], ruler: [1250, 170] };
+    function hit(at, id, vol) {
+      const [fq, low] = HIT[id] || [1600, 200];
+      const src = ac.createBufferSource();
+      src.buffer = noise();
+      const bp = ac.createBiquadFilter();
+      bp.type = 'bandpass';
+      bp.frequency.value = fq * (0.9 + Math.random() * 0.2);
+      bp.Q.value = id === 'ruler' ? 3 : 1.4;
+      const g = ac.createGain();
+      g.gain.setValueAtTime(0.0001, at);
+      g.gain.exponentialRampToValueAtTime(vol, at + 0.002);
+      g.gain.exponentialRampToValueAtTime(0.0001, at + (id === 'ruler' ? 0.09 : id === 'eraser' ? 0.035 : 0.05));
+      src.connect(bp).connect(g).connect(ac.destination);
+      src.start(at, Math.random() * 1.5, 0.12);
+      const o = ac.createOscillator();
+      o.frequency.setValueAtTime(low * 1.5, at);
+      o.frequency.exponentialRampToValueAtTime(low * 0.7, at + 0.07);
+      const g2 = ac.createGain();
+      g2.gain.setValueAtTime(0.0001, at);
+      g2.gain.exponentialRampToValueAtTime(vol * 0.7, at + 0.003);
+      g2.gain.exponentialRampToValueAtTime(0.0001, at + 0.09);
+      o.connect(g2).connect(ac.destination);
+      o.start(at);
+      o.stop(at + 0.1);
+    }
+    // Пенал открыли: предметы падают с небольшой высоты один за другим, круглые чуть подпрыгивают
+    function drop(ids) {
+      if (!ctx()) return;
+      const t0 = ac.currentTime + 0.03;
+      ids.forEach((id, i) => {
+        const at = t0 + 0.16 + i * 0.035 + Math.random() * 0.025;
+        const v = id === 'eraser' ? 0.5 : id === 'ruler' ? 0.42 : 0.32;
+        hit(at, id, v);
+        if (id !== 'eraser') hit(at + 0.055 + Math.random() * 0.03, id, v * 0.28);
+        if (id !== 'eraser' && id !== 'ruler') hit(at + 0.1 + Math.random() * 0.04, id, v * 0.1);
+      });
+    }
+    // Шорох под пером: громче, чем быстрее ведут; остановились — тихо
+    const SCR = { ink: [2100, 0.9, 0.16], pencil: [4300, 0.7, 0.3], pen: [3000, 1.1, 0.18], marker: [1400, 0.8, 0.2], hl: [1200, 0.7, 0.18], eraser: [750, 0.6, 0.42] };
+    function scratch(k) {
+      stop();
+      if (!ctx()) return;
+      const [fq, q, vol] = SCR[k] || SCR.pen;
+      const src = ac.createBufferSource();
+      src.buffer = noise();
+      src.loop = true;
+      const bp = ac.createBiquadFilter();
+      bp.type = 'bandpass';
+      bp.frequency.value = fq;
+      bp.Q.value = q;
+      const g = ac.createGain();
+      g.gain.value = 0;
+      src.connect(bp).connect(g).connect(ac.destination);
+      src.start(0, Math.random() * 1.8);
+      scr = { src, g, bp, fq, vol };
+    }
+    function speed(v) {
+      if (!scr || !ac) return;
+      const t = ac.currentTime;
+      const lvl = scr.vol * Math.min(1, Math.max(0, v - 0.02) / 0.9);
+      hold(scr.g.gain, t);
+      scr.g.gain.setTargetAtTime(lvl, t, 0.012);
+      scr.g.gain.setTargetAtTime(0, t + 0.07, 0.035);
+      scr.bp.frequency.setTargetAtTime(scr.fq * (0.85 + Math.min(0.45, v * 0.3)), t, 0.03);
+    }
+    function stop() {
+      if (!scr) return;
+      const s = scr;
+      scr = null;
+      const t = ac.currentTime;
+      hold(s.g.gain, t);
+      s.g.gain.setTargetAtTime(0, t, 0.02);
+      try { s.src.stop(t + 0.15); } catch { /* уже */ }
+    }
+    return {
+      drop, scratch, speed, stop,
+      get on() { return on; },
+      set on(v) { on = !!v; lsSet('mps.penSnd', on ? '1' : '0'); if (!on) stop(); },
+    };
+  })();
+
   /* ----- Ввод: палец, стилус, мышь ----- */
 
-  let drawing = null;   // { id, type, k, c, w, straight, pts, end, last, el }
+  let drawing = null;   // { id, type, k, c, o, w, h, straight, pts, end, last, el, words }
   let erasing = null;   // { id, type, list: [{ st, i }] }
   let pan = null;       // листать: { ids, y, v, t }
   let glide = 0;
@@ -307,22 +475,48 @@ const Pen = (() => {
     e.preventDefault();
     try { over.setPointerCapture(e.pointerId); } catch { /* уже */ }
     const [x, y] = local(e);
-    if (tool === 'eraser') { measure(); erasing = { id: e.pointerId, type: e.pointerType, list: [] }; eraseAt(x, y); cursor(x, y); return; }
+    if (eyedrop) { eyedrop = false; measure(); takeColor(x, y); return; }
+    if (tool === 'eraser') {
+      measure();
+      erasing = { id: e.pointerId, type: e.pointerType, list: [], last: { x, y, t: e.timeStamp } };
+      eraseAt(x, y);
+      cursor(x, y);
+      Snd.scratch('eraser');
+      return;
+    }
     if (!DRAW(tool)) return;
     const p0 = e.pointerType === 'pen' && e.pressure > 0 ? e.pressure : 0.5;
-    drawing = { id: e.pointerId, type: e.pointerType, k: TOOLS[tool].k, c: colorOf(tool), w: widthOf(tool), straight: ruler,
-      pts: [[x, y, p0]], end: null, last: { x, y, t: e.timeStamp, p: p0 }, el: null };
+    const k = TOOLS[tool].k;
+    drawing = { id: e.pointerId, type: e.pointerType, k, c: colorOf(tool), o: opOf(tool), w: widthOf(tool), h: sizeOf(tool), straight: ruler,
+      pts: [[x, y, p0]], end: null, last: { x, y, t: e.timeStamp, p: p0 }, el: null, words: null };
     measure();
+    if (k === 'hl' && !ruler) {
+      const A = nearestWord(x, y, body.getBoundingClientRect());
+      if (!A) { drawing = null; return; }
+      drawing.words = { sec: A.sec, sid: A.sid, a: A.i, b: A.i };
+    }
+    Snd.scratch(k);
     liveDraw();
   }
   function onMove(e) {
     const q = ptrs.get(e.pointerId);
     if (q) { q.x = e.clientX; q.y = e.clientY; }
     if (pan && pan.ids.has(e.pointerId)) { panMove(); return; }
-    if (erasing && e.pointerId === erasing.id) { const [x, y] = local(e); eraseAt(x, y); cursor(x, y); return; }
+    if (erasing && e.pointerId === erasing.id) {
+      const [x, y] = local(e);
+      const L = erasing.last;
+      Snd.speed(Math.hypot(x - L.x, y - L.y) / Math.max(1, e.timeStamp - L.t));
+      erasing.last = { x, y, t: e.timeStamp };
+      eraseAt(x, y);
+      cursor(x, y);
+      return;
+    }
     if (!drawing || e.pointerId !== drawing.id) return;
     const evs = typeof e.getCoalescedEvents === 'function' ? e.getCoalescedEvents() : [];
+    const L0 = drawing.last;
     for (const ev of evs.length ? evs : [e]) addPt(ev);
+    const L1 = drawing.last;
+    if (L1 !== L0) Snd.speed(Math.hypot(L1.x - L0.x, L1.y - L0.y) / Math.max(1, L1.t - L0.t));
     if (!liveRaf) liveRaf = requestAnimationFrame(() => { liveRaf = 0; if (drawing) liveDraw(); });
   }
   function onUp(e) {
@@ -363,8 +557,15 @@ const Pen = (() => {
     return out;
   }
   function liveDraw() {
-    const pts = drawing.straight ? straightPts() : drawing.pts;
-    const el = pathFor({ k: drawing.k, c: drawing.c, w: drawing.w }, pts);
+    let el;
+    if (drawing.words) {
+      // Выделитель: от слова, где начали, до слова под пальцем (в том же слайде)
+      const w = drawing.words;
+      const br = body.getBoundingClientRect();
+      const B = nearestIn(w.sec, w.sid, drawing.last.x, drawing.last.y, br);
+      if (B) w.b = B.i;
+      el = wordsPath({ c: drawing.c, o: drawing.o, h: drawing.h }, wordRects(w.sid, w.a, w.b, br));
+    } else el = pathFor({ k: drawing.k, c: drawing.c, o: drawing.o, w: drawing.w }, drawing.straight ? straightPts() : drawing.pts);
     if (drawing.el && drawing.el.isConnected) drawing.el.replaceWith(el);
     else (drawing.k === 'hl' ? ug : og).append(el);
     drawing.el = el;
@@ -372,10 +573,27 @@ const Pen = (() => {
   function cancelStroke() {
     if (drawing && drawing.el) drawing.el.remove();
     drawing = null;
+    Snd.stop();
   }
   function finishStroke() {
     const d = drawing;
     if (!d) return;
+    Snd.stop();
+    if (d.words) {
+      if (liveRaf) { cancelAnimationFrame(liveRaf); liveRaf = 0; liveDraw(); }
+      drawing = null;
+      if (d.el) d.el.remove();
+      const w = d.words;
+      const st = { k: 'hl', c: d.c, w: 0, h: d.h, a: { s: w.sid, w: Math.min(w.a, w.b) }, e: Math.max(w.a, w.b), p: [] };
+      if (d.o < 1) st.o = r2(d.o);
+      rec.strokes.push(st);
+      undo.push({ add: [st] });
+      redo = [];
+      save();
+      render();
+      paintBar();
+      return;
+    }
     const pts = d.straight ? straightPts() : d.pts;
     drawing = null;
     if (d.el) d.el.remove();
@@ -408,8 +626,10 @@ const Pen = (() => {
     }
     return false;
   }
+  const hits = (st, x, y, r) => (st._px && near(st._px, x, y, r + (st.w * f) / 2)) ||
+    (st._rects && st._rects.some((q) => x >= q.l - r && x <= q.r + r && y >= q.t - r && y <= q.b + r));
   function eraseAt(x, y) {
-    const hit = rec.strokes.filter((st) => st._px && near(st._px, x, y, 10 + (st.w * f) / 2));
+    const hit = rec.strokes.filter((st) => hits(st, x, y, 10));
     if (!hit.length) return;
     for (const st of hit) {
       const i = rec.strokes.indexOf(st);
@@ -421,6 +641,7 @@ const Pen = (() => {
   function endErase() {
     if (erasing && erasing.list.length) { undo.push({ del: erasing.list }); redo = []; save(); paintBar(); }
     erasing = null;
+    Snd.stop();
     cursor();
   }
   let cur = null;
@@ -718,41 +939,111 @@ const Pen = (() => {
     if (!desk) return;
     for (const d of desk.children) d.classList.toggle('on', d.dataset.id === tool || (d.dataset.id === 'ruler' && ruler));
   }
-  // Нажал — взял (ещё раз — положил), потащил — переложил
+  // Нажал — взял (ещё раз — положил), потащил — переложил. Держишь и коснулся вторым пальцем (где угодно) —
+  // предмет поворачивается за пальцами вокруг своей оси и едет за их серединой. Мышью: колесо над предметом — поворот
+  let hold = null;   // { id, d, a: палец, b: второй палец | null, x, y, cx, cy, ang, rot, moved }
+  const deg = (r) => (r * 180) / Math.PI;
+  const norm = (g) => ((((g + 180) % 360) + 360) % 360) - 180;
+  function holdBase() {
+    const L = layout()[hold.id];
+    const A = hold.a;
+    const B = hold.b;
+    hold.cx = L[0];
+    hold.cy = L[1];
+    hold.rot = L[2];
+    hold.x = B ? (A.x + B.x) / 2 : A.x;
+    hold.y = B ? (A.y + B.y) / 2 : A.y;
+    hold.ang = B ? Math.atan2(B.y - A.y, B.x - A.x) : 0;
+  }
+  function holdMove() {
+    const { id, d, a: A, b: B } = hold;
+    const L = layout()[id];
+    const mx = B ? (A.x + B.x) / 2 : A.x;
+    const my = B ? (A.y + B.y) / 2 : A.y;
+    const dx = mx - hold.x;
+    const dy = my - hold.y;
+    if (!hold.moved && !B && Math.hypot(dx, dy) < 7) return;
+    if (!hold.moved) { hold.moved = true; d.classList.add('drag'); }
+    L[0] = Math.max(0.02, Math.min(0.98, hold.cx + dx / innerWidth));
+    L[1] = Math.max(0.06, Math.min(0.97, hold.cy + dy / innerHeight));
+    if (B) {
+      let g = norm(hold.rot + deg(Math.atan2(B.y - A.y, B.x - A.x) - hold.ang));
+      const sn = Math.round(g / 90) * 90; // ровно по сторонам листа — прилипает
+      if (Math.abs(g - sn) < 3) g = sn;
+      L[2] = Math.round(norm(g) * 10) / 10;
+    }
+    placeOne(d);
+  }
+  const holdOpt = { capture: true, passive: false };
+  function holdDown(e) {
+    if (!hold || hold.b || e.pointerId === hold.a.id) return;
+    e.preventDefault();
+    e.stopPropagation();
+    hold.b = { id: e.pointerId, x: e.clientX, y: e.clientY };
+    holdBase();
+    hold.moved = true;
+    hold.d.classList.add('drag');
+  }
+  function holdPtr(e) {
+    if (!hold) return;
+    const p = hold.a.id === e.pointerId ? hold.a : hold.b && hold.b.id === e.pointerId ? hold.b : null;
+    if (!p) return;
+    e.stopPropagation();
+    p.x = e.clientX;
+    p.y = e.clientY;
+    holdMove();
+  }
+  function holdUp(e) {
+    if (!hold) return;
+    const isA = hold.a.id === e.pointerId;
+    const isB = hold.b && hold.b.id === e.pointerId;
+    if (!isA && !isB) return;
+    e.stopPropagation();
+    if (hold.b) {
+      // Один палец отпустили — второй дальше просто двигает
+      if (isA) hold.a = hold.b;
+      hold.b = null;
+      holdBase();
+      return;
+    }
+    const h = hold;
+    hold = null;
+    document.documentElement.classList.remove('holding');
+    window.removeEventListener('pointerdown', holdDown, holdOpt);
+    window.removeEventListener('pointermove', holdPtr, holdOpt);
+    window.removeEventListener('pointerup', holdUp, holdOpt);
+    window.removeEventListener('pointercancel', holdUp, holdOpt);
+    h.d.classList.remove('drag');
+    if (h.moved) saveLayout();
+    else if (e.type === 'pointerup') pick(h.id);
+  }
+  let wheelT = 0;
   function dragWire(d, r) {
     r.addEventListener('pointerdown', (e) => {
-      if (e.button > 0) return;
+      if (e.button > 0 || hold) return;
       e.preventDefault();
       e.stopPropagation();
       try { r.setPointerCapture(e.pointerId); } catch { /* уже */ }
       const id = d.dataset.id;
       const L = layout();
-      const st = { x: e.clientX, y: e.clientY, cx: L[id][0], cy: L[id][1], moved: false };
       L[id][3] = zTop++;
       d.style.zIndex = String(L[id][3]);
-      const mv = (ev) => {
-        if (ev.pointerId !== e.pointerId) return;
-        const dx = ev.clientX - st.x;
-        const dy = ev.clientY - st.y;
-        if (!st.moved && Math.hypot(dx, dy) < 7) return;
-        if (!st.moved) { st.moved = true; d.classList.add('drag'); }
-        L[id][0] = Math.max(0.02, Math.min(0.98, st.cx + dx / innerWidth));
-        L[id][1] = Math.max(0.06, Math.min(0.97, st.cy + dy / innerHeight));
-        placeOne(d);
-      };
-      const up = (ev) => {
-        if (ev.pointerId !== e.pointerId) return;
-        r.removeEventListener('pointermove', mv);
-        r.removeEventListener('pointerup', up);
-        r.removeEventListener('pointercancel', up);
-        d.classList.remove('drag');
-        if (st.moved) saveLayout();
-        else if (ev.type === 'pointerup') pick(id);
-      };
-      r.addEventListener('pointermove', mv);
-      r.addEventListener('pointerup', up);
-      r.addEventListener('pointercancel', up);
+      hold = { id, d, a: { id: e.pointerId, x: e.clientX, y: e.clientY }, b: null, moved: false };
+      holdBase();
+      document.documentElement.classList.add('holding');
+      window.addEventListener('pointerdown', holdDown, holdOpt);
+      window.addEventListener('pointermove', holdPtr, holdOpt);
+      window.addEventListener('pointerup', holdUp, holdOpt);
+      window.addEventListener('pointercancel', holdUp, holdOpt);
     });
+    r.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      const L = layout()[d.dataset.id];
+      L[2] = Math.round(norm(L[2] + (e.deltaY > 0 ? 6 : -6)) * 10) / 10;
+      placeOne(d);
+      clearTimeout(wheelT);
+      wheelT = setTimeout(saveLayout, 300);
+    }, { passive: false });
     r.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pick(d.dataset.id); } });
   }
   function pick(id) {
@@ -782,7 +1073,12 @@ const Pen = (() => {
     $('penRedo').disabled = !redo.length;
     const has = DRAW(tool);
     $('penOpt').hidden = !has;
-    if (has) $('penDot').className = `dotc c-${colorOf(tool)}` + (TOOLS[tool].k === 'hl' ? ' hl' : '');
+    if (has) {
+      const c = colorOf(tool);
+      const dot = $('penDot');
+      dot.className = 'dotc' + (HEX.test(c) ? '' : ' c-' + c) + (TOOLS[tool].k === 'hl' ? ' hl' : '');
+      dot.style.color = HEX.test(c) ? c : '';
+    }
     $('penOnly').setAttribute('aria-pressed', String(penOnly));
     if (!$('penPop').hidden) paintPop();
   }
@@ -800,6 +1096,19 @@ const Pen = (() => {
       b.onclick = () => { setPref(id, 'c', c); paintBar(); };
       return b;
     }));
+    if (t.colors) {
+      // Другой цвет — окно «Цвета»
+      const c = colorOf(id);
+      const any = document.createElement('button');
+      any.type = 'button';
+      any.className = 'pp-any';
+      any.setAttribute('aria-label', 'Другой цвет');
+      any.title = 'Другой цвет';
+      any.setAttribute('aria-pressed', String(HEX.test(c)));
+      if (HEX.test(c)) any.style.setProperty('--cur', rgba(c, opOf(id)));
+      any.onclick = () => cpOpen(id);
+      $('ppColors').append(any);
+    }
     $('ppSizes').replaceChildren(...SIZES.map((_, i) => {
       const b = document.createElement('button');
       b.type = 'button';
@@ -807,13 +1116,213 @@ const Pen = (() => {
       b.setAttribute('aria-pressed', String(i === sizeOf(id)));
       b.setAttribute('aria-label', ['Тонко', 'Средне', 'Толсто'][i]);
       const dot = document.createElement('i');
-      dot.className = `c-${colorOf(id)}`;
+      const c = colorOf(id);
+      if (HEX.test(c)) dot.style.color = c; else dot.className = 'c-' + c;
       dot.style.width = dot.style.height = `${[5, 9, 15][i]}px`;
       b.append(dot);
       b.onclick = () => { setPref(id, 's', i); paintBar(); };
       return b;
     }));
   }
+
+  /* ----- Окно «Цвета» (как в iPadOS): сетка, спектр, ползунки, непрозрачность, свои цвета, пипетка ----- */
+
+  const toHex = (r, g, b) => '#' + [r, g, b].map((n) => Math.max(0, Math.min(255, Math.round(n))).toString(16).padStart(2, '0')).join('');
+  const rgbOf = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
+  const rgba = (h, o) => { const [r, g, b] = rgbOf(h); return `rgba(${r}, ${g}, ${b}, ${o})`; };
+  function hsl(h, s, l) {
+    s /= 100; l /= 100;
+    const a = s * Math.min(l, 1 - l);
+    const f1 = (n) => { const k = (n + h / 30) % 12; return l - a * Math.max(-1, Math.min(k - 3, 9 - k, 1)); };
+    return toHex(f1(0) * 255, f1(8) * 255, f1(4) * 255);
+  }
+  // Имя цвета (c-имя) → #rrggbb на нынешнем фоне
+  function cssHex(c) {
+    if (HEX.test(c)) return c.toLowerCase();
+    const i = document.createElement('i');
+    i.className = 'c-' + c;
+    i.hidden = true;
+    document.body.append(i);
+    const m = getComputedStyle(i).color.match(/[\d.]+/g) || [0, 0, 0];
+    i.remove();
+    return toHex(+m[0], +m[1], +m[2]);
+  }
+  // Сетка: сверху серые (белый → чёрный), ниже 9 рядов по 12 оттенков — от тёмных к светлым
+  const GRID = (() => {
+    const out = [];
+    for (let i = 0; i < 12; i++) { const v = 255 * (1 - i / 11); out.push(toHex(v, v, v)); }
+    const H = [196, 214, 250, 276, 318, 2, 15, 30, 42, 52, 62, 95];
+    for (const l of [15, 22, 30, 39, 49, 60, 71, 81, 91]) for (const h of H) out.push(hsl(h, 100, l));
+    return out;
+  })();
+  const SW0 = [{ c: '#000000', o: 1 }, { c: '#0a64ff', o: 1 }, { c: '#2fbe5a', o: 1 }, { c: '#ffd60a', o: 1 }, { c: '#ff3b30', o: 1 }];
+  function swGet() {
+    try {
+      const a = JSON.parse(lsGet('mps.swatches', 'null'));
+      if (Array.isArray(a)) return a.filter((x) => x && HEX.test(x.c)).map((x) => ({ c: x.c.toLowerCase(), o: x.o >= 0.05 && x.o <= 1 ? x.o : 1 })).slice(0, 18);
+    } catch { /* нет */ }
+    return SW0.slice();
+  }
+  const swSet = (a) => lsSet('mps.swatches', JSON.stringify(a));
+  let cp = null;        // { id, hex, o, ring: [x, y] в долях спектра | null }
+  let eyedrop = false;
+  let cpTab = ['grid', 'spec', 'sl'].includes(lsGet('mps.cpTab', '')) ? lsGet('mps.cpTab', '') : 'grid';
+  let specCtx = null;
+  function cpOpen(id) {
+    if (!TOOLS[id] || !TOOLS[id].colors) return;
+    cp = { id, hex: cssHex(colorOf(id)), o: opOf(id), ring: null };
+    $('penPop').hidden = true;
+    cpBuild();
+    cpPaint();
+    if (!$('cpDlg').open) $('cpDlg').showModal();
+  }
+  // Выбрали цвет — сразу в инструмент (что в руке)
+  function cpSet(hex, o, from) {
+    cp.hex = hex.toLowerCase();
+    if (o != null) cp.o = Math.max(0.05, Math.min(1, o));
+    if (from !== 'spec') cp.ring = null;
+    setPref(cp.id, 'c', cp.hex);
+    setPref(cp.id, 'o', Math.round(cp.o * 100) / 100);
+    cpPaint(from);
+    paintBar();
+  }
+  const follow = (el, at) => {
+    el.addEventListener('pointerdown', (e) => { e.preventDefault(); try { el.setPointerCapture(e.pointerId); } catch { /* уже */ } at(e); });
+    el.addEventListener('pointermove', (e) => { if (el.hasPointerCapture && el.hasPointerCapture(e.pointerId)) at(e); });
+  };
+  function cpBuild() {
+    const g = $('cpGrid');
+    if (!g.childElementCount) {
+      for (const c of GRID) { const i = document.createElement('i'); i.style.background = c; i.dataset.c = c; g.append(i); }
+      follow(g, (e) => {
+        const r = g.getBoundingClientRect();
+        const col = Math.max(0, Math.min(11, Math.floor(((e.clientX - r.left) / r.width) * 12)));
+        const row = Math.max(0, Math.min(9, Math.floor(((e.clientY - r.top) / r.height) * 10)));
+        const c = GRID[row * 12 + col];
+        if (c !== cp.hex) cpSet(c, null, 'grid');
+      });
+    }
+    if (!specCtx) {
+      // Спектр: оттенок слева направо, сверху светлее, снизу темнее
+      const cv = $('cpCan');
+      const x = cv.getContext('2d', { willReadFrequently: true });
+      const W = cv.width;
+      const H = cv.height;
+      const hg = x.createLinearGradient(0, 0, W, 0);
+      for (let i = 0; i <= 12; i++) hg.addColorStop(i / 12, hsl((i * 30) % 360, 100, 50));
+      x.fillStyle = hg;
+      x.fillRect(0, 0, W, H);
+      const vg = x.createLinearGradient(0, 0, 0, H);
+      vg.addColorStop(0, 'rgba(255,255,255,1)');
+      vg.addColorStop(0.08, 'rgba(255,255,255,.85)');
+      vg.addColorStop(0.5, 'rgba(255,255,255,0)');
+      vg.addColorStop(0.5, 'rgba(0,0,0,0)');
+      vg.addColorStop(1, 'rgba(0,0,0,.92)');
+      x.fillStyle = vg;
+      x.fillRect(0, 0, W, H);
+      specCtx = x;
+      follow($('cpSpec'), (e) => {
+        const r = cv.getBoundingClientRect();
+        const fx = Math.max(0, Math.min(0.999, (e.clientX - r.left) / r.width));
+        const fy = Math.max(0, Math.min(0.999, (e.clientY - r.top) / r.height));
+        const d = x.getImageData(Math.floor(fx * W), Math.floor(fy * H), 1, 1).data;
+        cp.ring = [fx, fy];
+        cpSet(toHex(d[0], d[1], d[2]), null, 'spec');
+      });
+    }
+  }
+  function cpPaint(from) {
+    for (const b of $('cpTabs').children) b.setAttribute('aria-pressed', String(b.dataset.t === cpTab));
+    $('cpGrid').hidden = cpTab !== 'grid';
+    $('cpSpec').hidden = cpTab !== 'spec';
+    $('cpSl').hidden = cpTab !== 'sl';
+    for (const i of $('cpGrid').children) i.classList.toggle('on', i.dataset.c === cp.hex);
+    const ring = $('cpRing');
+    ring.hidden = !cp.ring;
+    if (cp.ring) { ring.style.left = cp.ring[0] * 100 + '%'; ring.style.top = cp.ring[1] * 100 + '%'; ring.style.background = cp.hex; }
+    const [r, g, b] = rgbOf(cp.hex);
+    const tr = { R: [`rgb(0,${g},${b})`, `rgb(255,${g},${b})`], G: [`rgb(${r},0,${b})`, `rgb(${r},255,${b})`], B: [`rgb(${r},${g},0)`, `rgb(${r},${g},255)`] };
+    for (const [k, v] of [['R', r], ['G', g], ['B', b]]) {
+      const el = $('cp' + k);
+      if (from !== 'sl') el.value = String(v);
+      el.style.setProperty('--trk', `linear-gradient(to right, ${tr[k][0]}, ${tr[k][1]})`);
+      if (from !== 'num') $('cp' + k + 'n').value = String(v);
+    }
+    if (from !== 'hex') $('cpHex').value = cp.hex.slice(1).toUpperCase();
+    if (from !== 'op') $('cpOp').value = String(Math.round(cp.o * 100));
+    $('cpOp').style.setProperty('--trk', `linear-gradient(to right, ${rgba(cp.hex, 0)}, ${cp.hex})`);
+    $('cpOpN').textContent = Math.round(cp.o * 100) + '%';
+    $('cpCur').style.setProperty('--cur', rgba(cp.hex, cp.o));
+    const box = $('cpSw');
+    box.replaceChildren(...swGet().map((s, n) => {
+      const b2 = document.createElement('button');
+      b2.type = 'button';
+      b2.style.setProperty('--c', rgba(s.c, s.o));
+      b2.classList.toggle('on', s.c === cp.hex && Math.abs(s.o - cp.o) < 0.01);
+      b2.setAttribute('aria-label', 'Свой цвет ' + s.c + ' (держать — убрать)');
+      b2.append(document.createElement('i'));
+      let lt = 0;
+      let long = false;
+      b2.onpointerdown = () => {
+        long = false;
+        lt = setTimeout(() => { long = true; const a = swGet(); a.splice(n, 1); swSet(a); cpPaint(); toast('Цвет убран из своих'); }, 600);
+      };
+      b2.onpointerup = b2.onpointerleave = b2.onpointercancel = () => clearTimeout(lt);
+      b2.oncontextmenu = (e) => e.preventDefault();
+      b2.onclick = () => { if (!long) cpSet(s.c, s.o, 'sw'); };
+      return b2;
+    }));
+    const add = document.createElement('button');
+    add.type = 'button';
+    add.className = 'cp-add';
+    add.setAttribute('aria-label', 'Добавить цвет в свои');
+    add.innerHTML = '<svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg>'; // своя иконка
+    add.onclick = () => {
+      const a = swGet();
+      if (a.some((s) => s.c === cp.hex && Math.abs(s.o - cp.o) < 0.01)) { toast('Этот цвет уже есть'); return; }
+      a.push({ c: cp.hex, o: Math.round(cp.o * 100) / 100 });
+      swSet(a.slice(-18));
+      cpPaint();
+    };
+    box.append(add);
+  }
+  function cpWire() {
+    const d = $('cpDlg');
+    $('cpX').onclick = () => d.close();
+    d.addEventListener('click', (e) => { if (e.target === d) d.close(); });
+    for (const b of $('cpTabs').children) b.onclick = () => { cpTab = b.dataset.t; lsSet('mps.cpTab', cpTab); cpBuild(); cpPaint(); };
+    for (const k of ['R', 'G', 'B']) {
+      $('cp' + k).oninput = () => cpSet(toHex(+$('cpR').value, +$('cpG').value, +$('cpB').value), null, 'sl');
+      $('cp' + k + 'n').oninput = () => {
+        const v = [$('cpRn'), $('cpGn'), $('cpBn')].map((x) => Math.max(0, Math.min(255, Number(x.value) || 0)));
+        cpSet(toHex(...v), null, 'num');
+      };
+    }
+    $('cpHex').oninput = () => { const v = $('cpHex').value.replace(/[^0-9a-f]/gi, ''); if (v.length === 6) cpSet('#' + v, null, 'hex'); };
+    $('cpHex').onblur = () => cpPaint();
+    $('cpOp').oninput = () => cpSet(cp.hex, Number($('cpOp').value) / 100, 'op');
+    // Пипетка: окно прячется, нажатие на пометку — её цвет
+    $('cpDrop').onclick = () => {
+      d.close();
+      eyedrop = true;
+      document.body.classList.add('eyedrop');
+      toast('Пипетка: нажмите на пометку — возьму её цвет');
+    };
+  }
+  function takeColor(x, y) {
+    document.body.classList.remove('eyedrop');
+    const id = cp ? cp.id : tool;
+    let st = null;
+    for (let i = rec.strokes.length - 1; i >= 0 && !st; i--) if (hits(rec.strokes[i], x, y, 6)) st = rec.strokes[i];
+    if (!st) toast('Тут нет пометки — пипетка берёт цвет пометки');
+    else if (TOOLS[id] && TOOLS[id].colors) {
+      if (TOOLS[id].colors.includes(st.c)) { setPref(id, 'c', st.c); setPref(id, 'o', 1); }
+      else { setPref(id, 'c', cssHex(st.c)); setPref(id, 'o', st.o || 1); }
+      paintBar();
+    }
+    cpOpen(id);
+  }
+
   function setPenOnly(v, auto) {
     penOnly = v;
     lsSet('mps.penOnly', v ? '1' : '0');
@@ -829,11 +1338,12 @@ const Pen = (() => {
     clearTimeout(awayT);
     isOpen = true;
     openKey = key(view);
-    document.body.classList.add('pen-open', 'paper');
+    document.body.classList.add('pen-open');
     deskBuild();
     lay = null;
     desk.classList.remove('away');
     desk.classList.add('drop');
+    Snd.drop(DESK);
     desk.hidden = false;
     // Лист стал светлым и шире (поля) — разложить по новому листу
     requestAnimationFrame(() => {
@@ -847,18 +1357,20 @@ const Pen = (() => {
     onChange();
     if (lsGet('mps.penHint', '') !== '1') {
       lsSet('mps.penHint', '1');
-      setTimeout(() => toast('Нажмите на предмет — взять, ещё раз — положить. Потащите — переложить. Двумя пальцами — листать.'), 700);
+      setTimeout(() => toast('Нажмите на предмет — взять, ещё раз — положить. Потащите — переложить, коснитесь вторым пальцем — повернуть. Двумя пальцами по листу — листать.'), 700);
     }
   }
   function close() {
     if (!isOpen) return;
     if (drawing) finishStroke();
     if (erasing) endErase();
+    eyedrop = false;
+    document.body.classList.remove('eyedrop');
+    if ($('cpDlg').open) $('cpDlg').close();
     flush();
     isOpen = false;
     openKey = '';
     document.body.classList.remove('pen-open');
-    if (lsGet('mps.paper', '0') !== '1') document.body.classList.remove('paper');
     $('penBar').hidden = true;
     $('penPop').hidden = true;
     if (desk) {
@@ -879,6 +1391,7 @@ const Pen = (() => {
     $('penNote').onclick = editNote;
     $('penOpt').onclick = () => { const p = $('penPop'); p.hidden = !p.hidden; if (!p.hidden) paintPop(); };
     $('ppClear').onclick = () => { $('penPop').hidden = true; clearAll(); };
+    cpWire();
     $('noteDlg').addEventListener('click', (e) => { if (e.target === $('noteDlg')) $('noteDlg').close(); });
     document.addEventListener('keydown', (e) => {
       if (!isOpen || e.target.closest('input, textarea, dialog')) return;
@@ -890,12 +1403,13 @@ const Pen = (() => {
     window.addEventListener('resize', () => { if (isOpen) { lay = null; placeAll(); } });
     document.addEventListener('visibilitychange', () => { if (document.hidden) flush(); });
     window.addEventListener('pagehide', flush);
-    if (lsGet('mps.paper', '0') === '1') document.body.classList.add('paper');
   }
 
   return {
     init, show, open, close, editNote, relayout: sched,
     get isOpen() { return isOpen; },
+    get sound() { return Snd.on; },
+    set sound(v) { Snd.on = v; },
     set onChange(fn) { onChange = fn; },
   };
 })();

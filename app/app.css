@@ -5,6 +5,13 @@
   --fs: 22px;
   color-scheme: dark;
 }
+/* Фон (меню «…» → «Фон»): чёрный — как выше; серый и белый — сплошные светлые (класс paper у body — цвета пометок) */
+html[data-th=gray], html[data-th=white] {
+  --ink: #e4e4e9; --panel: #f4f4f6; --field: #ffffff; --line: #c8c8ce; --text: #1d1d1f; --muted: #6e6e73;
+  --live: #a8622f; --live-ink: #ffffff; --ok: #1f9a4a; --warn: #d0402c;
+  color-scheme: light;
+}
+html[data-th=white] { --ink: #ffffff; --panel: #f6f6f7; --field: #efeff2; --line: #d9d9de; }
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 html, body { margin: 0; background: var(--ink); color: var(--text); font: 16px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
 body { min-height: 100vh; min-height: 100dvh; -webkit-text-size-adjust: 100%; }
@@ -50,7 +57,7 @@ svg { width: 22px; height: 22px; fill: currentColor; }
 .field:focus { outline: 2px solid var(--live); outline-offset: -1px; }
 .roles { display: flex; flex-wrap: wrap; gap: 8px; }
 .roles button { flex: 1 1 30%; min-height: 48px; }
-.roles button[aria-pressed=true] { background: color-mix(in srgb, var(--live) 22%, var(--field)); border-color: var(--live); color: #fff; font-weight: 600; }
+.roles button[aria-pressed=true] { background: color-mix(in srgb, var(--live) 22%, var(--field)); border-color: var(--live); color: var(--text); font-weight: 600; }
 .big { display: block; width: 100%; min-height: 52px; margin-top: 24px; font-size: 17px; }
 .hint { color: var(--muted); font-size: 14px; }
 .msg { margin: 0 0 6px; padding: 10px 12px; border-radius: 10px; background: color-mix(in srgb, var(--warn) 18%, var(--panel)); border: 1px solid color-mix(in srgb, var(--warn) 45%, var(--line)); }
@@ -97,7 +104,7 @@ svg { width: 22px; height: 22px; fill: currentColor; }
   display: block; text-align: left; padding: 12px 16px; border-radius: 14px; border: 1px solid var(--live); background: color-mix(in srgb, var(--live) 26%, var(--panel));
   box-shadow: 0 10px 30px rgba(0, 0, 0, .45); animation: mc-in .25s ease-out; }
 .msgcard b { display: block; font-size: 13px; color: var(--live); }
-.msgcard span { display: block; font-size: 20px; font-weight: 600; color: #fff; }
+.msgcard span { display: block; font-size: 20px; font-weight: 600; color: var(--text); }
 @keyframes mc-in { from { transform: translate(-50%, -30px); opacity: 0; } }
 .msg-list { max-height: 40vh; overflow: auto; display: flex; flex-direction: column; gap: 6px; margin: 4px 0 10px; }
 .msg-list:empty::before { content: 'Пока сообщений нет'; color: var(--muted); font-size: 14px; }
@@ -164,6 +171,10 @@ dialog.full[open] { display: flex; flex-direction: column; }
 .stepper { display: flex; align-items: center; gap: 6px; }
 .stepper button { min-width: 44px; min-height: 40px; padding: 0; font-size: 20px; font-weight: 600; }
 .stepper b { min-width: 92px; text-align: center; font-size: 16px; }
+.row-i .stepper b { text-align: center; }
+.mt-in { width: 92px; height: 40px; padding: 0 6px; text-align: center; font-size: 18px; font-weight: 700; background: var(--field); border: 1px solid var(--line); border-radius: 10px; -moz-appearance: textfield; }
+.mt-in::-webkit-inner-spin-button, .mt-in::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+.mt-in:focus { outline: 2px solid var(--live); outline-offset: -1px; }
 .sl + .sl:not(.part) { border-top: 1px dashed color-mix(in srgb, var(--line) 70%, transparent); }
 
 /* Сетлисты */
@@ -184,6 +195,7 @@ dialog.full[open] { display: flex; flex-direction: column; }
 .livebar { position: fixed; left: 0; right: 0; bottom: 0; z-index: 6; display: flex; flex-direction: column; gap: 8px;
   padding: 8px max(10px, env(safe-area-inset-right)) calc(8px + env(safe-area-inset-bottom)) max(10px, env(safe-area-inset-left));
   background: var(--panel); border-top: 1px solid var(--line); box-shadow: 0 -6px 18px rgba(0, 0, 0, .35); }
+body.paper .livebar { box-shadow: 0 -4px 14px rgba(0, 0, 0, .08); }
 .lb-row { display: flex; gap: 8px; align-items: center; }
 .lb-text { flex: 1; min-width: 0; text-align: left; background: none; border: 0; padding: 8px 2px; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .lb-text:disabled { opacity: 1; }
@@ -218,4 +230,4 @@ dialog::backdrop { background: rgba(0, 0, 0, .6); }
 .ask { width: min(420px, calc(100vw - 32px)); padding: 18px; }
 .ask p { margin: 0 0 6px; font-size: 16px; white-space: pre-line; }
 .toast { position: fixed; left: 50%; bottom: calc(18px + env(safe-area-inset-bottom)); transform: translateX(-50%); z-index: 20; max-width: calc(100vw - 32px);
-  padding: 10px 16px; border-radius: 12px; background: #1d3540; border: 1px solid var(--line); font-size: 14px; box-shadow: 0 6px 24px rgba(0, 0, 0, .4); }
+  padding: 10px 16px; border-radius: 12px; background: #1d3540; color: #e4ddda; border: 1px solid #2d383e; font-size: 14px; box-shadow: 0 6px 24px rgba(0, 0, 0, .4); }
