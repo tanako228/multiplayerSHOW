@@ -10,7 +10,11 @@
    журнал — team-log.jsonl. Подключает teamsrv.js (route → handle, info → state, окно «Группа» → act).
    Этап 2 — связь в реальном времени: WebSocket /ws (npm ws), протокол v1 (см. «WebSocket» ниже): что на экране (live —
    от окна оператора, team.js), «библиотека поменялась», сетлисты (плейлисты с пометкой «для группы»), листать с телефона
-   (право «управлять показом» — галочка у человека, ctl). */
+   (право «управлять показом» — галочка у человека, ctl).
+   Этап 6: сообщения группе (Лидер, Звук, оператор), общий метроном по времени программы, пароли (crypto.scrypt —
+   на диске только соль и отпечаток), режимы входа auth.mode: qr — запрос и «Пустить»; qrpass — с паролем сразу,
+   без пароля — запрос; pass — только имя и пароль. 5 неверных паролей (с адреса или для имени) — вход закрыт на 10 мин.
+   Полный журнал — оба файла (team-log.old.jsonl и team-log.jsonl), с поиском и отбором по событиям. */
 'use strict';
 const fs = require('fs');
 const path = require('path');
@@ -27,7 +31,10 @@ const ROLES = [
   { id: 'tech', name: 'Техник' },
 ];
 // Право → у каких ролей есть; «управлять показом» (control) — не по роли, а галочкой у человека (ctl)
-const PERMS = { songs: ROLES.map((r) => r.id), control: [] };
+const PERMS = { songs: ROLES.map((r) => r.id), control: [], msg: ['leader', 'sound'], metro: ['leader', 'sound'] };
+const MODES = ['qr', 'qrpass', 'pass'];
+const LOCK_N = 5;            // неверных паролей подряд …
+const LOCK_MS = 10 * 60e3;   // … — вход закрыт на 10 минут
 const ONLINE_MS = 20e3;      // без WebSocket и запросов 20 с — не в сети (телефон шлёт ping раз в 15 с)
 const PING_MS = 45e3;        // по WebSocket тишина 45 с — связь оборвалась, закрыть
 const PEND_MS = 10 * 60e3;   // запрос на вход живёт 10 минут
@@ -36,6 +43,7 @@ const LOG_MAX = 512 * 1024;  // журнал больше — старое в te
 let o = {};        // { dir, libFile, store: { read, write }, notify(), on(), ver, cmd(c) }
 let people = [];   // [{ id, name, role, at, ctl }]
 let devices = [];  // [{ id, person, name, hash, at, seen, ip, off, synced }]
+let auth = { mode: 'qr' }; // как входят телефоны (team.json → auth)
 const byHash = new Map();
 const pending = new Map(); // id → { id, sh, name, role, dev, ip, at, ok, no, waits: Set }
 let seenDirty = false;
@@ -56,7 +64,9 @@ const personOf = (d) => people.find((p) => p.id === d.person) || null;
 function load() {
   const j = o.store.read();
   people = (Array.isArray(j.people) ? j.people : []).filter((p) => p && p.id && p.name)
-    .map((p) => ({ id: String(p.id), name: clean(p.name, 40), role: roleOk(p.role) ? p.role : 'musician', at: Number(p.at) || 0, ctl: !!p.ctl }));
+    .map((p) => ({ id: String(p.id), name: clean(p.name, 40), role: roleOk(p.role) ? p.role : 'musician', at: Number(p.at) || 0, ctl: !!p.ctl,
+      ...(p.pw && /^[0-9a-f]{32}$/.test(p.pw.s) && /^[0-9a-f]{64}$/.test(p.pw.h) ? { pw: { s: p.pw.s, h: p.pw.h } } : {}) }));
+  auth = { mode: j.auth && MODES.includes(j.auth.mode) ? j.auth.mode : 'qr' };
   devices = (Array.isArray(j.devices) ? j.devices : []).filter((d) => d && d.id && /^[0-9a-f]{64}$/.test(d.hash) && people.some((p) => p.id === d.person))
     .map((d) => ({ id: String(d.id), person: String(d.person), name: clean(d.name, 60), hash: d.hash, at: Number(d.at) || 0, seen: Number(d.seen) || 0, ip: String(d.ip || ''), off: !!d.off, synced: Number(d.synced) || 0 }));
   byHash.clear();
@@ -64,8 +74,44 @@ function load() {
 }
 function saveTeam() {
   seenDirty = false;
-  o.store.write({ people, devices });
+  o.store.write({ people, devices, auth });
 }
+
+/* ----- Пароли: scrypt (встроен в Node), соль на человека; неверные — счётчик и временная блокировка ----- */
+
+const SCRYPT = { N: 16384, r: 8, p: 1, maxmem: 64 * 1024 * 1024 };
+const scrypt = (pw, salt) => new Promise((ok, no) => crypto.scrypt(String(pw).normalize('NFC'), Buffer.from(salt, 'hex'), 32, SCRYPT, (e, k) => (e ? no(e) : ok(k))));
+async function pwMake(pw) {
+  const s = crypto.randomBytes(16).toString('hex');
+  return { s, h: (await scrypt(pw, s)).toString('hex') };
+}
+async function pwCheck(p, pw) {
+  if (!p || !p.pw || !pw) return false;
+  const k = await scrypt(pw, p.pw.s);
+  return crypto.timingSafeEqual(k, Buffer.from(p.pw.h, 'hex'));
+}
+const fails = new Map(); // 'ip:…' / 'name:…' → { n, first, until }
+function lockedMin(keys) {
+  const now = Date.now();
+  for (const k of keys) { const f = fails.get(k); if (f && f.until > now) return Math.ceil((f.until - now) / 60e3); }
+  return 0;
+}
+function failed(keys, name, ip) {
+  const now = Date.now();
+  let lock = false;
+  for (const k of keys) {
+    let f = fails.get(k);
+    if (!f || now - f.first > LOCK_MS) f = { n: 0, first: now, until: 0 };
+    f.n++;
+    if (f.n >= LOCK_N) { f.until = now + LOCK_MS; f.n = 0; f.first = now; lock = true; }
+    fails.set(k, f);
+  }
+  if (fails.size > 2000) for (const [k, f] of fails) if (f.until < now && now - f.first > LOCK_MS) fails.delete(k);
+  log('pwBad', { name, ip });
+  if (lock) log('locked', { name, ip, min: LOCK_MS / 60e3 });
+  o.notify();
+}
+const locks = () => { const now = Date.now(); return [...fails].filter(([, f]) => f.until > now).map(([k, f]) => ({ who: k.replace(/^(ip|name):/, ''), ip: k.startsWith('ip:'), min: Math.ceil((f.until - now) / 60e3) })); };
 
 /* ----- Журнал: строка JSON на событие ----- */
 
@@ -76,12 +122,22 @@ function log(ev, x) {
     fs.appendFileSync(logFile(), JSON.stringify({ at: Date.now(), ev, ...x }) + '\n');
   } catch { /* журнал не главное */ }
 }
-function readLog(n = 200) {
+// Новые — первыми; q — найти текст, evs — только эти события; читаем и прошлый файл (team-log.old.jsonl)
+function readLog(n = 200, q = '', evs = null) {
   let lines = [];
-  try { lines = fs.readFileSync(logFile(), 'utf8').split('\n').filter(Boolean).slice(-n); } catch { return []; }
+  for (const f of [path.join(o.dir, 'team-log.old.jsonl'), logFile()]) {
+    try { lines = lines.concat(fs.readFileSync(f, 'utf8').split('\n').filter(Boolean)); } catch { /* нет файла */ }
+  }
+  const ql = String(q || '').toLowerCase().trim();
   const out = [];
-  for (const l of lines) { try { out.push(JSON.parse(l)); } catch { /* испорченная строка */ } }
-  return out.reverse();
+  for (let i = lines.length - 1; i >= 0 && out.length < n; i--) {
+    let x;
+    try { x = JSON.parse(lines[i]); } catch { continue; } // испорченная строка
+    if (evs && !evs.includes(x.ev)) continue;
+    if (ql && !JSON.stringify(x).toLowerCase().includes(ql)) continue;
+    out.push(x);
+  }
+  return out;
 }
 // Чужой ключ — в журнал не чаще раза в минуту с одного адреса
 const badAt = new Map();
@@ -140,6 +196,22 @@ async function join(req, res) {
   const ip = ipOf(req);
   const name = clean(b.name, 40);
   if (!name) return send(req, res, 400, { error: 'name', text: 'Впишите имя' });
+  // С паролем (режимы qrpass, pass) — сразу ключ, без оператора
+  const pw = typeof b.pw === 'string' ? b.pw.slice(0, 200) : '';
+  if (auth.mode === 'pass' || (auth.mode === 'qrpass' && pw)) {
+    if (!pw) return send(req, res, 400, { error: 'pw', text: 'Впишите пароль' });
+    const keys = ['ip:' + ip, 'name:' + name.toLowerCase()];
+    const min = lockedMin(keys);
+    if (min) return send(req, res, 429, { error: 'locked', text: `Слишком много неверных паролей. Попробуйте через ${min} мин. или попросите оператора снять блокировку` });
+    const p = people.find((x) => x.name.toLowerCase() === name.toLowerCase());
+    let ok = false;
+    try { ok = await pwCheck(p, pw); } catch { ok = false; }
+    if (!ok) { failed(keys, name, ip); return send(req, res, 403, { error: 'pw', text: 'Неверное имя или пароль' }); }
+    for (const k of keys) fails.delete(k);
+    const dev = clean(b.dev, 60) || 'Телефон';
+    log('pwOk', { name: p.name, dev, ip });
+    return send(req, res, 200, admit({ name: p.name, role: p.role, dev, ip }));
+  }
   expire();
   const open = [...pending.values()].filter((r) => !r.ok && !r.no);
   if (open.filter((r) => r.ip === ip).length >= 3 || open.length >= 30) return send(req, res, 429, { error: 'many', text: 'Слишком много запросов — подождите несколько минут' });
@@ -347,6 +419,7 @@ function handle(req, res, u) {
   if (!o.on()) return send(req, res, 403, { error: 'closed', text: ERR.closed });
   if (p === '/join' && req.method === 'POST') { join(req, res); return; }
   if (p === '/join/wait' && req.method === 'POST') { joinWait(req, res); return; }
+  if (p === '/join/info') return send(req, res, 200, { mode: auth.mode }); // экран входа: нужен ли пароль
   const ip = ipOf(req);
   const m = /^Bearer (\S+)$/.exec(String(req.headers.authorization || ''));
   const a = authKey(m ? m[1] : '', ip);
@@ -373,11 +446,13 @@ function state() {
     pending: [...pending.values()].filter((r) => !r.ok && !r.no).map((r) => ({ id: r.id, name: r.name, role: r.role, dev: r.dev, ip: r.ip, at: r.at })),
     people: people.map((p) => ({
       id: p.id, name: p.name, role: p.role, at: p.at,
-      ctl: !!p.ctl,
+      ctl: !!p.ctl, pw: !!p.pw,
       devices: devices.filter((d) => d.person === p.id).map((d) => ({ id: d.id, name: d.name, ip: d.ip, at: d.at, seen: d.seen, off: d.off, synced: d.synced, online: isOn(d, now) })),
     })),
     online: devices.filter((d) => isOn(d, now)).length,
     songs: pay.size,
+    auth: { ...auth }, locks: locks(),
+    msgs: msgs.slice(-40), metro: { ...metro },
   };
 }
 
@@ -423,11 +498,68 @@ function act(a) {
       log('delPerson', { name: p.name });
       break;
     }
-    case 'log': return readLog(Number(a.n) || 200);
+    case 'log': return readLog(Math.min(20000, Number(a.n) || 200), a.q, Array.isArray(a.evs) ? a.evs.map(String) : null);
+    case 'mode': {
+      if (!MODES.includes(a.mode)) throw new Error('Неизвестный режим входа');
+      if (a.mode !== 'qr' && !people.some((x) => x.pw)) throw new Error('Сначала задайте пароль хотя бы одному человеку (кнопка «Пароль» у человека)');
+      auth.mode = a.mode;
+      saveTeam();
+      log('mode', { mode: a.mode });
+      break;
+    }
+    case 'password': return setPw(per(), a.pw);
+    case 'unlock': fails.clear(); log('unlock', {}); break;
+    case 'msg': if (!postMsg('Оператор', 'op', a.text)) throw new Error('Пустое сообщение'); return null;
+    case 'metro': setMetro(a, 'Оператор'); return null;
     default: throw new Error('Неизвестное действие');
   }
   o.notify();
   return null;
+}
+
+// Пароль человеку ('' — убрать). Последний пароль не убрать, пока вход только по паролю
+async function setPw(p, pw) {
+  const s = String(pw == null ? '' : pw);
+  if (!s) {
+    if (auth.mode !== 'qr' && !people.some((x) => x !== p && x.pw)) throw new Error('Это последний пароль, а вход сейчас по паролю — сначала смените режим входа');
+    delete p.pw;
+    log('pwDel', { name: p.name });
+  } else {
+    if (s.length < 4) throw new Error('Пароль — не короче 4 знаков');
+    p.pw = await pwMake(s.slice(0, 200));
+    log('pwSet', { name: p.name });
+  }
+  saveTeam();
+  o.notify();
+  return null;
+}
+
+/* ----- Сообщения группе и метроном ----- */
+
+let msgs = [];  // последние 50: { id, at, from, role, text }
+let metro = { on: false, bpm: 0, beats: 4, t0: 0, by: '' };
+function postMsg(from, role, text) {
+  const t = clean(text, 300);
+  if (!t) return null;
+  const m = { id: newId(), at: Date.now(), from, role, text: t };
+  msgs.push(m);
+  if (msgs.length > 50) msgs.shift();
+  broadcast({ t: 'msg', msg: m }, 'songs');
+  log('msg', { name: from, text: t });
+  o.notify();
+  return m;
+}
+const recentMsgs = () => msgs.filter((m) => Date.now() - m.at < 6 * 3600e3).slice(-20);
+// Общий метроном: удары от t0 (время программы) — телефоны считают сами, со своей поправкой часов (ping/pong)
+function setMetro(x, by) {
+  const on = !!x.on;
+  const bpm = Math.round(Number(x.bpm));
+  const beats = Math.round(Number(x.beats));
+  if (on && !(bpm >= 30 && bpm <= 300)) throw new Error('Темп — от 30 до 300 ударов в минуту');
+  metro = on ? { on: true, bpm, beats: beats >= 1 && beats <= 12 ? beats : 4, t0: Date.now() + 800, by } : { ...metro, on: false, by };
+  broadcast({ t: 'metro', metro, time: Date.now() }, 'songs');
+  log(on ? 'metroOn' : 'metroOff', { name: by, bpm: on ? bpm : undefined });
+  o.notify();
 }
 
 /* ----- WebSocket /ws: протокол v1 ----------
@@ -437,7 +569,10 @@ function act(a) {
    у Библии и своих слайдов — ещё и их текст, когда пункт сменился; same: true — текст тот же, что в прошлый раз) ·
    lib { lib, seq, lh } — песни поменялись, докачать · sets { sets, sh } · me { me } — роль или права поменялись ·
    pong { id, time } · err { text } · bye { code, text } — перед закрытием: auth (ключ отозван), off (приостановлен),
-   closed (доступ выключен). Ключ — в первом сообщении, не в адресе (адреса попадают в журналы). */
+   closed (доступ выключен). Ключ — в первом сообщении, не в адресе (адреса попадают в журналы).
+   Этап 6: телефон → { t: 'msg', text } (право msg: Лидер, Звук), { t: 'metro', on, bpm, beats } (право metro);
+   программа → msg { msg: { id, at, from, role, text } } · metro { metro: { on, bpm, beats, t0, by }, time };
+   в welcome — ещё msgs (последние за 6 часов) и metro. */
 
 let WSS = null;
 const socks = new Set(); // { ws, d, ip, last } — только вошедшие (hello принят)
@@ -498,13 +633,25 @@ function onMsg(c, m) {
     touch(c.d, c.ip);
     o.notify();
     refresh();
-    wsSend(c, { t: 'welcome', v: 1, me: me(c.d, a.p), live, sets, sh, time: Date.now() });
+    wsSend(c, { t: 'welcome', v: 1, me: me(c.d, a.p), live, sets, sh, msgs: recentMsgs(), metro, time: Date.now() });
     return;
   }
   const p = personOf(c.d);
   if (!p || !byHash.has(c.d.hash) || c.d.off) { kick((x) => x === c, c.d.off ? 'off' : 'auth'); return; }
   touch(c.d, c.ip);
   if (m.t === 'ping') { wsSend(c, { t: 'pong', id: m.id, time: Date.now() }); return; }
+  if (m.t === 'msg') {
+    if (!can(p, 'msg')) { wsSend(c, { t: 'err', text: 'Писать группе могут Лидер и Звук' }); return; }
+    if (Date.now() - (c.msgAt || 0) < 1500) return; // не чаще раза в полторы секунды
+    c.msgAt = Date.now();
+    postMsg(p.name, p.role, m.text);
+    return;
+  }
+  if (m.t === 'metro') {
+    if (!can(p, 'metro')) { wsSend(c, { t: 'err', text: 'Общий метроном включают Лидер и Звук' }); return; }
+    try { setMetro(m, p.name); } catch (e) { wsSend(c, { t: 'err', text: e.message }); }
+    return;
+  }
   if (m.t === 'cmd') {
     if (!can(p, 'control')) { wsSend(c, { t: 'err', text: 'Нет права листать — его даёт оператор в окне «Группа»' }); return; }
     const cmd = String(m.cmd || '');
@@ -584,4 +731,4 @@ function shutdown() {
 }
 
 module.exports = { init, shutdown, handle, state, act, libSaved, upgrade, setLive, closeAll, ROLES,
-  _test: { refresh, apply, pending, sync: () => sync, socks, sets: () => sets, live: () => live } };
+  _test: { refresh, apply, pending, sync: () => sync, socks, sets: () => sets, live: () => live, fails } };

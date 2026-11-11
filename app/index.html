@@ -20,6 +20,7 @@
      сетлисты, листать с телефона. Этап 3: цифровой пенал — пометки поверх текста песни, заметка (pen.js, pen.css).
      Этап 4: аккорды над словами, транспонирование, капо (chords.js — общий с программой).
      Этап 5: «Моя версия» песни (mine.js).
+     Этап 6: вход по паролю, сообщения группе, общий метроном по времени программы (app.js).
      Хранилище и синхронизация — db.js, экраны и связь — app.js, кэш — sw.js -->
 </head>
 <body>
@@ -31,10 +32,14 @@
     <p class="msg" id="joinMsg" hidden></p>
     <label class="lbl" for="joinName">Как вас зовут</label>
     <input id="joinName" class="field" maxlength="40" autocomplete="name" enterkeyhint="done" placeholder="Имя (его увидит оператор)">
-    <div class="lbl">Кто вы в группе</div>
+    <div class="lbl" id="joinRoleLbl">Кто вы в группе</div>
     <div class="roles" id="joinRoles"></div>
+    <div id="joinPwBox" hidden>
+      <label class="lbl" for="joinPw">Пароль</label>
+      <input id="joinPw" class="field" type="password" maxlength="200" autocomplete="current-password" enterkeyhint="go" placeholder="Пароль от оператора">
+    </div>
     <button class="big primary" id="joinGo">Попросить доступ</button>
-    <p class="hint">Оператор увидит запрос в программе (окно «Группа») и нажмёт «Пустить». Дальше телефон входит сам.</p>
+    <p class="hint" id="joinHint">Оператор увидит запрос в программе (окно «Группа») и нажмёт «Пустить». Дальше телефон входит сам.</p>
   </main>
 </div>
 
@@ -88,6 +93,9 @@
     <button class="icon" id="penBtn" aria-label="Пенал: пометки и заметка" aria-pressed="false" title="Пенал" hidden>
       <svg viewBox="0 0 24 24"><path d="M7.2 11.5 15.6 3.1a1.6 1.6 0 0 1 2.3 0l.4.4a1.6 1.6 0 0 1 0 2.3l-5.7 5.7" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="M3 11.5h18v5.3a3.7 3.7 0 0 1-3.7 3.7H6.7A3.7 3.7 0 0 1 3 16.8z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M7 15.5h10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
     </button>
+    <button class="icon" id="metroBtn" aria-label="Метроном" title="Метроном">
+      <svg viewBox="0 0 24 24"><path d="M9.2 3.5h5.6L19 20.5H5z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M12 16 16.5 6.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M7.5 16h9" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>
+    </button>
     <button class="icon txt" id="fsMinus" aria-label="Мельче">A−</button>
     <button class="icon txt" id="fsPlus" aria-label="Крупнее">A+</button>
   </header>
@@ -106,6 +114,10 @@
     <button id="ctlNext" class="primary" aria-label="Следующий слайд">Дальше<svg viewBox="0 0 24 24"><path d="M9 5l7 7-7 7" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
   </div>
 </div>
+
+<!-- Сообщение группе: карточка сверху; метроном идёт — полоска с долями -->
+<button class="msgcard" id="msgCard" hidden><b id="mcFrom"></b><span id="mcText"></span></button>
+<button class="metrobar" id="metroBar" hidden aria-label="Метроном"><span id="mbText"></span><span class="mb-dots" id="mbDots"></span></button>
 
 <!-- Цифровой пенал (pen.js): предметы на столе, панель, цвет и толщина -->
 <div class="desk" id="penDesk" hidden></div>
@@ -144,6 +156,34 @@
   </div>
 </dialog>
 
+<!-- Сообщения группе -->
+<dialog class="sheet" id="msgDlg">
+  <div class="sheet-head"><h2>Сообщения группе</h2><button class="icon" id="msgX" aria-label="Закрыть">
+    <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg></button></div>
+  <div class="sheet-body">
+    <div class="msg-list" id="msgList"></div>
+    <div id="msgSend" hidden>
+      <div class="msg-quick" id="msgQuick"></div>
+      <div class="msg-row"><input id="msgText" class="field" maxlength="300" placeholder="Своё сообщение" enterkeyhint="send"><button class="primary" id="msgGo">Отправить</button></div>
+    </div>
+    <p class="hint" id="msgHint"></p>
+  </div>
+</dialog>
+
+<!-- Метроном: свой или общий для группы (по времени программы) -->
+<dialog class="sheet" id="metroDlg">
+  <div class="sheet-head"><h2>Метроном</h2><button class="icon" id="mtX" aria-label="Закрыть">
+    <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg></button></div>
+  <div class="sheet-body">
+    <div class="mt-beats" id="mtBeats"></div>
+    <div class="row-i step"><span>Темп</span><div class="stepper"><button id="mtDown" aria-label="Медленнее">−</button><b id="mtBpm"></b><button id="mtUp" aria-label="Быстрее">+</button></div></div>
+    <div class="row-i step"><span>Долей в такте</span><div class="stepper"><button id="mtBDown" aria-label="Меньше долей">−</button><b id="mtSig"></b><button id="mtBUp" aria-label="Больше долей">+</button></div></div>
+    <label class="row-i sw"><span>Щелчки (звук)</span><input type="checkbox" id="mtSound"></label>
+    <p class="hint" id="mtSt"></p>
+    <div class="btns"><button class="primary" id="mtGo">Старт</button><button id="mtGroup" hidden>Для всей группы</button></div>
+  </div>
+</dialog>
+
 <!-- Аккорды и тональность песни -->
 <dialog class="sheet" id="keyDlg">
   <div class="sheet-head"><h2>Аккорды и тональность</h2><button class="icon" id="keyX" aria-label="Закрыть">
@@ -176,6 +216,7 @@
     <div class="row-i"><span>Песен на телефоне</span><b id="iSongs"></b></div>
     <div class="row-i"><span>Обновлено</span><b id="iAt"></b></div>
     <label class="row-i sw"><span>Песни на светлом листе</span><input type="checkbox" id="iPaper"></label>
+    <div class="btns"><button id="iMsgs">Сообщения группе</button><button id="iMetro">Метроном</button></div>
     <div class="btns"><button id="iSync">Обновить песни</button><button id="iResync">Загрузить всё заново</button></div>
     <p class="hint" id="iStore"></p>
     <p class="hint" id="iVer"></p>

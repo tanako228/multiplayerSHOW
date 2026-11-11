@@ -826,6 +826,16 @@
     .tm-person button, .tm-req button { padding: 4px 10px; font-size: 12px; }
     .tm-req .acts, .tm-dev .acts { display: flex; gap: 6px; }
     .tm-set.on { border-color: var(--live); }
+    .tm-auth { max-width: 620px; margin: 0 0 12px; }
+    .tm-auth .field { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .tm-msg-row { display: flex; gap: 8px; max-width: 620px; }
+    .tm-msg-row input { flex: 1; min-width: 0; }
+    #tmMsgs { margin-top: 10px; max-width: 620px; max-height: 260px; overflow: auto; font-size: 13px; }
+    .tm-h3 { margin: 22px 0 6px; font-size: 14px; }
+    .tm-btns label { display: inline-flex; align-items: center; gap: 6px; }
+    .tm-logf { max-width: 560px; margin: 0 0 8px; }
+    .tm-logf input { flex: 1; min-width: 160px; }
+    .tm-pw { font-size: 11px; color: var(--ok, #3fb950); }
     .tm-set .tm-p-head .tm-sub { display: inline; }
     .tm-set .tm-dev { flex-wrap: nowrap; padding-top: 6px; margin-top: 6px; }
     .tm-set .tm-dev .who { flex: 1 1 0; min-width: 0; }
@@ -2799,6 +2809,7 @@
         <button data-tm="qr" data-icon="phone" aria-current="true">Подключить телефон</button>
         <button data-tm="dev" data-icon="team" aria-current="false">Люди и устройства <b class="tm-cnt" id="tmDevCnt"></b></button>
         <button data-tm="sets" data-icon="playlist" aria-current="false">Сетлисты</button>
+        <button data-tm="msg" data-icon="message" aria-current="false">Сообщения и метроном</button>
         <button data-tm="log" data-icon="list" aria-current="false">Журнал</button>
         <button data-tm="addr" data-icon="web" aria-current="false">Адрес и сертификат</button>
       </nav>
@@ -2826,8 +2837,30 @@
         </section>
         <section class="tm-sec" data-tm="dev" hidden>
           <p class="hint" style="margin:0 0 12px">Телефон, отсканировавший QR-код, просит доступ — нажмите «Пустить». Дальше он входит сам. Ключ доступа хранится только на телефоне, на компьютере — его отпечаток. Второй телефон с тем же именем попадает к тому же человеку.</p>
+          <div class="tm-auth">
+            <div class="field"><span>Как входят телефоны</span>
+              <select id="tmAuth" aria-label="Как входят телефоны">
+                <option value="qr">По QR-коду, оператор нажимает «Пустить»</option>
+                <option value="qrpass">С паролем — сразу, без пароля — «Пустить»</option>
+                <option value="pass">Только имя и пароль</option>
+              </select>
+            </div>
+            <p class="tm-st" id="tmLocks"></p>
+          </div>
           <div class="tm-pend" id="tmDevPend"></div>
           <div id="tmPeople"></div>
+        </section>
+        <section class="tm-sec" data-tm="msg" hidden>
+          <p class="hint" style="margin:0 0 12px">Сообщение сразу появится сверху экрана у всех телефонов группы. С телефона писать могут Лидер и Звук — их сообщения видны и здесь.</p>
+          <div class="tm-msg-row"><input id="tmMsgText" maxlength="300" placeholder="Сообщение группе" autocomplete="off"><button id="tmMsgGo" class="primary">Отправить</button></div>
+          <div class="tm-btns" id="tmMsgQuick"></div>
+          <div class="tm-log" id="tmMsgs"></div>
+          <h3 class="tm-h3">Метроном для всей группы</h3>
+          <p class="hint" style="margin:0 0 8px">Доли идут у всех телефонов в такт — по часам программы. Звук каждый включает у себя.</p>
+          <div class="tm-btns"><label>Темп <input id="tmMetroBpm" type="number" min="30" max="300" value="72" style="width:70px"></label>
+            <label>Долей <input id="tmMetroBeats" type="number" min="1" max="12" value="4" style="width:56px"></label>
+            <button id="tmMetroGo" class="primary">Включить</button></div>
+          <p class="tm-st" id="tmMetroSt"></p>
         </section>
         <section class="tm-sec" data-tm="sets" hidden>
           <p class="hint" style="margin:0 0 12px">Сетлист — плейлист с галочкой «Для группы»: его видят телефоны (вкладка «Сетлист») — с датой служения и тональностью каждой песни. Правки сразу уходят на телефоны, Ctrl+Z — вернуть.</p>
@@ -2835,6 +2868,14 @@
         </section>
         <section class="tm-sec" data-tm="log" hidden>
           <p class="hint" style="margin:0 0 12px">Кто просил доступ, кого пустили, приостановили, отозвали; попытки войти с чужим ключом. Новые — сверху.</p>
+          <div class="tm-btns tm-logf"><input id="tmLogQ" type="search" placeholder="Найти: имя, адрес, текст" autocomplete="off">
+            <select id="tmLogKind" aria-label="Какие события">
+              <option value="">Все события</option>
+              <option value="in">Вход и доступ</option>
+              <option value="pw">Пароли и блокировки</option>
+              <option value="msg">Сообщения и метроном</option>
+            </select>
+            <button id="tmLogAll">Весь журнал</button></div>
           <div class="tm-log" id="tmJournal"></div>
         </section>
         <section class="tm-sec" data-tm="addr" hidden>

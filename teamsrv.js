@@ -561,8 +561,8 @@ function setup(ipcMain, o) {
   ipcMain.handle('team:cert', wrap(async (_e, o) => { await issue(o); return info(); }));
   ipcMain.handle('team:dns', wrap(async () => { await dnsNow(); return info(); }));
   ipcMain.handle('team:check', wrap(async () => { const r = await check(); return { ...info(), check: r }; }));
-  // Люди и устройства: { act: 'approve'|'reject'|'off'|'revoke'|'person'|'delPerson'|'log', id, … } (teamapi.js: act)
-  ipcMain.handle('team:do', wrap((_e, a) => { const res = api.act(a); return { ...info(), res }; }));
+  // Люди и устройства: { act: 'approve'|'reject'|'off'|'revoke'|'person'|'delPerson'|'log'|'mode'|'password'|'unlock'|'msg'|'metro', … } (teamapi.js: act)
+  ipcMain.handle('team:do', wrap(async (_e, a) => { const res = await api.act(a); return { ...info(), res }; }));
   // Что на экране — телефонам (team.js шлёт, когда поменялось)
   ipcMain.handle('team:live', (_e, l) => api.setLive(l));
 }

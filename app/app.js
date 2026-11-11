@@ -12,7 +12,9 @@
    Аккорды (этап 4): song.chords раскладывает по строкам chords.js (общий с программой); аккорд — пустой значок .cd
    внутри слова (номера слов не меняются — пометки на месте). Транспонирование и капо — на песню (localStorage mps.tr);
    тональность строки сетлиста сама сдвигает аккорды. Аккорды по умолчанию: Музыкант, Лидер — да, остальные — нет.
-   «Моя версия» (этап 5, mine.js): переключатель «Оригинал / Моя версия» над песней, редактор, «Оригинал изменился». */
+   «Моя версия» (этап 5, mine.js): переключатель «Оригинал / Моя версия» над песней, редактор, «Оригинал изменился».
+   Этап 6: вход по паролю (режим входа — /join/info), сообщения группе (msg; писать — Лидер, Звук), метроном: свой или
+   общий (metro от программы: удары от t0 по часам программы; поправка часов — по ping/pong с наименьшей задержкой). */
 'use strict';
 const $ = (id) => document.getElementById(id);
 const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
@@ -72,8 +74,21 @@ function devName() {
 /* ----- Вход ----- */
 
 let joinRole = ls.get('mps.role', 'musician');
+let joinMode = 'qr'; // qr — запрос оператору; qrpass — с паролем сразу, без — запрос; pass — только имя и пароль
+function paintJoinMode() {
+  const pass = joinMode === 'pass';
+  const pw = !!$('joinPw').value;
+  $('joinPwBox').hidden = joinMode === 'qr';
+  $('joinRoles').hidden = $('joinRoleLbl').hidden = pass;
+  $('joinGo').textContent = pass || (joinMode === 'qrpass' && pw) ? 'Войти' : 'Попросить доступ';
+  $('joinHint').textContent = pass ? 'Имя и пароль даёт оператор (окно «Группа» → «Люди и устройства» → «Пароль»).'
+    : joinMode === 'qrpass' ? 'Есть пароль — впишите и войдёте сразу. Нет — оператор увидит запрос и нажмёт «Пустить».'
+      : 'Оператор увидит запрос в программе (окно «Группа») и нажмёт «Пустить». Дальше телефон входит сам.';
+}
 function showJoin(msg) {
   show('Join');
+  Store.api('/join/info', { timeout: 6000 }).then((r) => { joinMode = r && ['qr', 'qrpass', 'pass'].includes(r.mode) ? r.mode : 'qr'; paintJoinMode(); }).catch(() => {});
+  paintJoinMode();
   $('joinMsg').hidden = !msg;
   $('joinMsg').textContent = msg || '';
   if (!$('joinName').value) $('joinName').value = ls.get('mps.name', '');
@@ -92,7 +107,16 @@ async function doJoin() {
   ls.set('mps.role', joinRole);
   $('joinGo').disabled = true;
   try {
-    const r = await Store.api('/join', { method: 'POST', body: { name, role: joinRole, dev: devName() } });
+    const pw = joinMode !== 'qr' ? $('joinPw').value : '';
+    const r = await Store.api('/join', { method: 'POST', body: { name, role: joinRole, dev: devName(), ...(pw ? { pw } : {}) } });
+    if (r.token) { // по паролю — сразу
+      $('joinPw').value = '';
+      await Store.saveAuth(r.token, r.me);
+      await Store.delMeta('join');
+      toast('Вы вошли — загружаю песни');
+      startLib();
+      return;
+    }
     await Store.setMeta('join', { id: r.id, secret: r.secret });
     showWait();
   } catch (e) {
@@ -283,8 +307,15 @@ function onMsg(m) {
       setSets(m.sets);
       applyLive(m.live);
       syncIf(m.me);
+      if (m.time && tRtt === Infinity) tOff = m.time - Date.now();
+      syncBurst();
+      for (const x of m.msgs || []) gotMsg(x, false);
+      if (m.metro && m.metro.on) gotMetro(m.metro); else if (mt && mt.shared) mtStop();
       paintConn();
       break;
+    case 'pong': if (m.id && m.time) clockSample(Number(m.id), m.time); break;
+    case 'msg': gotMsg(m.msg, true); break;
+    case 'metro': if (m.metro && m.metro.on) syncBurst(); gotMetro(m.metro); break;
     case 'live': applyLive(m.live); break;
     case 'lib': syncIf({ lib: m.lib, seq: m.seq, lh: m.lh }); break;
     case 'sets': setSets(m.sets); break;
@@ -298,6 +329,163 @@ function onMsg(m) {
     default: break; // pong и новое из будущих версий
   }
 }
+
+/* ----- Сообщения группе ----- */
+
+const QUICK = ['Повтор припева', 'Ещё раз', 'Тише', 'Громче', 'Медленнее', 'Быстрее', 'Последний раз', 'Заканчиваем'];
+let msgs = [];
+let mcT = 0;
+const canMsg = () => !!(Store.me && Store.me.perms && Store.me.perms.msg);
+const hm = (t) => new Date(t).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+function gotMsg(m, fresh) {
+  if (!m || !m.id || msgs.some((x) => x.id === m.id)) return;
+  msgs.push(m);
+  if (msgs.length > 50) msgs.shift();
+  if ($('msgDlg').open) paintMsgs();
+  if (!fresh) return;
+  $('mcFrom').textContent = (m.role === 'op' ? 'Оператор' : m.from) + ' · ' + hm(m.at);
+  $('mcText').textContent = m.text;
+  $('msgCard').hidden = false;
+  try { if (navigator.vibrate) navigator.vibrate([120, 60, 120]); } catch { /* нет вибрации */ }
+  clearTimeout(mcT);
+  mcT = setTimeout(() => { $('msgCard').hidden = true; }, 12000);
+}
+function paintMsgs() {
+  $('msgList').replaceChildren(...msgs.slice().reverse().map((m) => {
+    const d = el('div', 'msg-it');
+    d.append(el('small', '', (m.role === 'op' ? 'Оператор' : m.from) + ' · ' + hm(m.at)), document.createTextNode(m.text));
+    return d;
+  }));
+  $('msgSend').hidden = !canMsg();
+  $('msgHint').textContent = canMsg() ? 'Увидят все телефоны группы и оператор.' : 'Писать группе могут Лидер и Звук. Сообщения от них и от оператора появятся здесь и сверху экрана.';
+}
+function openMsgs() {
+  $('msgCard').hidden = true;
+  paintMsgs();
+  $('msgDlg').showModal();
+}
+function sendMsg(text) {
+  const t = String(text || '').trim();
+  if (!t) return;
+  if (wsSend({ t: 'msg', text: t })) { $('msgText').value = ''; toast('Отправлено группе'); }
+}
+
+/* ----- Метроном: свой или общий (удары от t0 по часам программы) ----- */
+
+let tOff = 0;        // время программы = Date.now() + tOff
+let tRtt = Infinity; // задержка лучшего замера
+const srvNow = () => Date.now() + tOff;
+function clockSample(sent, srv) {
+  const now = Date.now();
+  const rtt = now - sent;
+  tRtt = Math.min(tRtt + 4, 5000); // старый лучший замер понемногу «стареет»
+  if (rtt <= tRtt) { tRtt = rtt; tOff = srv - (sent + rtt / 2); }
+}
+let mt = null;       // { on, bpm, beats, t0, shared, by }
+let mtNext = 0;
+let mtLast = -1;
+let mtRaf = 0;
+let mtTimer = 0;
+let actx = null;
+let mtBpm = Number(ls.get('mps.mtBpm', '72')) || 72;
+let mtSig = Number(ls.get('mps.mtSig', '4')) || 4;
+const mtSound = () => ls.get('mps.mtSnd', '0') === '1';
+const per = () => 60000 / mt.bpm;
+function audio() {
+  try {
+    if (!actx) actx = new (window.AudioContext || window.webkitAudioContext)();
+    if (actx.state === 'suspended') actx.resume();
+  } catch { actx = null; }
+  return actx;
+}
+function click(when, one) {
+  const o = actx.createOscillator();
+  const g = actx.createGain();
+  o.frequency.value = one ? 1650 : 1100;
+  g.gain.setValueAtTime(0.0001, when);
+  g.gain.exponentialRampToValueAtTime(one ? 0.9 : 0.55, when + 0.002);
+  g.gain.exponentialRampToValueAtTime(0.0001, when + 0.05);
+  o.connect(g).connect(actx.destination);
+  o.start(when);
+  o.stop(when + 0.06);
+}
+function mtStart(x) {
+  mt = x;
+  mtNext = Math.max(0, Math.ceil((srvNow() - mt.t0) / per()));
+  mtLast = -1;
+  cancelAnimationFrame(mtRaf);
+  clearInterval(mtTimer);
+  // Звук: расписание на 150 мс вперёд (WebAudio точнее таймеров)
+  mtTimer = setInterval(() => {
+    if (!mt) return;
+    const now = srvNow();
+    while (mt.t0 + mtNext * per() < now + 150) {
+      const at = mt.t0 + mtNext * per();
+      if (mtSound() && actx && at >= now - 20) click(actx.currentTime + Math.max(0, at - now) / 1000, mtNext % mt.beats === 0);
+      mtNext++;
+    }
+  }, 25);
+  const frame = () => {
+    if (!mt) return;
+    const k = Math.floor((srvNow() - mt.t0) / per());
+    if (k !== mtLast) { mtLast = k; paintBeat(k >= 0 ? k % mt.beats : -1); }
+    mtRaf = requestAnimationFrame(frame);
+  };
+  frame();
+  paintMetro();
+}
+function mtStop() {
+  mt = null;
+  cancelAnimationFrame(mtRaf);
+  clearInterval(mtTimer);
+  paintMetro();
+}
+function paintBeat(b) {
+  for (const box of [$('mbDots'), $('mtBeats')]) [...box.children].forEach((d, i) => d.classList.toggle('on', i === b));
+}
+function paintMetro() {
+  const on = !!mt;
+  const beats = on ? mt.beats : mtSig;
+  for (const box of [$('mbDots'), $('mtBeats')]) {
+    if (box.children.length !== beats) box.replaceChildren(...Array.from({ length: beats }, (_, i) => el('i', i ? '' : 'one')));
+  }
+  $('metroBar').hidden = !on;
+  $('metroBar').classList.toggle('shared', on && !!mt.shared);
+  $('mbText').textContent = on ? '♩ ' + mt.bpm : '';
+  $('mtBpm').textContent = String(on ? mt.bpm : mtBpm);
+  $('mtSig').textContent = String(beats);
+  $('mtSound').checked = mtSound();
+  $('mtGo').textContent = on ? 'Стоп' : 'Старт';
+  const can = !!(Store.me && Store.me.perms && Store.me.perms.metro);
+  $('mtGroup').hidden = !can;
+  $('mtGroup').textContent = on && mt.shared ? 'Остановить у всей группы' : 'Для всей группы';
+  $('mtSt').textContent = on && mt.shared ? `Общий метроном группы — включил(а) ${mt.by || 'оператор'}. Доли у всех в такт (по часам программы).`
+    : on ? 'Метроном только на этом телефоне.' : can ? '«Старт» — только у вас, «Для всей группы» — у всех телефонов разом.' : 'Метроном на этом телефоне. Общий для группы включают Лидер, Звук или оператор.';
+}
+function openMetro() {
+  if (!mt && cur && cur.song && cur.src) { // темп и размер песни
+    if (cur.src.tempo) mtBpm = cur.src.tempo;
+    const n = parseInt(cur.src.time, 10);
+    if (n >= 1 && n <= 12) mtSig = n;
+  }
+  paintMetro();
+  $('metroDlg').showModal();
+}
+// Поменяли темп или размер во время игры — заново с ближайшей доли
+function mtChange(bpm, sig) {
+  mtBpm = Math.max(30, Math.min(300, bpm));
+  mtSig = Math.max(1, Math.min(12, sig));
+  ls.set('mps.mtBpm', String(mtBpm));
+  ls.set('mps.mtSig', String(mtSig));
+  if (mt && mt.shared) { wsSend({ t: 'metro', on: true, bpm: mtBpm, beats: mtSig }); return; }
+  if (mt) mtStart({ on: true, bpm: mtBpm, beats: mtSig, t0: srvNow() + 150 });
+  else paintMetro();
+}
+function gotMetro(m) {
+  if (m && m.on) mtStart({ ...m, shared: true });
+  else if (mt && mt.shared) { mtStop(); toast('Общий метроном остановлен'); }
+}
+function syncBurst() { [0, 350, 700, 1050].forEach((d) => setTimeout(pingNow, d)); } // точнее поправка часов
 
 /* ----- Что на экране: «Следовать» / «Листать самому» ----- */
 
@@ -836,6 +1024,38 @@ function wire() {
   $('cUp').onclick = () => cur && cur.tr && retune(cur.tr.t, cur.tr.capo + 1);
   $('cDown').onclick = () => cur && cur.tr && retune(cur.tr.t, cur.tr.capo - 1);
   $('kReset').onclick = () => { if (cur) { delete trAll[cur.id]; ls.set('mps.tr', JSON.stringify(trAll)); rerender(); paintKeyDlg(); } };
+  // Вход по паролю
+  $('joinPw').addEventListener('input', paintJoinMode);
+  $('joinPw').addEventListener('keydown', (e) => { if (e.key === 'Enter') doJoin(); });
+  // Сообщения группе
+  $('msgCard').onclick = openMsgs;
+  $('iMsgs').onclick = () => { $('sheet').close(); openMsgs(); };
+  $('msgX').onclick = () => $('msgDlg').close();
+  $('msgDlg').addEventListener('click', (e) => { if (e.target === $('msgDlg')) $('msgDlg').close(); });
+  $('msgQuick').replaceChildren(...QUICK.map((t) => { const b = el('button', '', t); b.onclick = () => sendMsg(t); return b; }));
+  $('msgGo').onclick = () => sendMsg($('msgText').value);
+  $('msgText').addEventListener('keydown', (e) => { if (e.key === 'Enter') sendMsg($('msgText').value); });
+  // Метроном
+  $('metroBtn').onclick = openMetro;
+  $('metroBar').onclick = openMetro;
+  $('iMetro').onclick = () => { $('sheet').close(); openMetro(); };
+  $('mtX').onclick = () => $('metroDlg').close();
+  $('metroDlg').addEventListener('click', (e) => { if (e.target === $('metroDlg')) $('metroDlg').close(); });
+  $('mtDown').onclick = () => mtChange((mt ? mt.bpm : mtBpm) - 1, mt ? mt.beats : mtSig);
+  $('mtUp').onclick = () => mtChange((mt ? mt.bpm : mtBpm) + 1, mt ? mt.beats : mtSig);
+  $('mtBDown').onclick = () => mtChange(mt ? mt.bpm : mtBpm, (mt ? mt.beats : mtSig) - 1);
+  $('mtBUp').onclick = () => mtChange(mt ? mt.bpm : mtBpm, (mt ? mt.beats : mtSig) + 1);
+  $('mtSound').onchange = () => { ls.set('mps.mtSnd', $('mtSound').checked ? '1' : '0'); if ($('mtSound').checked) audio(); };
+  $('mtGo').onclick = () => {
+    if (mt) { mtStop(); return; }
+    if (mtSound()) audio(); // звук можно включить только по нажатию
+    mtStart({ on: true, bpm: mtBpm, beats: mtSig, t0: srvNow() + 150 });
+  };
+  $('mtGroup').onclick = () => {
+    if (mtSound()) audio();
+    if (mt && mt.shared) wsSend({ t: 'metro', on: false });
+    else wsSend({ t: 'metro', on: true, bpm: mt ? mt.bpm : mtBpm, beats: mt ? mt.beats : mtSig });
+  };
   $('fsMinus').onclick = () => setFs(fs - 2);
   $('fsPlus').onclick = () => setFs(fs + 2);
   // Полоса «На экране»: текст — посмотреть, что там; кнопка — следовать / листать самому

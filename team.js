@@ -11,7 +11,9 @@
    Этап 2: что на экране — телефонам (grLive → window.api.teamLive, раз в 0,4 с, если поменялось); команды с телефона
    человека с галочкой «Может листать» (onTeamCmd: next / prev / show / clear) — тем же путём, что клавиши и щелчок.
    Раздел «Сетлисты»: плейлист с пометкой «Для группы» (pl.team = { date }) и тональностью строк (entry.key) — правка lib,
-   Ctrl+Z работает; телефоны получают их от teamapi.js. */
+   Ctrl+Z работает; телефоны получают их от teamapi.js.
+   Этап 6: «Как входят телефоны» (grp.auth.mode), «Пароль» у человека, снять блокировку; раздел «Сообщения и метроном»
+   (act: msg, metro); журнал — поиск, отбор по событиям, «Весь журнал». Сообщение с телефона при закрытом окне — строка состояния. */
 
 let grInfo = null;
 let grFwSt = null;   // брандмауэр: { rule — порты пульта (простой адрес), pub, team — порт https }
@@ -56,6 +58,7 @@ function grPaint() {
 
   grQrPaint();
   grGrpPaint();
+  grMsgPaint();
   // Сервер
   if (!c.on) grSt('tmSrv', 'Выключен. Телефоны группы не подключатся.', '');
   else if (n.srv.running) grSt('tmSrv', `Защищённый адрес работает: ${n.url}`, 'ok');
@@ -197,7 +200,12 @@ function grGrpPaint() {
     cb.addEventListener('change', () => grDo({ act: 'person', id: p.id, ctl: cb.checked }, cb.checked ? `«${p.name}» может листать слайды с телефона` : 'Листать с телефона больше нельзя'));
     ctl.append(cb, document.createTextNode(' Может листать'));
     ctl.title = 'Дальше / Назад, показать слайд, убрать текст с экрана — с телефона';
-    head.append(grEl('b', '', p.name), role, ctl, grEl('span', 'spacer'),
+    head.append(grEl('b', '', p.name), role, ctl, ...(p.pw ? [grEl('span', 'tm-pw', 'с паролем')] : []), grEl('span', 'spacer'),
+      grBtn(p.pw ? 'Сменить пароль' : 'Пароль', async () => {
+        const pw = await askName(`Пароль для «${p.name}» (не короче 4 знаков) — скажите его человеку`, '');
+        if (pw) grDo({ act: 'password', id: p.id, pw }, `Пароль для «${p.name}» задан`);
+      }),
+      ...(p.pw ? [grBtn('Убрать пароль', () => grDo({ act: 'password', id: p.id, pw: '' }, 'Пароль убран'))] : []),
       grBtn('Переименовать', async () => {
         const n = await askName('Имя', p.name);
         if (n && n !== p.name) grDo({ act: 'person', id: p.id, name: n }, 'Имя изменено');
@@ -249,16 +257,31 @@ const GR_EV = {
   bad: (x) => `Попытка войти с чужим или отозванным ключом — ${x.ip}`,
   ctlOn: (x) => `${x.name}: можно листать слайды с телефона`,
   ctlOff: (x) => `${x.name}: листать с телефона больше нельзя`,
+  pwOk: (x) => `${x.name} вошёл(ла) по паролю — ${x.dev}, ${x.ip}`,
+  pwBad: (x) => `Неверный пароль: «${x.name}» — ${x.ip}`,
+  locked: (x) => `Вход закрыт на ${x.min} мин. (много неверных паролей): «${x.name}», ${x.ip}`,
+  unlock: () => 'Оператор снял блокировку входа',
+  pwSet: (x) => `Задан пароль: ${x.name}`,
+  pwDel: (x) => `Убран пароль: ${x.name}`,
+  mode: (x) => `Вход телефонов: ${GR_MODES[x.mode] || x.mode}`,
+  msg: (x) => `Сообщение от ${x.name}: «${x.text}»`,
+  metroOn: (x) => `Метроном для группы включил(а) ${x.name} — ${x.bpm}`,
+  metroOff: (x) => `Метроном для группы остановил(а) ${x.name}`,
 };
+const GR_MODES = { qr: 'по QR-коду и «Пустить»', qrpass: 'с паролем сразу, без пароля — «Пустить»', pass: 'только имя и пароль' };
+const GR_KINDS = { in: ['join', 'approve', 'admit', 'reject', 'off', 'on', 'revoke', 'delPerson', 'bad', 'ctlOn', 'ctlOff', 'pwOk'],
+  pw: ['pwOk', 'pwBad', 'locked', 'unlock', 'pwSet', 'pwDel', 'mode'], msg: ['msg', 'metroOn', 'metroOff'] };
+let grLogN = 200; // «Весь журнал» — до 20000 строк
 let grLogT = 0;
 function grJournal() {
   clearTimeout(grLogT);
   grLogT = setTimeout(async () => {
     if (grTab !== 'log' || !$('teamDialog').open) return;
-    const r = await window.api.teamDo({ act: 'log' }).catch(() => null);
+    const kind = $('tmLogKind').value;
+    const r = await window.api.teamDo({ act: 'log', n: grLogN, q: $('tmLogQ').value, evs: GR_KINDS[kind] || null }).catch(() => null);
     const list = (r && r.ok && r.info.res) || [];
     const box = $('tmJournal');
-    if (!list.length) { box.replaceChildren(grEl('div', '', 'Пока пусто')); return; }
+    if (!list.length) { box.replaceChildren(grEl('div', '', $('tmLogQ').value || kind ? 'Ничего не нашлось' : 'Пока пусто')); return; }
     box.replaceChildren(...list.map((x) => {
       const row = grEl('div', 'ev');
       row.append(grEl('time', '', grFmt(x.at)), grEl('span', '', (GR_EV[x.ev] || ((y) => y.ev))(x)));
@@ -294,8 +317,8 @@ async function grCall(p, okText) {
 }
 const grSet = (p) => grCall(window.api.teamSet(p));
 
-window.api.onTeamInfo((n) => { grInfo = n; grBadge(); grPaint(); if (grTab === 'log') grJournal(); });
-window.api.teamInfo().then((n) => { grInfo = n; grBadge(); }).catch(() => {});
+window.api.onTeamInfo((n) => { grInfo = n; grBadge(); grMsgNew(); grPaint(); if (grTab === 'log') grJournal(); });
+window.api.teamInfo().then((n) => { grInfo = n; grBadge(); grMsgNew(); }).catch(() => {});
 
 $('teamOpen').addEventListener('click', grOpen);
 document.querySelectorAll('.tm-nav button').forEach((b) => b.addEventListener('click', () => grShowTab(b.dataset.tm)));
@@ -349,6 +372,50 @@ async function grFwFix(e) {
 }
 $('tmFwFix').addEventListener('click', grFwFix);
 $('tmQrFwFix').addEventListener('click', grFwFix);
+
+/* ----- Сообщения группе и метроном (этап 6) ----- */
+
+const GR_QUICK = ['Повтор припева', 'Ещё раз', 'Тише', 'Громче', 'Медленнее', 'Быстрее', 'Последний раз', 'Заканчиваем'];
+let grMsgLast = null; // id последнего сообщения: новое с телефона при закрытом окне — строка состояния
+function grMsgPaint() {
+  const g = grInfo && grInfo.grp;
+  if (!g || !g.msgs) return;
+  const box = $('tmMsgs');
+  if (box) box.replaceChildren(...g.msgs.slice().reverse().map((m) => {
+    const row = grEl('div', 'ev');
+    row.append(grEl('time', '', grFmt(m.at)), grEl('span', '', ` ${m.from}: ${m.text}`));
+    return row;
+  }));
+  const mt = g.metro || {};
+  if ($('tmMetroGo')) {
+    $('tmMetroGo').textContent = mt.on ? 'Остановить' : 'Включить';
+    grSt('tmMetroSt', mt.on ? `Идёт: ${mt.bpm} в минуту, долей ${mt.beats} — включил(а) ${mt.by}` : '', mt.on ? 'ok' : '');
+  }
+  if ($('tmAuth') && document.activeElement !== $('tmAuth')) $('tmAuth').value = (g.auth && g.auth.mode) || 'qr';
+  if ($('tmLocks')) {
+    const l = g.locks || [];
+    $('tmLocks').replaceChildren(...(l.length ? [document.createTextNode(`Вход закрыт (много неверных паролей): ${l.map((x) => `${x.who} — ещё ${x.min} мин.`).join(', ')} `),
+      grBtn('Снять блокировку', () => grDo({ act: 'unlock' }, 'Блокировка снята'))] : []));
+  }
+}
+function grMsgNew() {
+  const list = (grInfo && grInfo.grp && grInfo.grp.msgs) || [];
+  const last = list[list.length - 1];
+  if (grMsgLast !== null && last && last.id !== grMsgLast && last.role !== 'op' && !($('teamDialog').open && grTab === 'msg')) flashStatus(`Группа — ${last.from}: «${last.text}»`);
+  grMsgLast = last ? last.id : '';
+}
+const grMsgSend = (t) => { const s = String(t || '').trim(); if (s) grDo({ act: 'msg', text: s }, 'Отправлено группе').then((r) => { if (r && r.ok) $('tmMsgText').value = ''; }); };
+$('tmMsgQuick').replaceChildren(...GR_QUICK.map((t) => grBtn(t, () => grMsgSend(t))));
+$('tmMsgGo').addEventListener('click', () => grMsgSend($('tmMsgText').value));
+$('tmMsgText').addEventListener('keydown', (e) => { if (e.key === 'Enter') grMsgSend($('tmMsgText').value); });
+$('tmMetroGo').addEventListener('click', () => {
+  const on = !(grInfo && grInfo.grp.metro && grInfo.grp.metro.on);
+  grDo({ act: 'metro', on, bpm: Number($('tmMetroBpm').value), beats: Number($('tmMetroBeats').value) }, on ? 'Метроном группы включён' : 'Метроном группы остановлен');
+});
+$('tmAuth').addEventListener('change', (e) => grDo({ act: 'mode', mode: e.target.value }, 'Вход телефонов: ' + GR_MODES[e.target.value]));
+$('tmLogQ').addEventListener('input', grJournal);
+$('tmLogKind').addEventListener('change', grJournal);
+$('tmLogAll').addEventListener('click', () => { grLogN = 20000; grJournal(); flashStatus('Показан весь журнал'); });
 
 /* ----- Сетлисты: плейлист «для группы», дата служения, тональность строки ----- */
 
