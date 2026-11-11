@@ -7,7 +7,8 @@
    «Следовать» — телефон сам открывает то, что на экране, и держит текущий слайд перед глазами;
    «Листать самому» — смотреть своё, внизу полоса «На экране: …». Право «Может листать» (оператор, окно «Группа») —
    кнопки ◀ ▶ «Убрать» и «Показать на экране» у слайда. Ключ отозван / приостановлен / доступ выключен —
-   полоса сверху, песни на телефоне остаются. Назад (кнопка телефона) — из песни в список (history). */
+   полоса сверху, песни на телефоне остаются. Назад (кнопка телефона) — из песни в список (history).
+   Текст слайда — строки (.ln) из слов (.w): к словам привязаны пометки (pen.js, этап 3). */
 'use strict';
 const $ = (id) => document.getElementById(id);
 const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
@@ -26,6 +27,7 @@ let updated = false;  // пришли новые файлы приложения
 function show(name) {
   screen = name;
   for (const s of document.querySelectorAll('.scr')) s.hidden = s.id !== 'scr' + name;
+  document.body.classList.toggle('on-song', name === 'Song');
   paintBar();
 }
 
@@ -329,6 +331,7 @@ function liveView() {
 }
 function followLive() {
   const v = liveView();
+  if (Pen.isOpen && screen === 'Song') { markLive(false); return; } // открыт пенал — песню под рукой не менять
   if (screen === 'Song' && cur && cur.id === v.id && cur.src === v.src) { markLive(true); return; } // тот же пункт — только слайд
   // Экран очистили — песня остаётся перед глазами (доигрывают), снимается только отметка; в списке — остаёмся в списке
   if (live.kind === 'none' && (screen === 'Lib' || (cur && !cur.note))) { markLive(false); return; }
@@ -531,9 +534,9 @@ function openView(v, push) {
     const sec = el('section', 'sl' + (head ? ' part' : ''));
     sec.dataset.id = z.id;
     if (head) sec.append(el('h3', '', v.song ? z.label || z.part : z.label));
-    const p = el('p', '', z.text || (z.label && !head ? '' : '—'));
-    if (verses && /^\d+$/.test(z.label || '')) p.prepend(el('b', 'vn', z.label + ' '));
-    sec.append(p);
+    const tx = textBlock(z.text || (z.label && !head ? '' : '—'));
+    if (verses && /^\d+$/.test(z.label || '') && tx.firstChild) tx.firstChild.prepend(el('b', 'vn', z.label + ' '));
+    sec.append(tx);
     body.append(sec);
   }
   if (!v.slides.length && !v.note) body.append(el('p', 'hint', 'Нет текста'));
@@ -541,8 +544,24 @@ function openView(v, push) {
   window.scrollTo(0, 0);
   if (push) history.pushState({ song: v.id || 'live' }, '');
   else if (!history.state || !history.state.song) history.pushState({ song: v.id || 'live' }, '');
+  Pen.show(v);
+}
+// Текст слайда: строка — .ln, слово — .w (по словам держатся пометки)
+function textBlock(text) {
+  const tx = el('div', 'tx');
+  for (const line of String(text).split('\n')) {
+    const ln = el('div', 'ln');
+    for (const part of line.split(/(\s+)/)) {
+      if (!part) continue;
+      if (/^\s+$/.test(part)) ln.append(part);
+      else ln.append(el('span', 'w', part));
+    }
+    tx.append(ln);
+  }
+  return tx;
 }
 function closeSong() {
+  Pen.close();
   if (follow) setFollow(false);
   show('Lib');
   window.scrollTo(0, listY);
@@ -596,6 +615,7 @@ function paintSheet() {
     }).catch(() => { st.textContent = ''; });
   }
   $('iVer').textContent = me && me.server ? `multiplayerSHOW ${me.server.ver}` : '';
+  $('iPaper').checked = ls.get('mps.paper', '0') === '1';
 }
 
 /* ----- Запуск ----- */
@@ -649,7 +669,7 @@ function wire() {
   $('iSync').onclick = () => { $('sheet').close(); runSync(); };
   $('iResync').onclick = async () => { if (await ask('Загрузить все песни заново? Займёт минуту.', 'Загрузить')) { $('sheet').close(); runSync(true); } };
   $('iForget').onclick = async () => {
-    if (!(await ask('Отключить этот телефон?\nКлюч доступа и все песни будут стёрты с телефона. Подключиться снова можно по QR-коду.', 'Отключить'))) return;
+    if (!(await ask('Отключить этот телефон?\nКлюч доступа и песни будут стёрты с телефона (пометки и заметки останутся). Подключиться снова можно по QR-коду.', 'Отключить'))) return;
     $('sheet').close();
     if (ws) { const s = ws; ws = null; s.close(); }
     clearTimeout(wsT);
@@ -658,6 +678,12 @@ function wire() {
     showJoin();
   };
   $('bannerBtn').onclick = () => { if (conn === 'auth') showJoin(); else if (updated) location.reload(); };
+  $('iPaper').onchange = () => {
+    ls.set('mps.paper', $('iPaper').checked ? '1' : '0');
+    document.body.classList.toggle('paper', $('iPaper').checked || Pen.isOpen);
+  };
+  Pen.init();
+  Pen.onChange = () => { paintBar(); markLive(false); };
   document.addEventListener('visibilitychange', () => { if (!document.hidden) wake(); });
   window.addEventListener('online', wake);
   setFs(fs);
