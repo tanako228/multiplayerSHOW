@@ -8,7 +8,10 @@
    «Листать самому» — смотреть своё, внизу полоса «На экране: …». Право «Может листать» (оператор, окно «Группа») —
    кнопки ◀ ▶ «Убрать» и «Показать на экране» у слайда. Ключ отозван / приостановлен / доступ выключен —
    полоса сверху, песни на телефоне остаются. Назад (кнопка телефона) — из песни в список (history).
-   Текст слайда — строки (.ln) из слов (.w): к словам привязаны пометки (pen.js, этап 3). */
+   Текст слайда — строки (.ln) из слов (.w): к словам привязаны пометки (pen.js, этап 3).
+   Аккорды (этап 4): song.chords раскладывает по строкам chords.js (общий с программой); аккорд — пустой значок .cd
+   внутри слова (номера слов не меняются — пометки на месте). Транспонирование и капо — на песню (localStorage mps.tr);
+   тональность строки сетлиста сама сдвигает аккорды. Аккорды по умолчанию: Музыкант, Лидер — да, остальные — нет. */
 'use strict';
 const $ = (id) => document.getElementById(id);
 const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
@@ -500,6 +503,73 @@ function more() {
   } else if (io) io.disconnect();
 }
 
+/* ----- Аккорды: показать, транспонировать, капо ----- */
+
+const chordsShown = () => { const v = ls.get('mps.chords', ''); return v ? v === '1' : !(Store.me && ['vocal', 'sound', 'tech'].includes(Store.me.person.role)); };
+let trAll = {};
+try { trAll = JSON.parse(ls.get('mps.tr', '{}')) || {}; } catch { trAll = {}; }
+// { t: полутонов, capo } — своё у песни, иначе от тональности строки сетлиста
+function trOf(v) {
+  const own = trAll[v.id];
+  if (own) return { t: Number(own.t) || 0, capo: Number(own.capo) || 0, own: true };
+  const s = v.src || {};
+  return { t: v.key && s.key ? Chords.interval(s.key, v.key) : 0, capo: 0, own: false };
+}
+function setTr(id, t, capo) {
+  if (!t && !capo) delete trAll[id]; else trAll[id] = { t, capo };
+  ls.set('mps.tr', JSON.stringify(trAll));
+}
+const keyNow = (v) => { const s = v.src || {}; const tr = v.tr || { t: 0 }; return s.key ? Chords.keyShift(s.key, tr.t) || s.key : v.key || ''; };
+// Строка аккордов «[Am]Сла[G]ва» → места в строке слайда (по счёту букв: пробелы и знаки могут отличаться)
+function chordMarks(line, raw, n, flat) {
+  const sp = Chords.split(raw);
+  if (!sp.marks.length) return [];
+  const isL = (ch) => /[\p{L}\p{N}]/u.test(ch);
+  const letters = (s, upto) => { let k = 0; for (let i = 0; i < upto && i < s.length; i++) if (isL(s[i])) k++; return k; };
+  const atLetter = (s, k) => { let c = 0; for (let i = 0; i < s.length; i++) { if (isL(s[i])) { if (c === k) return i; c++; } } return s.length; };
+  return sp.marks.map((m) => ({ at: atLetter(line, letters(sp.text, m.at)), c: Chords.shift(m.c, n, flat) }));
+}
+function paintKey() {
+  const v = cur;
+  const s = (v && v.src) || {};
+  const can = !!(v && v.song && (s.chords || s.key || v.key));
+  $('songKey').hidden = !can;
+  if (!can) return;
+  const tr = v.tr || { t: 0, capo: 0 };
+  $('songKey').textContent = (keyNow(v) || (s.chords ? 'Аккорды' : '')) + (tr.capo ? ` · капо ${tr.capo}` : '');
+  $('songKey').classList.toggle('moved', !!tr.t);
+}
+function paintKeyDlg() {
+  const v = cur;
+  if (!v || !v.song) return;
+  const s = v.src || {};
+  const tr = v.tr || { t: 0, capo: 0 };
+  $('kChords').checked = chordsShown();
+  $('kChords').disabled = !s.chords;
+  const sign = (n) => (n > 0 ? '+' + n : String(n));
+  $('kKey').textContent = s.key ? keyNow(v) + (tr.t ? ` (${sign(tr.t)})` : '') : tr.t ? sign(tr.t) : 'как написано';
+  $('kCapo').textContent = tr.capo ? String(tr.capo) : 'нет';
+  const shape = s.key ? Chords.keyShift(s.key, tr.t - tr.capo) : '';
+  $('kHint').textContent = !s.chords ? 'У этой песни нет аккордов. Оператор может вписать их в окне песни («Аккорды для сценического экрана»).'
+    : tr.capo ? `Капо на ${tr.capo}-м ладу: аккорды показаны аппликатурой${shape ? ' ' + shape : ''}, звучит ${keyNow(v) || 'как написано'}.`
+      : s.key ? `Тональность в программе — ${s.key}.` + (v.key && Chords.interval(s.key, v.key) ? ` В сетлисте — ${v.key}.` : '') : '';
+  $('kReset').disabled = !tr.t && !tr.capo;
+}
+function retune(t, capo) {
+  if (!cur || !cur.song) return;
+  setTr(cur.id, t, Math.max(0, Math.min(11, capo)));
+  rerender();
+  paintKeyDlg();
+}
+// Показать открытую песню заново, не теряя места
+function rerender() {
+  if (!cur) return;
+  const y = window.scrollY;
+  openView(cur, false);
+  window.scrollTo(0, y);
+  markLive(false);
+}
+
 /* ----- Песня (и то, что на экране: Библия, свои слайды) ----- */
 
 let listY = 0;
@@ -520,11 +590,19 @@ function openView(v, push) {
   if (screen === 'Lib') listY = window.scrollY;
   cur = v;
   $('songTitle').textContent = v.name;
-  $('songKey').textContent = v.key || '';
-  $('songKey').hidden = !v.key;
   const body = $('songBody');
   body.replaceChildren();
   if (v.note) body.append(el('p', 'note', v.note));
+  // Песня: тональность, темп, размер; аккорды — с транспонированием и капо
+  const src = v.song ? v.src || {} : {};
+  const sheet = v.song && src.chords && chordsShown() ? Chords.sheet(src.chords) : null;
+  v.tr = v.song ? trOf(v) : { t: 0, capo: 0 };
+  const n = v.tr.t - v.tr.capo;
+  const flat = Chords.flatFor(src.key, n, src.chords);
+  const info = [keyNow(v) && `Тональность ${keyNow(v)}` + (v.tr.t && src.key ? ` (в программе ${src.key})` : ''),
+    v.tr.capo && `капо ${v.tr.capo}`, src.tempo && `♩ = ${src.tempo}`, src.time].filter(Boolean);
+  if (v.song && info.length) body.append(el('p', 'meta', info.join(' · ')));
+  paintKey();
   // Порядок частей (аранжировка), если части подписаны
   const order = v.song ? v.slides.filter((z) => z.pi === 0 && (z.label || z.part)).map((z) => z.label || z.part) : [];
   if (order.length > 1) body.append(el('p', 'order', order.join(' → ')));
@@ -534,7 +612,7 @@ function openView(v, push) {
     const sec = el('section', 'sl' + (head ? ' part' : ''));
     sec.dataset.id = z.id;
     if (head) sec.append(el('h3', '', v.song ? z.label || z.part : z.label));
-    const tx = textBlock(z.text || (z.label && !head ? '' : '—'));
+    const tx = textBlock(z.text || (z.label && !head ? '' : '—'), sheet ? Chords.forText(sheet, z.text) : null, n, flat);
     if (verses && /^\d+$/.test(z.label || '') && tx.firstChild) tx.firstChild.prepend(el('b', 'vn', z.label + ' '));
     sec.append(tx);
     body.append(sec);
@@ -546,16 +624,33 @@ function openView(v, push) {
   else if (!history.state || !history.state.song) history.pushState({ song: v.id || 'live' }, '');
   Pen.show(v);
 }
-// Текст слайда: строка — .ln, слово — .w (по словам держатся пометки)
-function textBlock(text) {
+// Текст слайда: строка — .ln, слово — .w (по словам держатся пометки); аккорды — значки .cd внутри слов
+const cdEl = (c) => { const i = el('i', 'cd'); i.dataset.c = c; return i; };
+function textBlock(text, chordLines, n, flat) {
   const tx = el('div', 'tx');
+  let k = 0; // аккорды приложены к непустым строкам слайда
   for (const line of String(text).split('\n')) {
     const ln = el('div', 'ln');
+    const marks = chordLines && chordLines.length && line.trim() ? chordMarks(line, chordLines[k++] || '', n, flat) : [];
+    let i = 0;
+    let m = 0;
     for (const part of line.split(/(\s+)/)) {
       if (!part) continue;
-      if (/^\s+$/.test(part)) ln.append(part);
-      else ln.append(el('span', 'w', part));
+      const end = i + part.length;
+      if (/^\s+$/.test(part)) {
+        while (m < marks.length && marks[m].at < end) ln.append(cdEl(marks[m++].c));
+        ln.append(part);
+      } else {
+        const w = el('span', 'w');
+        let last = 0;
+        while (m < marks.length && marks[m].at < end) { const at = Math.max(0, marks[m].at - i); w.append(part.slice(last, at), cdEl(marks[m++].c)); last = at; }
+        w.append(part.slice(last));
+        ln.append(w);
+      }
+      i = end;
     }
+    while (m < marks.length) ln.append(cdEl(marks[m++].c));
+    if (marks.length) ln.classList.add('ch');
     tx.append(ln);
   }
   return tx;
@@ -654,6 +749,16 @@ function wire() {
   $('songBody').addEventListener('click', onSlideTap);
   $('back').onclick = () => { if (history.state && history.state.song) history.back(); else closeSong(); };
   window.addEventListener('popstate', () => { if (screen === 'Song') closeSong(); });
+  // Аккорды и тональность: значок тональности в шапке песни
+  $('songKey').onclick = () => { paintKeyDlg(); $('keyDlg').showModal(); };
+  $('keyX').onclick = () => $('keyDlg').close();
+  $('keyDlg').addEventListener('click', (e) => { if (e.target === $('keyDlg')) $('keyDlg').close(); });
+  $('kChords').onchange = () => { ls.set('mps.chords', $('kChords').checked ? '1' : '0'); rerender(); paintKeyDlg(); };
+  $('kUp').onclick = () => cur && cur.tr && retune(cur.tr.t >= 11 ? -12 + cur.tr.t + 1 : cur.tr.t + 1, cur.tr.capo);
+  $('kDown').onclick = () => cur && cur.tr && retune(cur.tr.t <= -11 ? 12 + cur.tr.t - 1 : cur.tr.t - 1, cur.tr.capo);
+  $('cUp').onclick = () => cur && cur.tr && retune(cur.tr.t, cur.tr.capo + 1);
+  $('cDown').onclick = () => cur && cur.tr && retune(cur.tr.t, cur.tr.capo - 1);
+  $('kReset').onclick = () => { if (cur) { delete trAll[cur.id]; ls.set('mps.tr', JSON.stringify(trAll)); rerender(); paintKeyDlg(); } };
   $('fsMinus').onclick = () => setFs(fs - 2);
   $('fsPlus').onclick = () => setFs(fs + 2);
   // Полоса «На экране»: текст — посмотреть, что там; кнопка — следовать / листать самому

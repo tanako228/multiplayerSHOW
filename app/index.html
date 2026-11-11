@@ -18,6 +18,7 @@
 <!-- Приложение для телефонов группы (ТЗ-8-Группа.md). Этап 1: вход по QR с подтверждением оператора, все песни
      на телефоне (IndexedDB), поиск, работа без сети. Этап 2: WebSocket — что на экране («Следовать» / «Листать самому»),
      сетлисты, листать с телефона. Этап 3: цифровой пенал — пометки поверх текста песни, заметка (pen.js, pen.css).
+     Этап 4: аккорды над словами, транспонирование, капо (chords.js — общий с программой).
      Хранилище и синхронизация — db.js, экраны и связь — app.js, кэш — sw.js -->
 </head>
 <body>
@@ -82,7 +83,7 @@
       <svg viewBox="0 0 24 24"><path d="M15 5 8 12l7 7" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
     </button>
     <h1 class="grow" id="songTitle"></h1>
-    <span class="keyb" id="songKey" hidden title="Тональность"></span>
+    <button class="keyb" id="songKey" hidden title="Аккорды и тональность" aria-label="Аккорды и тональность"></button>
     <button class="icon" id="penBtn" aria-label="Пенал: пометки и заметка" aria-pressed="false" title="Пенал" hidden>
       <svg viewBox="0 0 24 24"><path d="M7.2 11.5 15.6 3.1a1.6 1.6 0 0 1 2.3 0l.4.4a1.6 1.6 0 0 1 0 2.3l-5.7 5.7" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="M3 11.5h18v5.3a3.7 3.7 0 0 1-3.7 3.7H6.7A3.7 3.7 0 0 1 3 16.8z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M7 15.5h10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
     </button>
@@ -123,6 +124,19 @@
   <button class="done" id="penDone">Готово</button>
 </div>
 
+<!-- Аккорды и тональность песни -->
+<dialog class="sheet" id="keyDlg">
+  <div class="sheet-head"><h2>Аккорды и тональность</h2><button class="icon" id="keyX" aria-label="Закрыть">
+    <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg></button></div>
+  <div class="sheet-body">
+    <label class="row-i sw"><span>Аккорды над словами</span><input type="checkbox" id="kChords"></label>
+    <div class="row-i step"><span>Тональность</span><div class="stepper"><button id="kDown" aria-label="На полтона ниже">−</button><b id="kKey"></b><button id="kUp" aria-label="На полтона выше">+</button></div></div>
+    <div class="row-i step"><span>Капо</span><div class="stepper"><button id="cDown" aria-label="Капо ниже">−</button><b id="kCapo"></b><button id="cUp" aria-label="Капо выше">+</button></div></div>
+    <p class="hint" id="kHint"></p>
+    <div class="btns"><button id="kReset">Как в оригинале</button></div>
+  </div>
+</dialog>
+
 <!-- Заметка к песне -->
 <dialog class="ask note-dlg" id="noteDlg">
   <h3>Заметка к песне</h3>
@@ -159,6 +173,7 @@
 
 <script src="vendor/minisearch.js"></script>
 <script src="db.js"></script>
+<script src="chords.js"></script>
 <script src="pen.js"></script>
 <script src="app.js"></script>
 </body>

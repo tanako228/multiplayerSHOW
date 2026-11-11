@@ -172,63 +172,14 @@ setInterval(() => {
   if (changed) { stVideo = cur ? { ...cur, at: now } : null; stSend(); }
 }, 500);
 
-/* ----- Аккорды: item.song.chords — тот же текст песни с аккордами ----- */
-// «[Am]Слава [G]Богу» или аккорды строкой над словами; [Куплет 1] — обозначения частей (пропускаются)
-const ST_CHORD = /^\(?[A-H](?:#|b)?(?:maj|min|m|dim|aug|sus|add|M|\+|°)?\d*(?:(?:sus|add|maj|b|#)\d+)*(?:\/[A-H](?:#|b)?)?\)?$/;
-const stNorm = (s) => String(s || '').toLowerCase().replace(/ё/g, 'е').replace(/[^\p{L}\p{N}]+/gu, '');
-const stChordRow = (line) => {
-  if (line.includes('[')) return false;
-  const toks = line.trim().split(/\s+/).filter((x) => x && x !== '|' && x !== '-');
-  return toks.length > 0 && toks.every((x) => ST_CHORD.test(x));
-};
-// Аккорды над строкой → в строку: «Am    G» + «Слава Богу» → «[Am]Слава [G]Богу»
-function stMergeAbove(chords, text) {
-  const marks = [...chords.matchAll(/\S+/g)].map((m) => ({ c: m[0], at: m.index }));
-  let t = text;
-  for (const m of marks.reverse()) {
-    if (t.length < m.at) t = t.padEnd(m.at, ' ');
-    t = t.slice(0, m.at) + `[${m.c}]` + t.slice(m.at);
-  }
-  return t;
-}
-function stChordSheet(src) {
-  const lines = String(src || '').replace(/\r/g, '').split('\n');
-  const out = [];
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    const t = line.trim();
-    if (!t) continue;
-    const mk = t.match(/^\[([^\]]+)\]$/);
-    if (mk && !ST_CHORD.test(mk[1].trim())) continue; // [Припев]
-    let raw = line;
-    const nx = lines[i + 1];
-    if (stChordRow(line) && nx && nx.trim() && !stChordRow(nx) && !/^\[[^\]]+\]$/.test(nx.trim())) { raw = stMergeAbove(line, nx); i++; }
-    out.push({ raw: raw.trimEnd(), plain: stNorm(raw.replace(/\[[^\]]*\]/g, '')) });
-  }
-  return out;
-}
-// Строки слайда → те же строки с аккордами (по тексту, по порядку); нет ни одного аккорда — пусто
-function stChordsFor(sheet, text) {
-  const lines = String(text || '').split('\n').map((l) => l.trim()).filter(Boolean);
-  const res = [];
-  let pos = 0;
-  for (const l of lines) {
-    const p = stNorm(l);
-    let j = p ? sheet.findIndex((x, k) => k >= pos && x.plain === p) : -1;
-    if (j < 0 && p) j = sheet.findIndex((x) => x.plain === p);
-    if (j < 0) { res.push(l); continue; }
-    res.push(sheet[j].raw.trim());
-    pos = j + 1;
-  }
-  return res.some((r) => r.includes('[')) ? res : [];
-}
+/* ----- Аккорды: item.song.chords — тот же текст песни с аккордами (разбор — chords.js, общий с телефонами) ----- */
 const stSheets = new Map(); // id песни → { src, sheet }
 function stChordsOf(item, slide) {
   const src = item && item.song && item.song.chords;
   if (!src || !slide || slide.k !== 'text') return [];
   let c = stSheets.get(item.id);
-  if (!c || c.src !== src) { c = { src, sheet: stChordSheet(src) }; stSheets.set(item.id, c); }
-  return stChordsFor(c.sheet, slide.text || '');
+  if (!c || c.src !== src) { c = { src, sheet: Chords.sheet(src) }; stSheets.set(item.id, c); }
+  return Chords.forText(c.sheet, slide.text || '');
 }
 
 /* ----- Таймеры ----- */

@@ -462,6 +462,7 @@
     .song-namebar { display: flex; gap: 8px; }
     .song-namebar #songName { flex: 1; min-width: 0; }
     .song-namebar #songGenre, .song-namebar #songCcli { width: 160px; flex: none; }
+    .song-namebar #songKeyIn, .song-namebar #songTempo, .song-namebar #songTime { width: 74px; flex: none; }
     /* Быстрый поиск (quick.js): плавающее окно, закрывается щелчком мимо */
     #quick { position: fixed; z-index: 900; top: 56px; left: 50%; transform: translateX(-50%); width: min(1000px, calc(100vw - 32px)); height: min(600px, calc(100vh - 90px));
       display: flex; flex-direction: column; background: var(--panel); border: 1px solid var(--line); border-radius: calc(10px * var(--rk, 1)); box-shadow: 0 18px 50px rgba(0,0,0,.45); overflow: hidden; }
@@ -2698,6 +2699,12 @@
           <input type="text" id="songGenre" placeholder="Жанр" autocomplete="off" list="songGenres" title="Жанр — виден в быстром поиске (Ctrl+S)">
           <datalist id="songGenres"></datalist>
           <input type="text" id="songCcli" placeholder="CCLI, авторы" autocomplete="off" title="CCLI и авторы — выводятся полем «CCLI» в шаблоне темы">
+          <!-- Для телефонов группы (аккорды, транспонирование, метроном) -->
+          <input type="text" id="songKeyIn" placeholder="Тон." maxlength="8" autocomplete="off" list="songKeys" title="Тональность песни: G, Am, F#, Bb. От неё телефоны группы транспонируют аккорды">
+          <datalist id="songKeys"><option value="C"><option value="D"><option value="E"><option value="F"><option value="G"><option value="A"><option value="B"><option value="Am"><option value="Em"><option value="Dm"><option value="Bb"><option value="Eb"></datalist>
+          <input type="number" id="songTempo" placeholder="Темп" min="20" max="400" title="Темп, ударов в минуту — для метронома на телефонах группы">
+          <input type="text" id="songTime" placeholder="4/4" maxlength="5" autocomplete="off" list="songTimes" title="Размер: 4/4, 3/4, 6/8">
+          <datalist id="songTimes"><option value="4/4"><option value="3/4"><option value="6/8"><option value="2/4"><option value="12/8"></datalist>
         </div>
         <div class="part-bar" id="partBar"></div>
         <div class="song-text"><div id="songBack"><div></div></div><textarea id="songText" spellcheck="false" placeholder="[Куплет 1]&#10;Первая строка куплета&#10;Вторая строка куплета&#10;&#10;[Припев]&#10;Первая строка припева&#10;Вторая строка припева"></textarea></div>
@@ -3167,6 +3174,7 @@
   <script src="themes.js"></script>
   <script src="renderer.js"></script>
   <script src="playlist.js"></script>
+  <script src="chords.js"></script>
   <script src="songs.js"></script>
   <script src="tools.js"></script>
   <script src="music.js"></script>

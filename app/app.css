@@ -26,7 +26,8 @@ svg { width: 22px; height: 22px; fill: currentColor; }
 .tabs { display: flex; gap: 2px; overflow: hidden; }
 .tabs button { flex: none; background: none; border: 0; border-radius: 8px; padding: 8px 10px; font-size: 17px; font-weight: 600; color: var(--muted); white-space: nowrap; }
 .tabs button[aria-selected=true] { color: var(--text); background: var(--field); }
-.keyb { flex: none; padding: 3px 9px; border-radius: 8px; border: 1px solid var(--live); color: var(--live); font-weight: 700; font-size: 15px; }
+.keyb { flex: none; padding: 3px 9px; border-radius: 8px; border: 1px solid var(--live); background: none; color: var(--live); font-weight: 700; font-size: 15px; white-space: nowrap; }
+.keyb.moved { background: color-mix(in srgb, var(--live) 18%, transparent); }
 .grow { flex: 1; min-width: 0; }
 .count { color: var(--muted); font-weight: 400; font-size: 14px; }
 .icon { display: grid; place-items: center; min-width: 44px; height: 44px; padding: 0 8px; background: none; border: 0; }
@@ -86,6 +87,15 @@ svg { width: 22px; height: 22px; fill: currentColor; }
 .sl h3 { margin: 10px 0 4px; font-size: 13px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--live); }
 .sl .tx { font-size: var(--fs); line-height: 1.38; overflow-wrap: anywhere; }
 .sl .ln { white-space: pre-wrap; min-height: 1.38em; }
+/* Аккорд — пустой значок в слове, подпись над ним */
+.sl .ln.ch { padding-top: .95em; }
+.cd { position: relative; display: inline-block; width: 0; }
+.cd::before { content: attr(data-c); position: absolute; left: 0; bottom: 1.3em; font-size: .72em; font-style: normal; font-weight: 700; line-height: 1; color: var(--live); white-space: nowrap; }
+.song .meta { margin: 0 0 6px; color: var(--muted); font-size: 14px; }
+.row-i.step { align-items: center; }
+.stepper { display: flex; align-items: center; gap: 6px; }
+.stepper button { min-width: 44px; min-height: 40px; padding: 0; font-size: 20px; font-weight: 600; }
+.stepper b { min-width: 92px; text-align: center; font-size: 16px; }
 .sl + .sl:not(.part) { border-top: 1px dashed color-mix(in srgb, var(--line) 70%, transparent); }
 
 /* Сетлисты */

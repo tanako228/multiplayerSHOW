@@ -406,6 +406,7 @@ function appVer() {
     }
   };
   try { walk(appDir); } catch { /* нет папки — всё равно ответим */ }
+  try { h.update('chords.js:'); h.update(fs.readFileSync(path.join(appDir, '..', 'chords.js'))); } catch { /* нет файла */ }
   return h.digest('hex').slice(0, 12);
 }
 // connect-src: свой адрес и его WebSocket (старый Safari не считает ws:// «своим» по 'self')
@@ -441,10 +442,11 @@ function route(req, res, u) {
   }
   let rel = '';
   try { rel = decodeURIComponent(u.pathname.slice(5)) || 'index.html'; } catch { rel = ''; }
-  // Значки 256 и 512 — из brand/ (тот же значок, что у программы)
+  // Значки 256 и 512 — из brand/ (тот же значок, что у программы); аккорды — общий chords.js программы
   const icon = /^icon-(256|512)\.png$/.exec(rel);
-  const file = icon ? path.join(appDir, '..', 'brand', `icon-${icon[1]}.png`) : path.normalize(path.join(appDir, rel));
-  if (!rel || rel.includes('\0') || (!icon && !file.startsWith(appDir + path.sep))) { res.writeHead(404); res.end(); return true; }
+  const shared = icon || rel === 'chords.js';
+  const file = icon ? path.join(appDir, '..', 'brand', `icon-${icon[1]}.png`) : rel === 'chords.js' ? path.join(appDir, '..', 'chords.js') : path.normalize(path.join(appDir, rel));
+  if (!rel || rel.includes('\0') || (!shared && !file.startsWith(appDir + path.sep))) { res.writeHead(404); res.end(); return true; }
   fs.readFile(file, (err, buf) => {
     if (err) { res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' }); res.end('нет такой страницы'); return; }
     if (rel === 'sw.js') buf = Buffer.from(buf.toString('utf8').replace('__VER__', appVer()));

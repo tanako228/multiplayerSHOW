@@ -17,7 +17,8 @@ const path = require('path');
 const crypto = require('crypto');
 const zlib = require('zlib');
 
-const FMT = 1; // вид песни для телефона; поменялся (новые поля) — меняются все отпечатки, телефоны докачают песни
+const FMT = 2; // вид песни для телефона; поменялся (новые поля) — меняются все отпечатки, телефоны докачают песни
+// 2 — этап 4: тональность, темп, размер, аккорды (song.chords целиком; по слайдам раскладывает телефон — chords.js)
 const ROLES = [
   { id: 'musician', name: 'Музыкант' },
   { id: 'vocal', name: 'Вокалист' },
@@ -228,6 +229,10 @@ function songPay(it) {
   };
   if (s.number) p.number = String(s.number);
   if (s.ccli) p.ccli = String(s.ccli);
+  if (s.key) p.key = clean(s.key, 8);
+  if (Number(s.tempo) > 0) p.tempo = Math.round(Number(s.tempo));
+  if (/^\d{1,2}\/\d{1,2}$/.test(String(s.time || ''))) p.time = String(s.time);
+  if (typeof s.chords === 'string' && s.chords.trim()) p.chords = s.chords.slice(0, 30000);
   return p;
 }
 

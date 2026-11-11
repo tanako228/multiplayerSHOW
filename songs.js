@@ -16,6 +16,19 @@ const Songs = (() => {
   const ARR_RE = /^(?:arrangement|аранжировка)\s*:\s*(.+?)\s*=\s*(.*)$/i;
   const GENRE_RE = /^(?:genre|жанр)\s*:\s*(.+)$/i;
   const CCLI_RE = /^(?:ccli|авторы)\s*:\s*(.+)$/i; // CCLI и авторы — для поля шаблона темы
+  // Тональность, темп, размер (для телефонов группы и сцены): строки «key: G», «tempo: 72», «time: 4/4» или ChordPro {key: G}
+  const META_RE = /^\{?\s*(key|тональность|tempo|темп|time|размер)\s*:\s*([^}]+?)\s*\}?$/i;
+  const META_KEY = { key: 'key', тональность: 'key', tempo: 'tempo', темп: 'tempo', time: 'time', размер: 'time' };
+  // Поля песни → song (пустые не пишем); tempo — число 20–400
+  function songMeta(song, m) {
+    const k = String(m.key || '').trim().slice(0, 8);
+    const t = Math.round(Number(String(m.tempo || '').replace(',', '.')));
+    const z = String(m.time || '').trim().slice(0, 8);
+    if (k) song.key = k; else delete song.key;
+    if (t >= 20 && t <= 400) song.tempo = t; else delete song.tempo;
+    if (/^\d{1,2}\/\d{1,2}$/.test(z)) song.time = z; else delete song.time;
+    return song;
+  }
 
   // Текст → части по порядку: blocks [{ label, slides: [текст слайда] }], groups — части с текстом по названию,
   // seq — порядок частей, как в тексте (с повторами)
@@ -178,6 +191,8 @@ const Songs = (() => {
   function fromText(text, fileName = '', ext = '') {
     let t = String(text).replace(/^﻿/, '').replace(/\r\n?/g, '\n');
     let chords = '';
+    const meta = {};
+    for (const line of t.split('\n')) { const m = line.trim().match(META_RE); if (m) meta[META_KEY[m[1].toLowerCase()]] = m[2]; }
     if (/^(cho|chopro|chordpro|crd|pro)$/.test(ext) || /^\s*\{(title|t)\s*:/im.test(t)) {
       if (/\[[A-H][^\]\n]{0,8}\]/.test(t)) chords = fromChordPro(t, true).split('\n').filter((l) => !/^@@ /.test(l)).join('\n').replace(/\n{3,}/g, '\n\n').trim();
       t = fromChordPro(t);
@@ -202,6 +217,7 @@ const Songs = (() => {
       let genre = '';
       let ccli = '';
       const lines = part.lines.filter((l) => {
+        if (META_RE.test(l.trim())) return false;
         const g = l.trim().match(GENRE_RE);
         if (g) { genre = g[1].trim(); return false; }
         const c = l.trim().match(CCLI_RE);
@@ -221,6 +237,7 @@ const Songs = (() => {
       out.push({ name, song });
     }
     if (chords && out.length === 1) out[0].song.chords = chords; // аккорды для сценического экрана
+    if (out.length === 1) songMeta(out[0].song, meta);
     return out;
   }
 
@@ -235,6 +252,7 @@ const Songs = (() => {
       if (s.genre) song.genre = String(s.genre);
       if (s.ccli) song.ccli = String(s.ccli);
       if (s.chords) song.chords = String(s.chords);
+      songMeta(song, s);
       return { name: String(s.name || 'Песня'), song };
     });
   }
@@ -245,16 +263,17 @@ const Songs = (() => {
   function toText(item) {
     const s = songOf(item);
     const arr = (s.arrangements || []).map((a) => `arrangement: ${a.name} = ${a.order.join(' | ')}`);
-    const tail = [...(s.genre ? [`genre: ${s.genre}`] : []), ...(s.ccli ? [`ccli: ${s.ccli}`] : []), ...arr];
+    const tail = [...(s.genre ? [`genre: ${s.genre}`] : []), ...(s.ccli ? [`ccli: ${s.ccli}`] : []),
+      ...(s.key ? [`key: ${s.key}`] : []), ...(s.tempo ? [`tempo: ${s.tempo}`] : []), ...(s.time ? [`time: ${s.time}`] : []), ...arr];
     return [`@@ ${item.name}`, '', s.text.trim(), ...(tail.length ? ['', ...tail] : [])].join('\n') + '\n';
   }
 
   const toJson = (items) => ({
     app: 'church-presenter', type: 'songs', version: 1,
-    songs: items.map((it) => { const s = songOf(it); return { name: it.name, number: s.number || '', genre: s.genre || '', ccli: s.ccli || '', text: s.text, arrangements: s.arrangements || [], arr: s.arr || '', ...(s.chords ? { chords: s.chords } : {}) }; }),
+    songs: items.map((it) => { const s = songOf(it); return { name: it.name, number: s.number || '', genre: s.genre || '', ccli: s.ccli || '', text: s.text, arrangements: s.arrangements || [], arr: s.arr || '', ...(s.chords ? { chords: s.chords } : {}), ...(s.key ? { key: s.key } : {}), ...(s.tempo ? { tempo: s.tempo } : {}), ...(s.time ? { time: s.time } : {}) }; }),
   });
 
-  return { MARK_RE, parse, serialize, build, absorb, fromSlides, typeOf, nextLabel, fromText, fromJson, toText, toJson, arrOf };
+  return { MARK_RE, parse, serialize, build, absorb, fromSlides, typeOf, nextLabel, fromText, fromJson, toText, toJson, arrOf, songMeta };
 })();
 
 /* ===== Типы частей песни (lib.partTypes) ===== */
@@ -298,6 +317,9 @@ function openSongDialog(item) {
   $('songText').value = s ? s.text : item ? Songs.fromSlides(item.slides) : '';
   $('songChords').value = (s && s.chords) || '';
   $('songChordsBox').open = !!(s && s.chords);
+  $('songKeyIn').value = (s && s.key) || '';
+  $('songTempo').value = (s && s.tempo) || '';
+  $('songTime').value = (s && s.time) || '';
   renderPartBar();
   songHot = { part: '', occ: '' };
   updateSongView();
@@ -598,6 +620,7 @@ function songSave() {
   if (ccli) song.ccli = ccli;
   const chords = $('songChords').value.replace(/\s+$/, '');
   if (chords.trim()) song.chords = chords; // аккорды для сценического экрана (stage.js)
+  Songs.songMeta(song, { key: $('songKeyIn').value, tempo: $('songTempo').value, time: $('songTime').value }); // для телефонов группы
   if (songEditing) {
     const first = !songEditing.song;
     if (!first) followRenames(songEditing.song.text, text, song.arrangements);
@@ -624,6 +647,9 @@ async function songLoadFile() {
   if (s.song.genre) $('songGenre').value = s.song.genre;
   if (s.song.ccli) $('songCcli').value = s.song.ccli;
   if (s.song.chords) { $('songChords').value = s.song.chords; $('songChordsBox').open = true; }
+  if (s.song.key) $('songKeyIn').value = s.song.key;
+  if (s.song.tempo) $('songTempo').value = s.song.tempo;
+  if (s.song.time) $('songTime').value = s.song.time;
   songDraft = { arrangements: s.song.arrangements, arr: '', number: s.song.number || '' };
   updateSongView();
   if (songs.length > 1) flashStatus(`В файле песен: ${songs.length}, открыта первая. Все сразу — кнопка «Импорт» над лентой.`);
