@@ -120,6 +120,11 @@ svg { width: 22px; height: 22px; fill: currentColor; }
 .mt-beats i.on.one { background: var(--live); border-color: var(--live); }
 #joinPwBox[hidden], #joinRoles[hidden], #joinRoleLbl[hidden] { display: none; }
 
+/* Этап 7: первый запуск */
+.wel-list { margin: 8px 0 12px; padding-left: 20px; font-size: 15px; }
+.wel-list li { margin: 6px 0; }
+#welTop { margin: 4px 0 0; font-size: 16px; }
+
 /* Моя версия (этап 5): переключатель, «Оригинал изменился», оформление, редактор */
 .mvbar { display: flex; align-items: center; gap: 8px; margin: 2px 0 10px; }
 .seg { display: inline-flex; gap: 2px; padding: 3px; border-radius: 10px; background: var(--field); border: 1px solid var(--line); }

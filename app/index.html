@@ -21,6 +21,7 @@
      Этап 4: аккорды над словами, транспонирование, капо (chords.js — общий с программой).
      Этап 5: «Моя версия» песни (mine.js).
      Этап 6: вход по паролю, сообщения группе, общий метроном по времени программы (app.js).
+     Этап 7: свои данные — в файл и из файла, установка на экран «Домой», первый запуск (app.js).
      Хранилище и синхронизация — db.js, экраны и связь — app.js, кэш — sw.js -->
 </head>
 <body>
@@ -184,6 +185,23 @@
   </div>
 </dialog>
 
+<!-- Первый запуск: песни загружены — что где -->
+<dialog class="sheet" id="welDlg">
+  <div class="sheet-head"><h2>Готово!</h2></div>
+  <div class="sheet-body">
+    <p id="welTop"></p>
+    <ul class="wel-list">
+      <li><b>Следовать</b> — внизу экрана: телефон сам открывает песню и слайд, что сейчас на экране в зале.</li>
+      <li><b>Аккорды</b> — значок тональности в шапке песни: аккорды, транспонирование, капо.</li>
+      <li><b>Пенал</b> — пометки ручкой и маркером прямо по словам, заметка к песне.</li>
+      <li><b>Моя версия</b> — свой вариант текста над песней.</li>
+      <li>Песни остаются на телефоне — работают и без сети.</li>
+    </ul>
+    <p class="hint" id="welInstall"></p>
+    <div class="btns"><button id="welInst" hidden>Установить приложение</button><button class="primary" id="welGo">Начать</button></div>
+  </div>
+</dialog>
+
 <!-- Аккорды и тональность песни -->
 <dialog class="sheet" id="keyDlg">
   <div class="sheet-head"><h2>Аккорды и тональность</h2><button class="icon" id="keyX" aria-label="Закрыть">
@@ -217,6 +235,11 @@
     <div class="row-i"><span>Обновлено</span><b id="iAt"></b></div>
     <label class="row-i sw"><span>Песни на светлом листе</span><input type="checkbox" id="iPaper"></label>
     <div class="btns"><button id="iMsgs">Сообщения группе</button><button id="iMetro">Метроном</button></div>
+    <div class="btns"><button id="iInstall" class="primary" hidden>Установить приложение</button></div>
+    <p class="hint" id="iInstallHint" hidden></p>
+    <div class="row-i"><span>Мои данные</span><b id="iMine"></b></div>
+    <div class="btns"><button id="iExport">Сохранить в файл</button><button id="iImport">Загрузить из файла</button></div>
+    <input type="file" id="iImportFile" accept="application/json,.json" hidden>
     <div class="btns"><button id="iSync">Обновить песни</button><button id="iResync">Загрузить всё заново</button></div>
     <p class="hint" id="iStore"></p>
     <p class="hint" id="iVer"></p>

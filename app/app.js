@@ -14,7 +14,10 @@
    тональность строки сетлиста сама сдвигает аккорды. Аккорды по умолчанию: Музыкант, Лидер — да, остальные — нет.
    «Моя версия» (этап 5, mine.js): переключатель «Оригинал / Моя версия» над песней, редактор, «Оригинал изменился».
    Этап 6: вход по паролю (режим входа — /join/info), сообщения группе (msg; писать — Лидер, Звук), метроном: свой или
-   общий (metro от программы: удары от t0 по часам программы; поправка часов — по ping/pong с наименьшей задержкой). */
+   общий (metro от программы: удары от t0 по часам программы; поправка часов — по ping/pong с наименьшей задержкой).
+   Этап 7: свои данные (пометки, заметки, «Моя версия», настройки mps.*) — в файл JSON и обратно (меню «…»),
+   установка (Android — кнопка по beforeinstallprompt, iPhone — подсказка «Поделиться → На экран „Домой“»),
+   первый запуск: после первой загрузки песен — окно «Готово!» (роль, что где, установка). */
 'use strict';
 const $ = (id) => document.getElementById(id);
 const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
@@ -205,6 +208,7 @@ async function runSync(full) {
     }
     if (first || full) {
       toast(`Песни загружены: ${Store.songs.size}`);
+      if (first) welcome();
       // Попросить браузер не удалять песни, когда мало места (на установленном приложении обычно — да)
       if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
     }
@@ -486,6 +490,86 @@ function gotMetro(m) {
   else if (mt && mt.shared) { mtStop(); toast('Общий метроном остановлен'); }
 }
 function syncBurst() { [0, 350, 700, 1050].forEach((d) => setTimeout(pingNow, d)); } // точнее поправка часов
+
+/* ----- Свои данные: в файл и из файла ----- */
+
+const MY_STORES = ['marks', 'mine'];
+const myKeys = () => { const out = []; try { for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); if (k && k.startsWith('mps.')) out.push(k); } } catch { /* нет доступа */ } return out; };
+async function exportMine() {
+  const data = { app: 'church-presenter', kind: 'team-mine', v: 1, at: Date.now(), who: Store.me ? Store.me.person.name : '', ls: {} };
+  for (const st of MY_STORES) data[st] = await Store.allRec(st).catch(() => []);
+  for (const k of myKeys()) data.ls[k] = ls.get(k, '');
+  const blob = new Blob([JSON.stringify(data)], { type: 'application/json' });
+  const name = `мои-пометки-${new Date().toISOString().slice(0, 10)}.json`;
+  // Телефон умеет «Поделиться» файлом — удобнее (почта, мессенджер, «Файлы»); иначе — скачать
+  const file = typeof File === 'function' ? new File([blob], name, { type: 'application/json' }) : null;
+  if (file && navigator.canShare && navigator.canShare({ files: [file] })) {
+    try { await navigator.share({ files: [file], title: name }); return; } catch (e) { if (e && e.name === 'AbortError') return; }
+  }
+  const a = el('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = name;
+  document.body.append(a);
+  a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 2000);
+  toast('Файл сохранён в «Загрузки»');
+}
+async function importMine(file) {
+  let d;
+  try { d = JSON.parse(await file.text()); } catch { toast('Это не файл с пометками'); return; }
+  if (!d || d.kind !== 'team-mine' || !Array.isArray(d.marks)) { toast('Это не файл с пометками приложения группы'); return; }
+  const n = (d.marks || []).length + (d.mine || []).length;
+  if (!(await ask(`Загрузить из файла ${n} записей (пометки, заметки, мои версии) и настройки? Записи тех же песен на этом телефоне заменятся.`, 'Загрузить'))) return;
+  for (const st of MY_STORES) for (const r of d[st] || []) if (r && r.id) await Store.putRec(st, r).catch(() => {});
+  for (const [k, v] of Object.entries(d.ls || {})) if (k.startsWith('mps.') && typeof v === 'string') ls.set(k, v);
+  toast('Загружено — перезапускаю');
+  setTimeout(() => location.reload(), 900);
+}
+async function paintMine() {
+  try {
+    const [m, v] = await Promise.all(MY_STORES.map((st) => Store.allRec(st)));
+    $('iMine').textContent = `пометки: ${m.filter((x) => x.strokes && x.strokes.length).length}, заметки: ${m.filter((x) => x.note).length}, версии: ${v.length}`;
+  } catch { $('iMine').textContent = '—'; }
+}
+
+/* ----- Установка на экран «Домой» ----- */
+
+let installEv = null; // Android/Chrome: событие, по которому показывается окно установки
+const isIos = () => /iPhone|iPad|iPod/.test(navigator.userAgent) || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1);
+function installHint() {
+  if (standalone()) return '';
+  if (!window.isSecureContext) return 'Установить на экран «Домой» можно, когда приложение открыто по защищённому адресу (с замком) — его настраивает оператор.';
+  if (installEv) return '';
+  if (isIos()) return 'Установить: в Safari нажмите «Поделиться» (квадрат со стрелкой) → «На экран „Домой“».';
+  return 'Установить: меню браузера (⋮) → «Установить приложение» или «Добавить на главный экран».';
+}
+function paintInstall() {
+  const can = !!installEv && !standalone();
+  $('iInstall').hidden = $('welInst').hidden = !can;
+  const h = installHint();
+  $('iInstallHint').hidden = !h;
+  $('iInstallHint').textContent = h;
+  $('welInstall').textContent = h;
+}
+async function doInstall() {
+  if (!installEv) return;
+  const ev = installEv;
+  installEv = null;
+  ev.prompt();
+  try { const r = await ev.userChoice; if (r && r.outcome === 'accepted') toast('Приложение установлено'); } catch { /* закрыли */ }
+  paintInstall();
+}
+window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); installEv = e; paintInstall(); });
+window.addEventListener('appinstalled', () => { installEv = null; paintInstall(); });
+
+// Первый запуск: песни загрузились первый раз — что где
+function welcome() {
+  if (ls.get('mps.welcomed', '') || !Store.me) return;
+  ls.set('mps.welcomed', '1');
+  $('welTop').textContent = `${Store.me.person.name} (${Store.me.person.roleName}) — на телефоне ${Store.songs.size} песен.`;
+  paintInstall();
+  $('welDlg').showModal();
+}
 
 /* ----- Что на экране: «Следовать» / «Листать самому» ----- */
 
@@ -1056,6 +1140,13 @@ function wire() {
     if (mt && mt.shared) wsSend({ t: 'metro', on: false });
     else wsSend({ t: 'metro', on: true, bpm: mt ? mt.bpm : mtBpm, beats: mt ? mt.beats : mtSig });
   };
+  // Свои данные и установка
+  $('iExport').onclick = () => exportMine().catch(() => toast('Не получилось сохранить файл'));
+  $('iImport').onclick = () => $('iImportFile').click();
+  $('iImportFile').onchange = () => { const f = $('iImportFile').files[0]; $('iImportFile').value = ''; if (f) { $('sheet').close(); importMine(f); } };
+  $('iInstall').onclick = doInstall;
+  $('welInst').onclick = doInstall;
+  $('welGo').onclick = () => $('welDlg').close();
   $('fsMinus').onclick = () => setFs(fs - 2);
   $('fsPlus').onclick = () => setFs(fs + 2);
   // Полоса «На экране»: текст — посмотреть, что там; кнопка — следовать / листать самому
@@ -1065,7 +1156,7 @@ function wire() {
   $('ctlNext').onclick = () => wsSend({ t: 'cmd', cmd: 'next' });
   $('ctlClear').onclick = () => wsSend({ t: 'cmd', cmd: 'clear' });
   $('conn').onclick = () => $('menuBtn').click();
-  $('menuBtn').onclick = () => { paintSheet(); $('sheet').showModal(); };
+  $('menuBtn').onclick = () => { paintSheet(); paintInstall(); paintMine(); $('sheet').showModal(); };
   $('sheetX').onclick = () => $('sheet').close();
   $('sheet').addEventListener('click', (e) => { if (e.target === $('sheet')) $('sheet').close(); });
   $('iSync').onclick = () => { $('sheet').close(); runSync(); };
