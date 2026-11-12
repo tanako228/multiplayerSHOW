@@ -1255,6 +1255,10 @@ const UI_THEMES = [
   // перемотка — «таблетка», громкость и крутилки — шкала из рисок, переключатели — белая таблетка
   { id: 'amber', name: 'Янтарь', deco: 'amber', fx: { uiGlass: '', uiAlpha: 16, uiGlow: 30, uiRadius: 10 },
     c: ['#1f2023', '#28292d', '#313237', '#43454b', '#ededed', '#9c9ea5', '#ffc21a', '#f08c1e', '#ff5a5f'] },
+  // «Закат» (deco: 'sunset', index.html): сиренево-серое матовое стекло, персиковое свечение снизу (по фото «Apply Filters»).
+  // Ползунки — тёмный утопленный жёлоб и светящаяся белая «таблетка» с розово-оранжевым ореолом
+  { id: 'sunset', name: 'Закат', deco: 'sunset', fx: { uiGlass: 'glass', uiAlpha: 22, uiGlow: 55, uiRadius: 14 },
+    c: ['#585a7a', '#66688a', '#4b4d6b', '#7d7fa0', '#fbf3ee', '#cfc9dc', '#ffe0cc', '#ff8c6e', '#ff6b7f'] },
 ];
 
 // Правка тем владельцем (localStorage cp.uiThemes): over — изменённые готовые темы {id: {c, fx, light}},
@@ -1281,6 +1285,8 @@ function applyUiColors() {
   const root = document.documentElement.style;
   for (const [v] of UI_COLORS) root.setProperty(v, p[v]);
   root.setProperty('--live-ink', p['--ink']);
+  // Непрозрачный цвет поля — для выпадающих списков: у стекла --field полупрозрачный, и Windows рисовала список светлым
+  root.setProperty('--field-solid', p['--field']);
   root.colorScheme = p.scheme;
   // Логотип: на светлом фоне программы — тёмные буквы (logo-light-…), на тёмном — светлые
   $('brandLogo').src = p.scheme === 'light' ? 'brand/logo-light-transparent.svg' : 'brand/logo-dark-transparent.svg';
@@ -1291,8 +1297,8 @@ function applyUiColors() {
 }
 
 // Эффекты оформления: свечение акцента (uiGlow 0–100), панели (uiGlass: '' | 'glass' | 'liquid', старое true = 'glass'),
-// прозрачность панелей (uiAlpha 0–60 %), скругление углов (uiRadius, px у кнопок), шрифт (uiFont, UI_FONTS), заглавные (uiCaps)
-const UI_FX = ['uiGlow', 'uiGlass', 'uiRadius', 'uiAlpha', 'uiFont', 'uiCaps'];
+// прозрачность панелей (uiAlpha 0–60 %), размытие под стеклом (uiBlur 0–40 px, --blur), скругление углов (uiRadius, px у кнопок), шрифт (uiFont, UI_FONTS), заглавные (uiCaps)
+const UI_FX = ['uiGlow', 'uiGlass', 'uiRadius', 'uiAlpha', 'uiBlur', 'uiFont', 'uiCaps'];
 // Шрифты — только системные Windows (внешние подключать нельзя): Bahnschrift — техничный DIN, Cascadia Mono — моноширинный
 const UI_FONTS = [
   ['', 'Обычный (Segoe UI)'],
@@ -1301,6 +1307,7 @@ const UI_FONTS = [
   ['geo', 'Геометрический (Century Gothic)'], // есть, где стоит Office; нет — Segoe UI Variable Display
   ['mono', 'Моноширинный (Cascadia Mono)'],
 ];
+const uiBlurPx = () => Math.max(0, Math.min(40, Number.isFinite(+settings.uiBlur) ? +settings.uiBlur : 18));
 const uiGlassMode = () => (settings.uiGlass === 'liquid' ? 'liquid' : settings.uiGlass ? 'glass' : '');
 function applyUiFx(p) {
   const html = document.documentElement;
@@ -1320,10 +1327,11 @@ function applyUiFx(p) {
     root.setProperty('--panel', `color-mix(in srgb, ${p['--panel']} ${100 - a}%, transparent)`);
     root.setProperty('--field', `color-mix(in srgb, ${p['--field']} ${Math.max(20, 100 - a * 1.4)}%, transparent)`);
   }
+  root.setProperty('--blur', uiBlurPx() + 'px');
   html.dataset.uiFont = UI_FONTS.some(([id]) => id === settings.uiFont) ? settings.uiFont : '';
   html.dataset.uiDeco = uiTheme().deco || ''; // особое оформление темы (свечение, «таблетки»)
   html.classList.toggle('ui-caps', !!settings.uiCaps);
-  const ctl = ['aura', 'amber'].includes(html.dataset.uiDeco); // темы со своими ползунками, переключателями и крутилками
+  const ctl = ['aura', 'amber', 'sunset'].includes(html.dataset.uiDeco); // темы со своими ползунками, переключателями и крутилками
   html.classList.toggle('ui-ctl', ctl);
   auraRun(ctl);
 }
@@ -1475,14 +1483,12 @@ function renderUiColors() {
   const pal = uiPalette();
   for (const [v, label] of UI_COLORS) {
     const row = Object.assign(document.createElement('div'), { className: 'ui-color' });
-    const input = Object.assign(document.createElement('input'), { type: 'color', value: pal[v] });
-    const code = Object.assign(document.createElement('code'), { textContent: input.value + ((settings.uiColors || {})[v] ? ' · свой' : '') });
-    input.addEventListener('input', () => {
-      settings.uiColors = { ...settings.uiColors, [v]: input.value };
-      code.textContent = input.value + ' · свой';
+    const code = Object.assign(document.createElement('code'), { textContent: pal[v] + ((settings.uiColors || {})[v] ? ' · свой' : '') });
+    const input = ColorPicker.field(pal[v], null, (h) => {
+      settings.uiColors = { ...settings.uiColors, [v]: h };
+      code.textContent = h + ' · свой';
       applyUiColors();
-    });
-    input.addEventListener('change', saveSettings);
+    }, { onClose: saveSettings });
     row.append(Object.assign(document.createElement('span'), { textContent: label }), Object.assign(document.createElement('span'), { className: 'btns-row', style: 'margin:0;align-items:center' }));
     row.lastChild.append(code, input);
     box.append(row);
@@ -1492,6 +1498,7 @@ function renderUiColors() {
   $('uiRadius').value = Number.isFinite(+settings.uiRadius) ? +settings.uiRadius : 6;
   $('uiGlass').value = uiGlassMode();
   $('uiAlpha').value = Number.isFinite(+settings.uiAlpha) ? +settings.uiAlpha : 16;
+  $('uiBlur').value = uiBlurPx();
   $('uiFont').value = settings.uiFont || '';
   $('uiCaps').checked = !!settings.uiCaps;
   uiFxLabels();
@@ -1500,10 +1507,11 @@ function uiFxLabels() {
   $('uiGlowVal').textContent = +$('uiGlow').value ? $('uiGlow').value + '%' : 'выкл.';
   $('uiRadiusVal').textContent = $('uiRadius').value + ' px';
   $('uiAlphaVal').textContent = $('uiAlpha').value + '%';
-  $('uiAlpha').disabled = !$('uiGlass').value; // прозрачность — только у стеклянных панелей
+  $('uiBlurVal').textContent = +$('uiBlur').value ? $('uiBlur').value + ' px' : 'выкл.';
+  $('uiAlpha').disabled = $('uiBlur').disabled = !$('uiGlass').value; // прозрачность и размытие — только у стеклянных панелей
 }
 $('uiFont').replaceChildren(...UI_FONTS.map(([v, t]) => new Option(t, v)));
-for (const id of ['uiGlow', 'uiRadius', 'uiAlpha']) {
+for (const id of ['uiGlow', 'uiRadius', 'uiAlpha', 'uiBlur']) {
   $(id).addEventListener('input', () => { settings[id] = +$(id).value; uiFxLabels(); applyUiColors(); });
   $(id).addEventListener('change', saveSettings);
 }
@@ -1660,7 +1668,7 @@ function renderPresets() {
     const row = Object.assign(document.createElement('div'), { className: 'preset-row' });
     const name = Object.assign(document.createElement('div'), { className: 'pname', textContent: p.name });
     name.append(Object.assign(document.createElement('small'), {
-      textContent: new Date(p.date).toLocaleString('ru-RU') + (p.themes ? ` · с темами слайдов (${p.themes.length})` : ''),
+      textContent: new Date(p.date).toLocaleString(I18n.loc) + (p.themes ? ` · с темами слайдов (${p.themes.length})` : ''),
     }));
     const b = (text, fn, cls) => { const x = Object.assign(document.createElement('button'), { textContent: text, className: cls || '' }); x.addEventListener('click', fn); return x; };
     row.append(name,
@@ -1678,7 +1686,7 @@ function renderPresets() {
 }
 
 $('presetSave').addEventListener('click', async () => {
-  const name = await askName('Название пресета', 'Мои настройки ' + new Date().toLocaleDateString('ru-RU'));
+  const name = await askName('Название пресета', 'Мои настройки ' + new Date().toLocaleDateString(I18n.loc));
   if (!name) return;
   const p = { id: newId(), name, date: Date.now(), settings: settingsSnapshot() };
   if ($('presetWithThemes').checked && lib) { p.themes = clone(lib.themes); p.themeFor = clone(lib.themeFor); }
@@ -1863,7 +1871,7 @@ function renderRepoState() {
   if (!r.dir) st.textContent = 'Репозиторий не подключён. Нажмите «Выбрать папку…» — например, папку на флешке или в облачном диске.';
   else if (r.hold) st.textContent = `Папка: ${r.dir}. В ней уже есть данные — возьмите нужное ниже («Восстановить») или нажмите «Отправить в репозиторий»: ваши данные добавятся к тем, что в папке, ничего не удалится.`;
   else {
-    const when = repoLast && repoLast.date ? new Date(repoLast.date).toLocaleString('ru-RU') : 'ещё не сохранялось';
+    const when = repoLast && repoLast.date ? new Date(repoLast.date).toLocaleString(I18n.loc) : 'ещё не сохранялось';
     st.textContent = `Папка: ${r.dir} · последнее сохранение: ${when}` + (repoLast && repoLast.files ? ` · файлов: ${repoLast.files}` : '') + (r.auto ? '' : ' · автосохранение выключено');
   }
   for (const id of ['repoNow', 'repoOpen', 'repoOff', 'repoReplace']) $(id).disabled = !r.dir;
@@ -1945,7 +1953,7 @@ let restoreSrc = null; // { kind, dir }
 function openRestore(res) {
   restoreSrc = { kind: res.kind, dir: res.dir };
   const table = res.kind === 'repo' ? REPO_NAMES : OLD_PARTS;
-  $('restoreInfo').textContent = (res.kind === 'repo' ? 'Репозиторий' : 'Резервная копия') + ` от ${new Date(res.date).toLocaleString('ru-RU')} (${res.dir}). Что в нём есть:`;
+  $('restoreInfo').textContent = (res.kind === 'repo' ? 'Репозиторий' : 'Резервная копия') + ` от ${new Date(res.date).toLocaleString(I18n.loc)} (${res.dir}). Что в нём есть:`;
   partBoxes($('restoreParts'), table, res.parts, res.parts);
   $('restoreReplace').hidden = res.kind !== 'repo'; // старые копии — только как раньше
   $('restoreGo').textContent = res.kind === 'repo' ? 'Добавить в программу' : 'Восстановить выбранное';

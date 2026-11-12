@@ -200,7 +200,13 @@ function grGrpPaint() {
     cb.addEventListener('change', () => grDo({ act: 'person', id: p.id, ctl: cb.checked }, cb.checked ? `«${p.name}» может листать слайды с телефона` : 'Листать с телефона больше нельзя'));
     ctl.append(cb, document.createTextNode(' Может листать'));
     ctl.title = 'Дальше / Назад, показать слайд, убрать текст с экрана — с телефона';
-    head.append(grEl('b', '', p.name), role, ctl, ...(p.pw ? [grEl('span', 'tm-pw', 'с паролем')] : []), grEl('span', 'spacer'),
+    // Право править аккорды песен с телефона — тоже у человека, не у роли
+    const chd = grEl('label', 'check');
+    const cb2 = Object.assign(grEl('input'), { type: 'checkbox', checked: !!p.chd });
+    cb2.addEventListener('change', () => grDo({ act: 'person', id: p.id, chd: cb2.checked }, cb2.checked ? `«${p.name}» может править аккорды и ноты с телефона` : 'Править аккорды и ноты с телефона больше нельзя'));
+    chd.append(cb2, document.createTextNode(' Может править аккорды и ноты'));
+    chd.title = 'Вписывать и менять аккорды песен, добавлять и убирать листы нот с телефона или планшета, делиться ими файлом. Текст песни не меняется; Ctrl+Z в программе возвращает прежнее';
+    head.append(grEl('b', '', p.name), role, ctl, chd, ...(p.pw ? [grEl('span', 'tm-pw', 'с паролем')] : []), grEl('span', 'spacer'),
       grBtn(p.pw ? 'Сменить пароль' : 'Пароль', async () => {
         const pw = await askName(`Пароль для «${p.name}» (не короче 4 знаков) — скажите его человеку`, '');
         if (pw) grDo({ act: 'password', id: p.id, pw }, `Пароль для «${p.name}» задан`);
@@ -257,6 +263,10 @@ const GR_EV = {
   bad: (x) => `Попытка войти с чужим или отозванным ключом — ${x.ip}`,
   ctlOn: (x) => `${x.name}: можно листать слайды с телефона`,
   ctlOff: (x) => `${x.name}: листать с телефона больше нельзя`,
+  chdOn: (x) => `${x.name}: можно править аккорды и ноты с телефона`,
+  chdOff: (x) => `${x.name}: править аккорды и ноты с телефона больше нельзя`,
+  chords: (x) => `${x.name} ${x.clear ? 'убрал(а) аккорды' : 'записал(а) аккорды'}: ${x.song}`,
+  sheets: (x) => `${x.name} ${x.del ? 'убрал(а) лист нот' : `добавил(а) ноты (листов: ${x.n})`}: ${x.song}`,
   pwOk: (x) => `${x.name} вошёл(ла) по паролю — ${x.dev}, ${x.ip}`,
   pwBad: (x) => `Неверный пароль: «${x.name}» — ${x.ip}`,
   locked: (x) => `Вход закрыт на ${x.min} мин. (много неверных паролей): «${x.name}», ${x.ip}`,
@@ -269,7 +279,7 @@ const GR_EV = {
   metroOff: (x) => `Метроном для группы остановил(а) ${x.name}`,
 };
 const GR_MODES = { qr: 'по QR-коду и «Пустить»', qrpass: 'с паролем сразу, без пароля — «Пустить»', pass: 'только имя и пароль' };
-const GR_KINDS = { in: ['join', 'approve', 'admit', 'reject', 'off', 'on', 'revoke', 'delPerson', 'bad', 'ctlOn', 'ctlOff', 'pwOk'],
+const GR_KINDS = { in: ['join', 'approve', 'admit', 'reject', 'off', 'on', 'revoke', 'delPerson', 'bad', 'ctlOn', 'ctlOff', 'chdOn', 'chdOff', 'chords', 'sheets', 'pwOk'],
   pw: ['pwOk', 'pwBad', 'locked', 'unlock', 'pwSet', 'pwDel', 'mode'], msg: ['msg', 'metroOn', 'metroOff'] };
 let grLogN = 200; // «Весь журнал» — до 20000 строк
 let grLogT = 0;
@@ -572,4 +582,37 @@ window.api.onTeamCmd((c) => {
   if (c.cmd === 'next' || c.cmd === 'prev') { grStep(c.cmd === 'next' ? 1 : -1); flashStatus(`${who}: ${c.cmd === 'next' ? 'дальше' : 'назад'}`); }
   else if (c.cmd === 'clear') { grClear(); flashStatus(`${who}: текст убран с экрана`); }
   else if (c.cmd === 'show') { if (grShow(c)) flashStatus(`${who}: показан слайд`); else flashStatus(`${who}: этого слайда уже нет`); }
+});
+
+// Аккорды песни с телефона (право «Может править аккорды», teamapi.js: putChords): пишем в song.chords, текст песни не трогаем.
+// Меняет lib через saveLib — Ctrl+Z вернёт прежние аккорды; телефоны докачают песню сами.
+window.api.onTeamChords((c) => {
+  const done = (err) => window.api.teamChordsDone({ rid: c && c.rid, ...(err ? { err } : {}) });
+  if (!c || typeof lib === 'undefined' || !lib) { done('Библиотека ещё не загружена'); return; }
+  const it = lib.items[c.id];
+  if (!it || !it.song) { done('Такой песни в программе уже нет'); return; }
+  const text = String(c.chords || '').trimEnd();
+  if (text.trim()) it.song.chords = text; else delete it.song.chords;
+  // аккорды из чужого файла — в своей тональности: она приходит вместе с ними
+  if (c.key !== undefined) { const k = String(c.key || '').trim().slice(0, 8); if (k) it.song.key = k; else delete it.song.key; }
+  saveLib();
+  flashStatus(`Телефон (${c.who || '?'}): ${text.trim() ? 'аккорды записаны' : 'аккорды убраны'} — «${it.name}». Ctrl+Z — вернуть`);
+  done();
+});
+
+// Ноты песни с телефона (то же право): добавить листы (main.js уже сделал из фото/PDF файлы в sheets) или убрать лист.
+// Через saveLib — Ctrl+Z вернёт; файлы листов не удаляются (их держит отмена и репозиторий)
+window.api.onTeamSheets((c) => {
+  const done = (err) => window.api.teamChordsDone({ rid: c && c.rid, ...(err ? { err } : {}) });
+  if (!c || typeof lib === 'undefined' || !lib) { done('Библиотека ещё не загружена'); return; }
+  const it = lib.items[c.id];
+  if (!it || !it.song) { done('Такой песни в программе уже нет'); return; }
+  const base = (f) => String(f || '').split(/[\\/]/).pop();
+  let list = Array.isArray(it.song.sheets) ? it.song.sheets.slice() : [];
+  if (c.del) list = list.filter((x) => base(x.file) !== c.del);
+  for (const x of c.add || []) if (!list.some((y) => base(y.file) === base(x.file))) list.push(x);
+  if (list.length) it.song.sheets = list; else delete it.song.sheets;
+  saveLib();
+  flashStatus(`Телефон (${c.who || '?'}): ${c.del ? 'лист нот убран' : 'ноты добавлены'} — «${it.name}». Ctrl+Z — вернуть`);
+  done();
 });

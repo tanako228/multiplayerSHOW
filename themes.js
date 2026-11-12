@@ -19,7 +19,7 @@
      text: { bind: content|ref|title|ccli|translation|label|number|static, text, font, size, color, weight, italic, underline, strike, upper, case: ''|upper|lower|title,
              align: left|center|right|justify, valign, lh, ls, pad, fit: none|shrink|grow|both|box, min, max,
              tfill: { type: color|gradient|media|cut, a, b, angle, url, op }, tstroke, tshadow, scroll: { on, dir: left|up, speed, fade },
-             plate: { on, mode: block|lines|fixed|wide, color, op, blur, pad, radius, w, h, dx, dy, stroke, shadow } }
+             plate: { on, mode: block|lines|fixed|wide, full — во всю ширину блока (block, lines), color, op, blur, pad, gap — зазор между полосами во всю ширину (lines + full), radius, w, h, dx, dy, stroke, shadow: { …, spread — «Размер» } } }
      poly: { shape, pts: [[x, y] 0…1] }; image/video: { url, path, name, fit, crop: { l, t, r, b }, loop, mute, filt: { blur, sat, bright, contrast, hue, gray } }
    Рисует scene.js (style.tpls → Scene.build). Правится во вкладке «Темы» (themeeditor.js). */
 
@@ -69,7 +69,7 @@ const Themes = (() => {
     tfill: { type: 'color', color: '#ffffff', a: '#ffffff', b: '#aa7452', angle: 90, url: '', op: 1 },
     tstroke: { w: 0, color: '#000000', op: 1 }, tshadow: { ...SHADOW, op: 0.75, blur: 0.8, dist: 0.25 },
     scroll: { on: false, dir: 'left', speed: 10, fade: 6 },
-    plate: { on: false, mode: 'block', color: '#000000', op: 0.5, blur: 0, pad: 1.5, radius: 1, w: 80, h: 20, dx: 0, dy: 0, stroke: { w: 0, color: '#ffffff', op: 1 }, shadow: { ...SHADOW } },
+    plate: { on: false, mode: 'block', full: false, color: '#000000', op: 0.5, blur: 0, pad: 1.5, gap: 0.8, radius: 1, w: 80, h: 20, dx: 0, dy: 0, stroke: { w: 0, color: '#ffffff', op: 1 }, shadow: { ...SHADOW, spread: 0 } },
   };
   const MEDIA = { url: '', path: '', name: '', fit: 'cover', crop: { l: 0, t: 0, r: 0, b: 0 }, loop: true, mute: true, filt: { blur: 0, sat: 1, bright: 1, contrast: 1, hue: 0, gray: 0 } };
 

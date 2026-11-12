@@ -1751,11 +1751,7 @@ function scRange(v, min, max, step, on, unit = '', def) {
   return w;
 }
 function scColor(v, on) {
-  const i = scEl('input');
-  i.type = 'color';
-  i.value = /^#[0-9a-f]{6}$/i.test(v || '') ? v : '#000000';
-  i.addEventListener('input', () => on(i.value));
-  return i;
+  return ColorPicker.field(/^#[0-9a-f]{6}$/i.test(v || '') ? v : '#000000', null, (h) => on(h));
 }
 function scSelect(opts, v, on) {
   const s = scEl('select');
@@ -2109,14 +2105,14 @@ function scLayoutInsp(l) {
 // Шрифт и вид текста: у надписи, часов и инфоблоков
 function scTextRows(it, set) {
   const fonts = [...Object.entries(Scene.FONT_NAMES), ...Scene.fontsList().map((f) => [f.family, f.family])];
-  const info = !['text', 'clock'].includes(it.type);
-  const auto = info && it.auto !== false;
+  const fm = ['none', 'shrink', 'grow', 'both'].includes(it.tfit) ? it.tfit : (['text', 'clock'].includes(it.type) ? it.auto : it.auto !== false) ? 'shrink' : 'none';
   return [
     scRow('Шрифт', scSelect(fonts.filter((f, i, a) => a.findIndex((x) => x[0] === f[0]) === i), it.font || 'segoe', (v) => set({ font: v }))),
-    scRow(auto ? 'Размер (наибольший)' : 'Размер', scNum(it.size || 64, (v) => set({ size: Math.max(4, v) }), { min: 4, max: 2000 }),
+    scRow(fm === 'none' || fm === 'both' ? 'Размер' : fm === 'grow' ? 'Размер (наименьший)' : 'Размер (наибольший)', scNum(it.size || 64, (v) => set({ size: Math.max(4, v) }), { min: 4, max: 2000 }),
       scCheck('Ж', it.bold, (v) => set({ bold: v }), 'Жирный'), scCheck('К', it.italic, (v) => set({ italic: v }), 'Курсив')),
-    info ? scRow('Размер — сам', scCheck('', auto, (v) => set({ auto: v }, true), 'Длинный текст уменьшается, чтобы влезть в блок'),
-      auto ? scEl('span', 'te-sub', 'не меньше') : null, auto ? scNum(it.minSize || 14, (v) => set({ minSize: Math.max(4, v) }), { min: 4, max: 400 }) : null) : null,
+    scRow('Не помещается', scSelect([['none', 'Как задано'], ['shrink', 'Уменьшать'], ['grow', 'Увеличивать до заполнения'], ['both', 'Подгонять в пределах']], fm, (v) => set({ tfit: v }, true))),
+    fm === 'shrink' || fm === 'both' ? scRow('Не меньше', scNum(it.minSize || 14, (v) => set({ minSize: Math.max(4, v) }), { min: 4, max: 400 }), scEl('span', 'te-sub', 'px')) : null,
+    fm === 'grow' || fm === 'both' ? scRow('Не больше', scNum(it.maxSize || 400, (v) => set({ maxSize: Math.max(4, v) }), { min: 4, max: 2000 }), scEl('span', 'te-sub', 'px')) : null,
     scRow('Выравнивание', scSelect([['left', 'Слева'], ['center', 'По центру'], ['right', 'Справа'], ['justify', 'По ширине']], it.align || 'center', (v) => set({ align: v })),
       scSelect([['top', 'Сверху'], ['middle', 'Посередине'], ['bottom', 'Снизу']], it.valign || 'middle', (v) => set({ valign: v }))),
     scRow('Насыщенность', scSelect([['', 'Как «Ж»'], ['100', 'Сверхтонкий'], ['200', 'Очень тонкий'], ['300', 'Тонкий'], ['400', 'Обычный'], ['500', 'Средний'], ['600', 'Полужирный'], ['700', 'Жирный'], ['800', 'Очень жирный'], ['900', 'Чёрный']], String(it.weight || ''), (v) => set({ weight: v ? Number(v) : 0 })),

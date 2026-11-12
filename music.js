@@ -299,7 +299,7 @@ async function renameMusicList(l) {
 }
 
 $('muPlNew').addEventListener('click', () => {
-  const base = 'Плейлист ' + new Date().toLocaleDateString('ru-RU');
+  const base = 'Плейлист ' + new Date().toLocaleDateString(I18n.loc);
   let name = base;
   for (let n = 2; musicLists.some((l) => l.name === name); n++) name = `${base} (${n})`;
   const l = { id: 'm' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), name, tracks: [] };

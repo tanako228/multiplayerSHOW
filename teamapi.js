@@ -25,13 +25,14 @@ const FMT = 2; // вид песни для телефона; поменялся 
 // 2 — этап 4: тональность, темп, размер, аккорды (song.chords целиком; по слайдам раскладывает телефон — chords.js)
 const ROLES = [
   { id: 'musician', name: 'Музыкант' },
+  { id: 'pianist', name: 'Пианист' }, // песня с нотами открывается нотами на весь экран
   { id: 'vocal', name: 'Вокалист' },
   { id: 'leader', name: 'Лидер' },
   { id: 'sound', name: 'Звук' },
   { id: 'tech', name: 'Техник' },
 ];
-// Право → у каких ролей есть; «управлять показом» (control) — не по роли, а галочкой у человека (ctl)
-const PERMS = { songs: ROLES.map((r) => r.id), control: [], msg: ['leader', 'sound'], metro: ['leader', 'sound'] };
+// Право → у каких ролей есть; «управлять показом» (control) и «править аккорды» (chords) — не по роли, а галочкой у человека (ctl, chd)
+const PERMS = { songs: ROLES.map((r) => r.id), control: [], chords: [], msg: ['leader', 'sound'], metro: ['leader', 'sound'] };
 const MODES = ['qr', 'qrpass', 'pass'];
 const LOCK_N = 5;            // неверных паролей подряд …
 const LOCK_MS = 10 * 60e3;   // … — вход закрыт на 10 минут
@@ -41,7 +42,7 @@ const PEND_MS = 10 * 60e3;   // запрос на вход живёт 10 мин�
 const LOG_MAX = 512 * 1024;  // журнал больше — старое в team-log.old.jsonl
 
 let o = {};        // { dir, libFile, store: { read, write }, notify(), on(), ver, cmd(c) }
-let people = [];   // [{ id, name, role, at, ctl }]
+let people = [];   // [{ id, name, role, at, ctl, chd }]
 let devices = [];  // [{ id, person, name, hash, at, seen, ip, off, synced }]
 let auth = { mode: 'qr' }; // как входят телефоны (team.json → auth)
 const byHash = new Map();
@@ -56,7 +57,7 @@ const newKey = () => crypto.randomBytes(24).toString('base64url');
 const clean = (s, n) => String(s == null ? '' : s).replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, n);
 const roleOk = (r) => ROLES.some((x) => x.id === r);
 const roleName = (r) => (ROLES.find((x) => x.id === r) || ROLES[0]).name;
-const can = (person, perm) => !!person && (perm === 'control' ? !!person.ctl : (PERMS[perm] || []).includes(person.role));
+const can = (person, perm) => !!person && (perm === 'control' ? !!person.ctl : perm === 'chords' ? !!person.chd : (PERMS[perm] || []).includes(person.role));
 const personOf = (d) => people.find((p) => p.id === d.person) || null;
 
 /* ----- Люди и устройства: team.json ----- */
@@ -64,7 +65,7 @@ const personOf = (d) => people.find((p) => p.id === d.person) || null;
 function load() {
   const j = o.store.read();
   people = (Array.isArray(j.people) ? j.people : []).filter((p) => p && p.id && p.name)
-    .map((p) => ({ id: String(p.id), name: clean(p.name, 40), role: roleOk(p.role) ? p.role : 'musician', at: Number(p.at) || 0, ctl: !!p.ctl,
+    .map((p) => ({ id: String(p.id), name: clean(p.name, 40), role: roleOk(p.role) ? p.role : 'musician', at: Number(p.at) || 0, ctl: !!p.ctl, chd: !!p.chd,
       ...(p.pw && /^[0-9a-f]{32}$/.test(p.pw.s) && /^[0-9a-f]{64}$/.test(p.pw.h) ? { pw: { s: p.pw.s, h: p.pw.h } } : {}) }));
   auth = { mode: j.auth && MODES.includes(j.auth.mode) ? j.auth.mode : 'qr' };
   devices = (Array.isArray(j.devices) ? j.devices : []).filter((d) => d && d.id && /^[0-9a-f]{64}$/.test(d.hash) && people.some((p) => p.id === d.person))
@@ -169,9 +170,10 @@ function send(req, res, code, obj) {
 }
 function readBody(req, max) {
   return new Promise((ok, no) => {
-    let b = '';
-    req.on('data', (c) => { b += c; if (b.length > max) { no(new Error('big')); req.destroy(); } });
-    req.on('end', () => { try { ok(JSON.parse(b || '{}') || {}); } catch (e) { no(e); } });
+    const parts = [];
+    let n = 0;
+    req.on('data', (c) => { n += c.length; if (n > max) { no(new Error('big')); req.destroy(); } else parts.push(c); });
+    req.on('end', () => { try { ok(JSON.parse(Buffer.concat(parts).toString('utf8') || '{}') || {}); } catch (e) { no(e); } });
     req.on('error', no);
   });
 }
@@ -251,7 +253,7 @@ function flush(r) {
 function admit(r) {
   pending.delete(r.id);
   let p = people.find((x) => x.name.toLowerCase() === r.name.toLowerCase());
-  if (!p) { p = { id: newId(), name: r.name, role: r.role, at: Date.now(), ctl: false }; people.push(p); }
+  if (!p) { p = { id: newId(), name: r.name, role: r.role, at: Date.now(), ctl: false, chd: false }; people.push(p); }
   const key = newKey();
   const d = { id: newId(), person: p.id, name: r.dev, hash: sha(key), at: Date.now(), seen: Date.now(), ip: r.ip, off: false, synced: 0 };
   devices.push(d);
@@ -269,6 +271,7 @@ let sync = null;     // { v, lib, seq, songs: { id: [отпечаток, ном�
 let pay = new Map(); // id → песня, как уходит на телефон
 let ord = [];        // [{ id, n, del }] по возрастанию номера
 let libs = [];       // библиотеки с песнями: [{ id, name, songs: [id] }]
+let sheetFiles = new Map(); // имя листа нот (abc.jpg) → путь на диске — только листы песен (song.sheets)
 let lh = '';         // отпечаток библиотек — телефон берёт их заново, только если поменялись
 let libSeen = -1;    // время изменения library.json, которое уже разобрано
 let fresh = null;    // { data, mtime } — свежая библиотека из lib:save (не читать файл заново)
@@ -292,6 +295,7 @@ function saveSync() {
 
 // Что уходит на телефон. Слайды — уже собранные программой (Songs.build): порядок аранжировки, повторы,
 // id слайда — постоянный (к нему потом привяжутся пометки и «что сейчас на экране»)
+const SHEET_RE = /^[\w-]{1,40}\.(jpg|png)$/;
 function songPay(it) {
   const s = it.song || {};
   const p = {
@@ -305,13 +309,22 @@ function songPay(it) {
   if (Number(s.tempo) > 0) p.tempo = Math.round(Number(s.tempo));
   if (/^\d{1,2}\/\d{1,2}$/.test(String(s.time || ''))) p.time = String(s.time);
   if (typeof s.chords === 'string' && s.chords.trim()) p.chords = s.chords.slice(0, 30000);
+  // Ноты: листы-картинки; телефон качает их отдельно (/api/v1/sheets/<f>) и хранит у себя
+  const sh = (Array.isArray(s.sheets) ? s.sheets : []).filter((x) => x && typeof x.file === 'string' && SHEET_RE.test(path.basename(x.file)));
+  if (sh.length) p.sheets = sh.map((x) => ({ f: path.basename(x.file), name: clean(x.name, 120), w: Number(x.w) || 0, h: Number(x.h) || 0 }));
   return p;
 }
 
 function apply(lib) {
   const items = lib && lib.items && typeof lib.items === 'object' ? lib.items : {};
   const now = new Map();
-  for (const it of Array.isArray(items) ? items : Object.values(items)) if (it && it.kind === 'song' && it.id) now.set(String(it.id), songPay(it));
+  const files = new Map();
+  for (const it of Array.isArray(items) ? items : Object.values(items)) {
+    if (!it || it.kind !== 'song' || !it.id) continue;
+    now.set(String(it.id), songPay(it));
+    for (const x of (it.song && Array.isArray(it.song.sheets) ? it.song.sheets : [])) if (x && typeof x.file === 'string') files.set(path.basename(x.file), x.file);
+  }
+  sheetFiles = files;
   let ch = false;
   for (const [id, p] of now) {
     const h = crypto.createHash('sha1').update(FMT + JSON.stringify(p)).digest('base64url').slice(0, 16);
@@ -432,7 +445,73 @@ function handle(req, res, u) {
     if (!can(person, 'songs')) return send(req, res, 403, { error: 'perm', text: 'Нет права смотреть песни' });
     return changes(req, res, u, d);
   }
+  // Аккорды песни с телефона — только с правом «Может править аккорды»; пишет окно оператора (o.chords), отменяется Ctrl+Z
+  if (p === '/songs/chords' && req.method === 'POST') { putChords(req, res, d, person); return; }
+  // Ноты: лист-картинка (право смотреть песни) и добавить/убрать лист (то же право, что аккорды)
+  if (p.startsWith('/sheets/') && req.method === 'GET') {
+    if (!can(person, 'songs')) return send(req, res, 403, { error: 'perm', text: 'Нет права смотреть песни' });
+    refresh();
+    return getSheet(req, res, p.slice(8));
+  }
+  if (p === '/songs/sheets' && req.method === 'POST') { putSheets(req, res, d, person); return; }
   send(req, res, 404, { error: 'nf' });
+}
+function getSheet(req, res, f) {
+  const file = SHEET_RE.test(f) ? sheetFiles.get(f) : null;
+  if (!file) return send(req, res, 404, { error: 'nf', text: 'Такого листа нот уже нет' });
+  fs.stat(file, (err, st) => {
+    if (err || !st.isFile()) return send(req, res, 404, { error: 'nf', text: 'Файл листа нот пропал с диска' });
+    // имя — по содержимому: лист не меняется, телефон хранит его у себя
+    res.writeHead(200, { 'Content-Type': /\.png$/i.test(f) ? 'image/png' : 'image/jpeg', 'Content-Length': st.size, 'Cache-Control': 'private, max-age=31536000, immutable' });
+    fs.createReadStream(file).on('error', () => res.destroy()).pipe(res);
+  });
+}
+// { id, add: { name, data: base64 (JPEG/PNG/PDF) } } или { id, del: имя листа }
+const shBusy = new Set(); // устройства, чей лист сейчас сохраняется
+async function putSheets(req, res, d, person) {
+  if (!can(person, 'chords')) return send(req, res, 403, { error: 'perm', text: 'Править ноты разрешает оператор в окне «Группа»' });
+  let b;
+  try { b = await readBody(req, 40 * 1024 * 1024); } catch { return send(req, res, 400, { error: 'body', text: 'Файл слишком большой (больше 30 МБ) или не прочитался' }); }
+  const id = String(b.id || '');
+  const it = pay.get(id);
+  if (!it) return send(req, res, 404, { error: 'nf', text: 'Такой песни в программе уже нет' });
+  if (!o.sheets) return send(req, res, 503, { error: 'off', text: 'Программа не готова принять ноты — её нужно закрыть полностью и запустить заново (обновление не применилось)' });
+  const c = { id, who: person.name };
+  if (b.del) {
+    if (!SHEET_RE.test(String(b.del))) return send(req, res, 400, { error: 'body', text: 'Нет такого листа' });
+    c.del = String(b.del);
+  } else {
+    const a = b.add || {};
+    const buf = typeof a.data === 'string' ? Buffer.from(a.data, 'base64') : null;
+    if (!buf || buf.length < 100) return send(req, res, 400, { error: 'body', text: 'Пустой файл' });
+    c.buf = buf;
+    c.name = clean(a.name, 120);
+  }
+  // по одному запросу с телефона за раз (телефон и шлёт листы по очереди)
+  if (shBusy.has(d.id)) return send(req, res, 429, { error: 'rate', text: 'Подождите — предыдущий лист ещё сохраняется' });
+  shBusy.add(d.id);
+  try {
+    const r = await o.sheets(c);
+    log('sheets', { name: person.name, song: it.name, n: (r && r.n) || 0, del: !!c.del });
+    send(req, res, 200, { ok: true, ...(r || {}) });
+  } catch (e) { send(req, res, 503, { error: 'off', text: (e && e.message) || 'Окно программы не ответило' }); } finally { shBusy.delete(d.id); }
+}
+async function putChords(req, res, d, person) {
+  if (!can(person, 'chords')) return send(req, res, 403, { error: 'perm', text: 'Править аккорды разрешает оператор в окне «Группа»' });
+  let b;
+  try { b = await readBody(req, 160 * 1024); } catch { return send(req, res, 400, { error: 'body', text: 'Не получилось прочитать запрос' }); }
+  const id = String(b.id || '');
+  const it = pay.get(id);
+  if (!it) return send(req, res, 404, { error: 'nf', text: 'Такой песни в программе уже нет' });
+  if (typeof b.chords !== 'string' || b.chords.length > 30000) return send(req, res, 400, { error: 'body', text: 'Аккорды слишком длинные' });
+  if (Date.now() - (d.chAt || 0) < 800) return send(req, res, 429, { error: 'rate', text: 'Подождите секунду' });
+  d.chAt = Date.now();
+  if (!o.chords) return send(req, res, 503, { error: 'off', text: 'Программа не готова принять аккорды — её нужно закрыть полностью и запустить заново (обновление не применилось)' });
+  try {
+    const r = await o.chords({ id, chords: b.chords.split(String.fromCharCode(13)).join('').trimEnd(), who: person.name, ...(typeof b.key === 'string' ? { key: clean(b.key, 8) } : {}) });
+    log('chords', { name: person.name, song: it.name, clear: !b.chords.trim() });
+    send(req, res, 200, { ok: true, ...(r || {}) });
+  } catch (e) { send(req, res, 503, { error: 'off', text: (e && e.message) || 'Окно программы не ответило' }); }
 }
 
 /* ----- Окно «Группа»: состояние и действия оператора ----- */
@@ -446,7 +525,7 @@ function state() {
     pending: [...pending.values()].filter((r) => !r.ok && !r.no).map((r) => ({ id: r.id, name: r.name, role: r.role, dev: r.dev, ip: r.ip, at: r.at })),
     people: people.map((p) => ({
       id: p.id, name: p.name, role: p.role, at: p.at,
-      ctl: !!p.ctl, pw: !!p.pw,
+      ctl: !!p.ctl, chd: !!p.chd, pw: !!p.pw,
       devices: devices.filter((d) => d.person === p.id).map((d) => ({ id: d.id, name: d.name, ip: d.ip, at: d.at, seen: d.seen, off: d.off, synced: d.synced, online: isOn(d, now) })),
     })),
     online: devices.filter((d) => isOn(d, now)).length,
@@ -484,6 +563,7 @@ function act(a) {
       }
       if (roleOk(a.role)) p.role = a.role;
       if (typeof a.ctl === 'boolean' && a.ctl !== p.ctl) { p.ctl = a.ctl; log(p.ctl ? 'ctlOn' : 'ctlOff', { name: p.name }); }
+      if (typeof a.chd === 'boolean' && a.chd !== !!p.chd) { p.chd = a.chd; log(p.chd ? 'chdOn' : 'chdOff', { name: p.name }); }
       saveTeam();
       for (const c of socks) if (c.d.person === p.id) wsSend(c, { t: 'me', me: me(c.d, p) }); // роль и права — телефону сразу
       break;
@@ -731,4 +811,4 @@ function shutdown() {
 }
 
 module.exports = { init, shutdown, handle, state, act, libSaved, upgrade, setLive, closeAll, ROLES,
-  _test: { refresh, apply, pending, sync: () => sync, socks, sets: () => sets, live: () => live, fails } };
+  _test: { refresh, apply, pending, sync: () => sync, pay: () => pay, socks, sets: () => sets, live: () => live, fails } };

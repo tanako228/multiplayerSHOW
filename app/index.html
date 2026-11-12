@@ -77,6 +77,7 @@
     </div>
     <select id="libSel" aria-label="Библиотека"></select>
   </div>
+  <div class="ext" id="extBox" hidden></div>
   <div class="list" id="list" role="list"></div>
   <p class="empty" id="empty" hidden></p>
   </div>
@@ -89,7 +90,7 @@
     <button class="icon" id="back" aria-label="Назад к песням">
       <svg viewBox="0 0 24 24"><path d="M15 5 8 12l7 7" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
     </button>
-    <h1 class="grow" id="songTitle"></h1>
+    <h1 class="grow" id="songTitle" data-noi18n></h1>
     <button class="keyb" id="songKey" hidden title="Аккорды и тональность" aria-label="Аккорды и тональность"></button>
     <button class="icon" id="penBtn" aria-label="Пенал: пометки и заметка" aria-pressed="false" title="Пенал" hidden>
       <svg viewBox="0 0 24 24"><path d="M7.2 11.5 15.6 3.1a1.6 1.6 0 0 1 2.3 0l.4.4a1.6 1.6 0 0 1 0 2.3l-5.7 5.7" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="M3 11.5h18v5.3a3.7 3.7 0 0 1-3.7 3.7H6.7A3.7 3.7 0 0 1 3 16.8z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M7 15.5h10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
@@ -126,6 +127,7 @@
   <div class="pp-row" id="ppColors"></div>
   <div class="pp-row" id="ppSizes"></div>
   <button class="pp-clear" id="ppClear">Стереть все пометки песни</button>
+  <button class="pp-more" id="ppStylus">Кнопки стилуса…</button>
 </div>
 <!-- Цвета (пенал): как в iPadOS — сетка, спектр, ползунки, непрозрачность, свои цвета, пипетка -->
 <dialog class="cp" id="cpDlg" aria-label="Цвета">
@@ -180,6 +182,71 @@
   </div>
 </dialog>
 
+<!-- Правка аккордов песни (право «Может править аккорды») -->
+<dialog class="full" id="chDlg">
+  <div class="sheet-head"><h2 id="chTitle">Аккорды</h2><button class="icon" id="chX" aria-label="Закрыть">
+    <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg></button></div>
+  <div class="ch-tabs"><div class="seg"><button id="chT1" aria-pressed="true">1. Вставить текст с аккордами</button><button id="chT2" aria-pressed="false">2. Результат</button></div></div>
+  <!-- Шаг 1: дополнительный текст с аккордами (с сайта, из файла) -->
+  <div class="ch-pane" id="chP1">
+    <p class="hint">Вставьте сюда текст песни <b>с аккордами</b> — с сайта или из файла: аккорды в [скобках] или строкой над словами. Нажмите «Перенести»: аккорды лягут на <b>основной текст</b> песни из программы. Основной текст не изменится.</p>
+    <textarea class="my-ta ch-ta" id="chPaste" spellcheck="false" autocapitalize="off" autocomplete="off" autocorrect="off" placeholder="Am        G&#10;Слава Богу в вышних&#10;C       F&#10;Мир на земле"></textarea>
+    <div class="btns"><button id="chClip">Вставить из буфера</button><button id="chFile">Из файла…</button></div>
+    <div class="btns"><button class="primary" id="chFit">Перенести на текст песни →</button></div>
+  </div>
+  <!-- Шаг 2: основной текст песни уже с аккордами; здесь можно поправить -->
+  <div class="ch-pane" id="chP2" hidden>
+    <div class="ch-keys" id="chKeys"></div>
+    <textarea class="my-ta ch-ta" id="chTa" spellcheck="false" autocapitalize="off" autocomplete="off" autocorrect="off"></textarea>
+    <div class="my-foot">
+      <p class="hint" id="chHint"></p>
+      <div class="btns"><button id="chClear" class="danger">Убрать все</button><button class="primary" id="chSave">Сохранить в программу</button></div>
+    </div>
+  </div>
+  <input type="file" id="chFileIn" accept=".txt,.cho,.chopro,.chordpro,.crd,.pro,text/plain" hidden>
+</dialog>
+
+<!-- Ноты песни (sheets.js): листы из программы и из файла; с правом — добавить и убрать -->
+<dialog class="full" id="shDlg">
+  <div class="sheet-head"><h2 id="shTitle" data-noi18n>Ноты</h2>
+    <button class="icon" id="shFsOn" aria-label="Ноты на весь экран" hidden><svg viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+    <button class="icon txt" id="shOut" aria-label="Мельче">−</button><span class="sh-zoom" id="shZoom">100%</span><button class="icon txt" id="shIn" aria-label="Крупнее">+</button>
+    <button class="icon" id="shX" aria-label="Закрыть"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg></button></div>
+  <div class="sh-body" id="shBody"></div>
+  <div class="sh-foot"><button id="shShare" hidden>Поделиться</button><button class="primary" id="shAdd" hidden>＋ Фото или PDF</button></div>
+  <div class="sh-fs">
+    <div class="sh-stage page" id="shStage"><img id="shImg" alt="" draggable="false"></div>
+    <div class="sh-fsbar" id="shFsBar">
+      <button id="shFsExit">‹ Текст и аккорды</button>
+      <span class="sh-pg" id="shPg"></span>
+      <button id="shFit">По ширине</button>
+      <button id="shFull" hidden>Весь экран</button>
+    </div>
+  </div>
+  <input type="file" id="shFile" accept="image/*,application/pdf,.pdf" multiple hidden>
+</dialog>
+
+<!-- Открыт файл с аккордами и нотами: на какую песню наложить -->
+<dialog class="sheet" id="imDlg">
+  <div class="sheet-head"><h2>Аккорды и ноты из файла</h2><button class="icon" id="imX" aria-label="Закрыть"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg></button></div>
+  <div class="sheet-body">
+    <p id="imWhat"></p>
+    <div id="imS1">
+      <p class="hint">На какую песню наложить? Слова останутся вашими — добавятся аккорды и ноты.</p>
+      <input class="field" id="imQ" type="search" placeholder="Найти песню по названию или словам" autocomplete="off">
+      <div class="im-list" id="imList"></div>
+      <div class="btns"><button id="imExt">Добавить в «Не синхронизированные»</button><button id="imView">Только посмотреть</button></div>
+    </div>
+    <div id="imS2" hidden>
+      <p id="imTo"></p>
+      <p class="hint" id="imHint"></p>
+      <p class="hint" id="imProgHint"></p>
+      <div class="btns"><button id="imMine">Только у меня на телефоне</button><button class="primary" id="imProg">Сохранить в программу</button></div>
+      <div class="btns"><button id="imBack">Другая песня</button></div>
+    </div>
+  </div>
+</dialog>
+
 <!-- Сообщения группе -->
 <dialog class="sheet" id="msgDlg">
   <div class="sheet-head"><h2>Сообщения группе</h2><button class="icon" id="msgX" aria-label="Закрыть">
@@ -231,10 +298,13 @@
     <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg></button></div>
   <div class="sheet-body">
     <label class="row-i sw"><span>Аккорды над словами</span><input type="checkbox" id="kChords"></label>
+    <div class="row-i step"><span>Размер текста</span><div class="stepper"><button id="kFsDown" aria-label="Текст мельче">−</button><b id="kFs"></b><button id="kFsUp" aria-label="Текст крупнее">+</button></div></div>
+    <div class="row-i step"><span>Размер аккордов</span><div class="stepper"><button id="kCfsDown" aria-label="Аккорды мельче">−</button><b id="kCfs"></b><button id="kCfsUp" aria-label="Аккорды крупнее">+</button></div></div>
     <div class="row-i step"><span>Тональность</span><div class="stepper"><button id="kDown" aria-label="На полтона ниже">−</button><b id="kKey"></b><button id="kUp" aria-label="На полтона выше">+</button></div></div>
     <div class="row-i step"><span>Капо</span><div class="stepper"><button id="cDown" aria-label="Капо ниже">−</button><b id="kCapo"></b><button id="cUp" aria-label="Капо выше">+</button></div></div>
     <p class="hint" id="kHint"></p>
-    <div class="btns"><button id="kReset">Как в оригинале</button></div>
+    <div class="btns"><button id="kEdit" hidden>Править аккорды</button><button id="kReset">Как в оригинале</button></div>
+    <div class="btns"><button id="kShare" hidden>Поделиться аккордами и нотами</button></div>
   </div>
 </dialog>
 
@@ -256,18 +326,36 @@
     <div class="row-i"><span>Адрес</span><b id="iAddr"></b></div>
     <div class="row-i"><span>Песен на телефоне</span><b id="iSongs"></b></div>
     <div class="row-i"><span>Обновлено</span><b id="iAt"></b></div>
+    <div class="row-i"><span>Язык</span><select id="uiLang" class="field lang-sel" data-noi18n></select></div>
     <div class="row-i step"><span>Фон</span><div class="seg" id="iTheme"><button data-th="dark">Чёрный</button><button data-th="gray">Серый</button><button data-th="white">Белый</button></div></div>
     <label class="row-i sw"><span>Звуки пенала</span><input type="checkbox" id="iPenSnd"></label>
     <div class="btns"><button id="iMsgs">Сообщения группе</button><button id="iMetro">Метроном</button></div>
+    <div class="btns"><button id="iStylus">Кнопки стилуса и педали</button></div>
     <div class="btns"><button id="iInstall" class="primary" hidden>Установить приложение</button></div>
     <p class="hint" id="iInstallHint" hidden></p>
     <div class="row-i"><span>Мои данные</span><b id="iMine"></b></div>
     <div class="btns"><button id="iExport">Сохранить в файл</button><button id="iImport">Загрузить из файла</button></div>
-    <input type="file" id="iImportFile" accept="application/json,.json" hidden>
+    <input type="file" id="iImportFile" hidden>
+    <div class="btns"><button id="iSongOpen">Открыть файл с аккордами и нотами</button></div>
+    <input type="file" id="iSongFile" hidden>
     <div class="btns"><button id="iSync">Обновить песни</button><button id="iResync">Загрузить всё заново</button></div>
     <p class="hint" id="iStore"></p>
     <p class="hint" id="iVer"></p>
     <div class="btns"><button class="danger" id="iForget">Отключить этот телефон</button></div>
+  </div>
+</dialog>
+
+<!-- Кнопки стилуса, блютус-кнопки и педали (stylus.js) -->
+<dialog class="sheet" id="sbDlg">
+  <div class="sheet-head"><h2>Кнопки стилуса</h2><button class="icon" id="sbX" aria-label="Закрыть">
+    <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg></button></div>
+  <div class="sheet-body">
+    <div id="sbList"></div>
+    <p class="hint" id="sbEmpty" hidden>Кнопок нет — нажмите «Добавить кнопку».</p>
+    <div class="btns"><button class="primary" id="sbAdd">Добавить кнопку</button><button id="sbReset">Как было</button></div>
+    <p class="hint">Предмет на кнопке: зажать кнопку и писать — этим предметом, пока держите; нажать и отпустить — взять насовсем, ещё раз — вернуть прежний. Обратный конец стилуса — всегда ластик.</p>
+    <p class="hint">Листать кнопкой можно в режиме «Листать самому» и в пенале.</p>
+    <p class="hint">Подходят стилусы с кнопкой (S Pen, Wacom, перо Windows), блютус-кнопки и педали для нот — они нажимают клавиши. Apple Pencil своих кнопок браузеру не передаёт.</p>
   </div>
 </dialog>
 
@@ -277,13 +365,24 @@
   <div class="btns"><button id="askNo">Отмена</button><button class="primary" id="askOk">Да</button></div>
 </dialog>
 
+<!-- Первый запуск: выбор языка (English / Русский / Eesti) -->
+<dialog class="ask lang-dlg" id="langDlg" data-noi18n>
+  <h3>Language · Язык · Keel</h3>
+  <p>Choose the app language. You can change it later in Info.<br>Выберите язык приложения. Потом его можно сменить в «Сведениях».<br>Valige rakenduse keel. Hiljem saab seda muuta jaotises „Teave“.</p>
+  <div class="lang-btns"><button class="primary" data-l="en">English</button><button data-l="ru">Русский</button><button data-l="et">Eesti</button></div>
+</dialog>
+
 <div class="toast" id="toast" hidden></div>
 
 <script src="vendor/minisearch.js"></script>
 <script src="db.js"></script>
+<script src="i18n.js"></script>
+<script src="lang-app.js"></script>
 <script src="chords.js"></script>
 <script src="pen.js"></script>
+<script src="stylus.js"></script>
 <script src="mine.js"></script>
+<script src="sheets.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

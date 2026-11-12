@@ -76,19 +76,55 @@ function curIp() {
 
 /* ----- DNS-провайдеры. Новый провайдер (свой домен у другого хостинга DNS) — ещё одна запись тут ----- */
 
+// DNS сети иногда не знает адрес провайдера (раздача с телефона, фильтры оператора: www.duckdns.org → «не найден»).
+// Тогда тот же запрос — с адресом из общих DNS (1.1.1.1, 8.8.8.8); сертификат сайта проверяется как обычно.
+const pubRes = new dns.promises.Resolver({ timeout: 4000, tries: 2 });
+pubRes.setServers(['1.1.1.1', '8.8.8.8', '9.9.9.9']);
+function viaPublicDns(method, url, headers, body) {
+  return new Promise((ok, fail) => {
+    const lookup = (host, o, cb) => {
+      if (typeof o === 'function') { cb = o; o = {}; }
+      pubRes.resolve4(host).then((ips) => {
+        if (!ips.length) throw Object.assign(new Error('нет адреса'), { code: 'ENOTFOUND' });
+        if (o && o.all) cb(null, ips.map((address) => ({ address, family: 4 })));
+        else cb(null, ips[0], 4);
+      }).catch((e) => cb(e));
+    };
+    const req = https.request(url, { method, headers, lookup, timeout: 20000 }, (res) => {
+      const chunks = [];
+      res.on('data', (c) => chunks.push(c));
+      res.on('end', () => ok({ status: res.statusCode, text: Buffer.concat(chunks).toString('utf8'), headers: { get: (k) => res.headers[String(k).toLowerCase()] || null } }));
+      res.on('error', fail);
+    });
+    req.on('timeout', () => req.destroy(new Error('нет ответа')));
+    req.on('error', fail);
+    if (body) req.write(body);
+    req.end();
+  });
+}
+const noName = (e) => /ENOTFOUND|EAI_AGAIN/.test(String((e && e.cause && e.cause.code) || (e && e.code) || ''));
+
 async function http(method, url, { headers = {}, body, tries = 3 } = {}) {
+  const hdr = { ...(body ? { 'Content-Type': 'application/json' } : {}), ...headers };
+  const data = body ? JSON.stringify(body) : undefined;
   for (let i = 0; ; i++) {
     let r;
     try {
-      r = await fetch(url, { method, headers: { ...(body ? { 'Content-Type': 'application/json' } : {}), ...headers }, body: body ? JSON.stringify(body) : undefined, signal: AbortSignal.timeout(20000) });
+      const f = await fetch(url, { method, headers: hdr, body: data, signal: AbortSignal.timeout(20000) });
+      r = { status: f.status, text: await f.text(), headers: f.headers };
     } catch (e) {
-      if (i + 1 < tries) { await sleep(3000); continue; }
-      throw new Error('Нет связи с ' + new URL(url).host + ' — есть ли интернет? (' + (e.cause && e.cause.code || e.message) + ')');
+      let e2 = e;
+      if (noName(e)) {
+        try { r = await viaPublicDns(method, url, hdr, data); } catch (x) { e2 = x; }
+      }
+      if (!r) {
+        if (i + 1 < tries) { await sleep(3000); continue; }
+        throw new Error('Нет связи с ' + new URL(url).host + ' — есть ли интернет? (' + (e2.cause && e2.cause.code || e2.code || e2.message) + ')');
+      }
     }
-    const text = await r.text();
     // deSEC ограничивает частоту запросов: 429 + Retry-After — подождать и повторить
     if (r.status === 429 && i + 1 < tries) { await sleep(Math.min(60, Number(r.headers.get('retry-after')) || 5) * 1000); continue; }
-    return { status: r.status, text };
+    return { status: r.status, text: r.text };
   }
 }
 const sleep = (ms) => new Promise((ok) => setTimeout(ok, ms));
@@ -364,7 +400,7 @@ const check = () => runJob('check', async (say) => {
   const pub = await ask(['1.1.1.1', '8.8.8.8'], host);
   const pubOk = pub.ips.includes(ip);
   if (pubOk) add(true, `Интернет (1.1.1.1): ${host} → ${ip}`);
-  else if (pub.ips.length) add(false, `Интернет (1.1.1.1): ${host} → ${pub.ips.join(', ')}, а у компьютера ${ip}`, 'Нажмите «Записать адрес в DNS». У deSEC старый адрес может держаться до часа.');
+  else if (pub.ips.length) add(false, `Интернет (1.1.1.1): ${host} → ${pub.ips.join(', ')}, а у компьютера ${ip}`, 'Нажмите «Записать адрес в DNS».' + (cfg.provider === 'desec' ? ' У deSEC старый адрес может держаться до часа.' : ' Новый адрес виден примерно через минуту.'));
   else add(false, `Интернет (1.1.1.1): ${host} не найден (${pub.err})`, 'Проверьте имя и токен, нажмите «Записать адрес в DNS».');
   const own = dns.getServers().filter((s) => net.isIPv4(s));
   if (own.length) {
@@ -406,13 +442,13 @@ function appVer() {
     }
   };
   try { walk(appDir); } catch { /* нет папки — всё равно ответим */ }
-  try { h.update('chords.js:'); h.update(fs.readFileSync(path.join(appDir, '..', 'chords.js'))); } catch { /* нет файла */ }
+  for (const n of ['chords.js', 'i18n.js']) { try { h.update(n + ':'); h.update(fs.readFileSync(path.join(appDir, '..', n))); } catch { /* нет файла */ } }
   return h.digest('hex').slice(0, 12);
 }
 // connect-src: свой адрес и его WebSocket (старый Safari не считает ws:// «своим» по 'self')
 const csp = (req) => {
   const h = String(req.headers.host || '').toLowerCase().replace(/[^a-z0-9.:[\]-]/g, '');
-  return "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; connect-src 'self'" + (h ? ` ws://${h} wss://${h}` : '') +
+  return "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; connect-src 'self'" + (h ? ` ws://${h} wss://${h}` : '') +
     "; object-src 'none'; base-uri 'none'; frame-ancestors 'none'";
 };
 // WebSocket /ws: только свой адрес и страница с него же (Origin) — чужой сайт не подключится от имени телефона
@@ -435,6 +471,8 @@ function route(req, res, u) {
   }
   if (u.pathname === '/app') { res.writeHead(301, { Location: '/app/' }); res.end(); return true; }
   if (!u.pathname.startsWith('/app/')) return false;
+  // «Поделиться» → «MP Группа» (Android) ловит sw.js; без него — просто открыть приложение
+  if (u.pathname === '/app/share') { req.resume(); res.writeHead(303, { Location: '/app/' }); res.end(); return true; }
   if (u.pathname === '/app/ping') {
     res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
     res.end(JSON.stringify({ app: 'church-presenter', name: 'multiplayerSHOW', team: 1, https: !!req.socket.encrypted }));
@@ -444,8 +482,9 @@ function route(req, res, u) {
   try { rel = decodeURIComponent(u.pathname.slice(5)) || 'index.html'; } catch { rel = ''; }
   // Значки 256 и 512 — из brand/ (тот же значок, что у программы); аккорды — общий chords.js программы
   const icon = /^icon-(256|512)\.png$/.exec(rel);
-  const shared = icon || rel === 'chords.js';
-  const file = icon ? path.join(appDir, '..', 'brand', `icon-${icon[1]}.png`) : rel === 'chords.js' ? path.join(appDir, '..', 'chords.js') : path.normalize(path.join(appDir, rel));
+  const SHARED = ['chords.js', 'i18n.js']; // общие с программой файлы из корня
+  const shared = icon || SHARED.includes(rel);
+  const file = icon ? path.join(appDir, '..', 'brand', `icon-${icon[1]}.png`) : SHARED.includes(rel) ? path.join(appDir, '..', rel) : path.normalize(path.join(appDir, rel));
   if (!rel || rel.includes('\0') || (!shared && !file.startsWith(appDir + path.sep))) { res.writeHead(404); res.end(); return true; }
   fs.readFile(file, (err, buf) => {
     if (err) { res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' }); res.end('нет такой страницы'); return; }
@@ -533,7 +572,7 @@ function init(o) {
   fs.mkdirSync(dir, { recursive: true });
   load();
   loadCert();
-  api.init({ dir, libFile: o.libFile || path.join(dir, 'library.json'), ver: o.ver || '', on: () => cfg.on, notify, cmd: o.cmd,
+  api.init({ dir, libFile: o.libFile || path.join(dir, 'library.json'), ver: o.ver || '', on: () => cfg.on, notify, cmd: o.cmd, chords: o.chords, sheets: o.sheets,
     store: { read: readFile, write: writeFile } });
   start();
   if (opt.want) opt.want();
@@ -568,4 +607,4 @@ function setup(ipcMain, o) {
 }
 
 module.exports = { setup, init, shutdown, route, upgrade, info, set, setToken, issue, check, dnsNow, port: () => cfg.port, on: () => cfg.on, changed: notify,
-  libSaved: (data) => api.libSaved(data), PROVIDERS, _test: { authServers, waitTxt, curIp, api } };
+  libSaved: (data) => api.libSaved(data), PROVIDERS, _test: { authServers, waitTxt, curIp, api, http } };

@@ -1,5 +1,6 @@
 /* Данные приложения на телефоне: IndexedDB «mps» — песни (songs), служебное (meta: auth, join, sync, libs),
-   свои данные человека: пометки и заметки (marks, pen.js), «Моя версия» песни (mine). Свои данные на сервер не уходят,
+   свои данные человека: пометки и заметки (marks, pen.js), «Моя версия» песни (mine), аккорды и ноты из чужого файла (got, sheets.js).
+   Листы нот программы — sheets ({ id: имя файла, type, buf }): качаются после синхронизации, нужны без сети. Свои данные на сервер не уходят,
    «Отключить этот телефон» их не стирает; перенос на другой телефон — экспорт/импорт (меню «…»).
    Связь с программой — Store.api (/api/v1/…, ключ устройства в заголовке Authorization).
    Синхронизация: /api/v1/songs/changes?since=N порциями; номер N пишется вместе с порцией (одна транзакция) —
@@ -25,13 +26,15 @@ const Store = (() => {
 
   function open() {
     return new Promise((ok, no) => {
-      const r = indexedDB.open('mps', 2);
+      const r = indexedDB.open('mps', 3);
       r.onupgradeneeded = () => {
         const d = r.result;
         if (!d.objectStoreNames.contains('songs')) d.createObjectStore('songs', { keyPath: 'id' });
         if (!d.objectStoreNames.contains('meta')) d.createObjectStore('meta');
         if (!d.objectStoreNames.contains('marks')) d.createObjectStore('marks', { keyPath: 'id' });
         if (!d.objectStoreNames.contains('mine')) d.createObjectStore('mine', { keyPath: 'id' });
+        if (!d.objectStoreNames.contains('sheets')) d.createObjectStore('sheets', { keyPath: 'id' });
+        if (!d.objectStoreNames.contains('got')) d.createObjectStore('got', { keyPath: 'id' });
       };
       r.onsuccess = () => { db = r.result; ok(); };
       r.onerror = () => no(r.error || new Error('IndexedDB'));
@@ -57,6 +60,7 @@ const Store = (() => {
   const putRec = (st, r) => tx([st], 'readwrite', (t) => { t.objectStore(st).put(r); });
   const delRec = (st, id) => tx([st], 'readwrite', (t) => { t.objectStore(st).delete(id); });
   const allRec = (st) => tx([st], 'readonly', (t) => t.objectStore(st).getAll());
+  const allKeys = (st) => tx([st], 'readonly', (t) => t.objectStore(st).getAllKeys());
 
   // Всё, что есть на телефоне — сразу в память (3000 песен — пара мегабайт)
   async function load() {
@@ -85,7 +89,7 @@ const Store = (() => {
   async function forget() {
     token = '';
     me = null;
-    await tx(['songs', 'meta'], 'readwrite', (t) => { t.objectStore('songs').clear(); t.objectStore('meta').clear(); });
+    await tx(['songs', 'meta', 'sheets'], 'readwrite', (t) => { t.objectStore('songs').clear(); t.objectStore('meta').clear(); t.objectStore('sheets').clear(); });
     songs.clear();
     libs = [];
     meta = { lib: '', since: 0, lh: '', at: 0 };
@@ -244,7 +248,7 @@ const Store = (() => {
   }
 
   return {
-    open, load, getMeta, setMeta, delMeta, getRec, putRec, delRec, allRec, saveAuth, saveMe, forget, dropAuth, api, sync, resync, indexAll, search,
+    open, load, getMeta, setMeta, delMeta, getRec, putRec, delRec, allRec, allKeys, saveAuth, saveMe, forget, dropAuth, api, sync, resync, indexAll, search,
     songs, norm,
     get token() { return token; },
     get me() { return me; },

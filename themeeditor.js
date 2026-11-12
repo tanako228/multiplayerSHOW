@@ -1280,19 +1280,24 @@ const teUi = {
     return wrap;
   },
   // Цвет: образец, код #rrggbb и пипетка (взять цвет с экрана)
+  // Образец открывает общее окно «Цвета» (colorpicker.js) с прозрачностью 0–100 %. У цвета есть парное поле
+  // прозрачности (.color → .op, .a → .opA, .b → .opB); у фона шаблона (bg.*) прозрачности нет.
   color(o, path, d) {
     const wrap = teEl('span');
     wrap.style.cssText = 'display:flex;align-items:center;gap:4px';
-    const c = Object.assign(document.createElement('input'), { type: 'color', value: teGet(o, path, d) });
+    const base = path.replace(/\.[^.]+$/, '');
+    const opPath = path.startsWith('bg.') ? null : path.endsWith('.color') ? base + '.op' : path.endsWith('.a') ? base + '.opA' : path.endsWith('.b') ? base + '.opB' : null;
+    const opNow = () => { const v = teGet(o, opPath, teGet(o, base + '.op', 1)); return Number.isFinite(Number(v)) ? Number(v) : 1; };
     const hex = Object.assign(document.createElement('input'), { type: 'text', className: 'hex', value: teGet(o, path, d), maxLength: 7 });
-    const set = (v) => { c.value = v; hex.value = v; teEdit(() => teSet(o, path, v), { list: false }); };
-    c.addEventListener('input', () => set(c.value));
-    hex.addEventListener('change', () => { let v = hex.value.trim(); if (!v.startsWith('#')) v = '#' + v; if (/^#[0-9a-f]{3}$/i.test(v)) v = '#' + [...v.slice(1)].map((x) => x + x).join(''); if (/^#[0-9a-f]{6}$/i.test(v)) set(v.toLowerCase()); else hex.value = c.value; });
-    wrap.append(c, hex);
-    if (window.EyeDropper) {
-      const p = teIconBtn('pipette', 'Пипетка: взять цвет с экрана', async () => { try { const r = await new EyeDropper().open(); set(r.sRGBHex.toLowerCase()); } catch { /* отменили */ } });
-      wrap.append(p);
-    }
+    const f = ColorPicker.field(hex.value, opPath ? opNow() : null, (v, op) => {
+      hex.value = v;
+      teEdit(() => { teSet(o, path, v); if (opPath && op != null) teSet(o, opPath, Math.round(op * 100) / 100); }, { list: false });
+    }, { onClose: () => { if (opPath) teRenderInsp(); } }); // закрыли — перерисовать, чтобы «Непрозрачность» ниже совпала
+    hex.addEventListener('change', () => {
+      const v = ColorPicker.norm(hex.value);
+      if (v) { hex.value = v; f.set(v, opPath ? opNow() : null); teEdit(() => teSet(o, path, v), { list: false }); } else hex.value = teGet(o, path, d);
+    });
+    wrap.append(f, hex);
     return wrap;
   },
   sel(o, path, d, opts, re) {
@@ -1677,13 +1682,15 @@ function tePaintRows(b, o, key, withNone, withCut) {
   if (f.type !== 'none' && f.type !== 'cut') U.row(b, 'Непрозрачность', U.range(o, key + '.op', 1, pct));
 }
 
-function teShadowRows(b, o, key) {
+// spread — ещё «Размер» (тень больше или меньше самого объекта; только у box-shadow)
+function teShadowRows(b, o, key, spread) {
   const U = teUi;
   U.row(b, '', U.chk(o, key + '.on', 'тень', true));
   if (!teGet(o, key + '.on', false)) return;
   U.row(b, 'Цвет', U.color(o, key + '.color', '#000000'));
   U.row(b, 'Непрозрачность', U.range(o, key + '.op', 0.6, pct));
   U.row(b, 'Размытие', U.range(o, key + '.blur', 1.5, { min: 0, max: 6, step: 0.1 }));
+  if (spread) U.row(b, 'Размер', U.range(o, key + '.spread', 0, { min: -3, max: 6, step: 0.1 }));
   U.row(b, 'Угол', U.range(o, key + '.angle', 90, { min: 0, max: 360, unit: '°' }));
   U.row(b, 'Смещение', U.range(o, key + '.dist', 0.5, { min: 0, max: 4, step: 0.05 }));
 }
@@ -1816,11 +1823,24 @@ function teInspText(fs, o) {
   b = U.sec(fs, 'Подложка под текстом', false, o.plate.on);
   U.row(b, '', U.chk(o, 'plate.on', 'подложка', true));
   if (o.plate.on) {
-    U.row(b, 'Вид', U.seg(o, 'plate.mode', 'block', [['block', 'Под текст', 'Одна подложка под весь текст — растёт вместе с ним'], ['lines', 'По строкам', 'Отдельная полоса под каждой строкой'], ['fixed', 'Размер', 'Подложка своего размера'], ['wide', 'Ширина', 'Во всю ширину экрана, по высоте — как текст']], true));
+    const pm = o.plate.mode || 'block';
+    U.row(b, 'Вид', U.seg(o, 'plate.mode', 'block', [['block', 'Под текст', 'Одна подложка под весь текст — растёт вместе с ним'], ['lines', 'По строкам', 'Отдельная полоса под каждой строкой'], ['fixed', 'Размер', 'Подложка своего размера'], ['wide', 'Экран', 'Во всю ширину экрана, по высоте — как текст']], true));
+    // Ширина подложки (и полос по строкам): по тексту или от края до края текстового блока
+    const canFull = pm === 'block' || pm === 'lines';
+    const full = canFull && !!o.plate.full;
+    if (canFull) {
+      U.row(b, 'Ширина', U.seg(o, 'plate.full', false, pm === 'lines'
+        ? [[false, 'По строке', 'Каждая полоса — длиной со свою строку'], [true, 'Во весь блок', 'Полосы от края до края текстового блока']]
+        : [[false, 'По тексту', 'Подложка — по ширине текста'], [true, 'Во весь блок', 'Подложка от края до края текстового блока']], true));
+    }
     U.row(b, 'Цвет', U.color(o, 'plate.color', '#000000'));
     U.row(b, 'Непрозрачность', U.range(o, 'plate.op', 0.5, pct));
-    if (o.plate.mode !== 'lines') U.row(b, 'Размытие за ней', U.range(o, 'plate.blur', 0, { min: 0, max: 5, step: 0.1 }));
-    U.row(b, 'Поля от текста', U.range(o, 'plate.pad', 1.5, { min: 0, max: 8, step: 0.1 }));
+    if (pm !== 'lines' || full) U.row(b, 'Размытие за ней', U.range(o, 'plate.blur', 0, { min: 0, max: 5, step: 0.1 }));
+    if (pm === 'lines' && full) {
+      U.row(b, 'Зазор', U.range(o, 'plate.gap', 0.8, { min: 0, max: 5, step: 0.1 }));
+      U.hint(b, 'Полоса — во всю высоту строки: толще полосы — больше «Межстрочный» выше, тоньше — больше «Зазор».');
+    } else U.row(b, full ? 'Поля сверху/снизу' : 'Поля от текста', U.range(o, 'plate.pad', 1.5, { min: 0, max: 8, step: 0.1 }));
+    if (full && o.scroll.on) U.hint(b, 'У бегущей строки подложка — по тексту.');
     U.row(b, 'Скругление', U.range(o, 'plate.radius', 1, { min: 0, max: 10, step: 0.1 }));
     if (o.plate.mode === 'fixed') {
       U.row(b, 'Ширина, %', U.num(o, 'plate.w', 80, { step: 1, min: 1, max: 100 }));
@@ -1829,7 +1849,12 @@ function teInspText(fs, o) {
     U.row(b, 'Сдвиг X / Y', U.num(o, 'plate.dx', 0, { step: 0.2 }), U.num(o, 'plate.dy', 0, { step: 0.2 }));
     U.row(b, 'Обводка', U.range(o, 'plate.stroke.w', 0, { min: 0, max: 1, step: 0.02 }));
     U.row(b, 'Цвет обводки', U.color(o, 'plate.stroke.color', '#ffffff'));
-    teShadowRows(b, o, 'plate.shadow');
+  }
+  // Тень подложки — своим разделом (как «Тень текста»); у полос — у каждой полосы
+  if (o.plate.on) {
+    b = U.sec(fs, 'Тень подложки', false, o.plate.shadow.on);
+    teShadowRows(b, o, 'plate.shadow', true);
+    if (o.plate.shadow.on && teGet(o, 'tfill.type', '') === 'cut') U.hint(b, 'У вырезанного текста тени подложки не видно.');
   }
 
   b = U.sec(fs, 'Бегущая строка', false, o.scroll.on);
@@ -1890,8 +1915,8 @@ function teInspMulti(fs, sel) {
     const fb = teEl('button', 'te-fontbtn', 'Шрифт для всех текстов…');
     fb.addEventListener('click', () => teFontPicker(fb, texts[0].font, (f) => teEdit(() => texts.forEach((o) => { o.font = f; }), { list: false })));
     U.row(b, 'Шрифт', fb);
-    const c = Object.assign(document.createElement('input'), { type: 'color', value: (texts[0].tfill && texts[0].tfill.color) || '#ffffff' });
-    c.addEventListener('input', () => teEdit(() => texts.forEach((o) => { o.tfill.type = o.tfill.type === 'cut' ? 'cut' : 'color'; o.tfill.color = c.value; }), { list: false }));
+    const c = ColorPicker.field((texts[0].tfill && texts[0].tfill.color) || '#ffffff', texts[0].tfill && texts[0].tfill.op != null ? texts[0].tfill.op : 1,
+      (v, op) => teEdit(() => texts.forEach((o) => { o.tfill.type = o.tfill.type === 'cut' ? 'cut' : 'color'; o.tfill.color = v; if (op != null) o.tfill.op = Math.round(op * 100) / 100; }), { list: false }));
     U.row(b, 'Цвет текста', c);
   }
   U.hint(b, 'Тяните любой из выделенных — двигаются все. Группа (Ctrl+G) выделяется одним щелчком.');

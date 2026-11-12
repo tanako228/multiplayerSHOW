@@ -2,7 +2,7 @@
 :root {
   --ink: #051822; --panel: #0d212b; --field: #12272f; --line: #2d383e; --text: #d4c9c7; --muted: #969a9e;
   --live: #aa7452; --live-ink: #051822; --ok: #3fb950; --warn: #e07a6a;
-  --fs: 22px;
+  --fs: 22px; --cfs: 18px;
   color-scheme: dark;
 }
 /* Фон (меню «…» → «Фон»): чёрный — как выше; серый и белый — сплошные светлые (класс paper у body — цвета пометок) */
@@ -94,10 +94,11 @@ svg { width: 22px; height: 22px; fill: currentColor; }
 .sl h3 { margin: 10px 0 4px; font-size: 13px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--live); }
 .sl .tx { font-size: var(--fs); line-height: 1.38; overflow-wrap: anywhere; }
 .sl .ln { white-space: pre-wrap; min-height: 1.38em; }
-/* Аккорд — пустой значок в слове, подпись над ним */
-.sl .ln.ch { padding-top: .95em; }
-.cd { position: relative; display: inline-block; width: 0; }
-.cd::before { content: attr(data-c); position: absolute; left: 0; bottom: 1.3em; font-size: .72em; font-style: normal; font-weight: 700; line-height: 1; color: var(--live); white-space: nowrap; }
+/* Аккорд — пустой значок в слове (ширина 0), подпись над ним своим размером --cfs; слипшиеся раздвигает spaceChords (app.js) */
+/* Значок .cd сам «выше» строки на высоту аккорда: каждая визуальная строка, где есть аккорд (в том числе перенесённая на узком экране), получает под него место */
+.cd { position: relative; display: inline-block; width: 0; height: calc(var(--fs) * .92 + var(--cfs) * 1.15); }
+.cd b { position: absolute; left: 0; bottom: calc(var(--fs) * .92); font: 700 var(--cfs)/1 system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  font-style: normal; letter-spacing: .01em; color: var(--live); white-space: nowrap; -webkit-text-size-adjust: none; }
 .song .meta { margin: 0 0 6px; color: var(--muted); font-size: 14px; }
 /* Этап 6: сообщения группе, метроном */
 .msgcard { position: fixed; z-index: 30; left: 50%; top: calc(8px + env(safe-area-inset-top)); transform: translateX(-50%); width: min(520px, calc(100vw - 20px));
@@ -175,7 +176,6 @@ dialog.full[open] { display: flex; flex-direction: column; }
 .mt-in { width: 92px; height: 40px; padding: 0 6px; text-align: center; font-size: 18px; font-weight: 700; background: var(--field); border: 1px solid var(--line); border-radius: 10px; -moz-appearance: textfield; }
 .mt-in::-webkit-inner-spin-button, .mt-in::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
 .mt-in:focus { outline: 2px solid var(--live); outline-offset: -1px; }
-.sl + .sl:not(.part) { border-top: 1px dashed color-mix(in srgb, var(--line) 70%, transparent); }
 
 /* Сетлисты */
 .sets { padding: 4px 0 calc(20px + env(safe-area-inset-bottom)); }
@@ -227,7 +227,70 @@ dialog::backdrop { background: rgba(0, 0, 0, .6); }
 .row-i.sw input { width: 22px; height: 22px; accent-color: var(--live); }
 .btns { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 14px; }
 .btns button { flex: 1 1 auto; min-height: 46px; }
+.sb-row { align-items: center; }
+.sb-row span { flex: 1 1 auto; color: var(--text); }
+.sb-row select { flex: 0 1 230px; min-width: 0; height: 40px; padding: 0 8px; background: var(--field); border: 1px solid var(--line); border-radius: 10px; }
+.sb-row .icon { flex: none; }
+#sbAdd.wait { animation: none; outline: 2px dashed var(--live); outline-offset: 2px; }
 .ask { width: min(420px, calc(100vw - 32px)); padding: 18px; }
 .ask p { margin: 0 0 6px; font-size: 16px; white-space: pre-line; }
 .toast { position: fixed; left: 50%; bottom: calc(18px + env(safe-area-inset-bottom)); transform: translateX(-50%); z-index: 20; max-width: calc(100vw - 32px);
   padding: 10px 16px; border-radius: 12px; background: #1d3540; color: #e4ddda; border: 1px solid #2d383e; font-size: 14px; box-shadow: 0 6px 24px rgba(0, 0, 0, .4); }
+
+/* Правка аккордов с телефона */
+.ch-keys { display: flex; gap: 6px; flex-wrap: wrap; padding: 8px 12px 0; }
+.ch-keys button { flex: 1 0 auto; min-width: 44px; min-height: 44px; padding: 6px 10px; font-size: 17px; font-weight: 700; color: var(--live); }
+.ch-ta { flex: 1; min-height: 0; margin: 8px 12px; width: auto; padding: 10px 12px; background: var(--field); border: 1px solid var(--line); border-radius: 10px;
+  font: 16px/1.5 ui-monospace, "Cascadia Mono", Consolas, Menlo, monospace; white-space: pre; overflow: auto; tab-size: 4; }
+.ch-tabs { padding: 8px 12px 0; }
+.ch-tabs .seg { display: flex; }
+.ch-tabs .seg button { flex: 1; font-size: 13px; padding: 8px 6px; }
+.ch-pane { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.ch-pane[hidden] { display: none; }
+.ch-pane > .hint { margin: 8px 14px 0; font-size: 13px; }
+.ch-pane > .btns { margin: 0 12px 8px; }
+/* Выбор языка */
+.lang-dlg p { font-size: 14px; color: var(--muted); }
+.lang-btns { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
+.lang-btns button { min-height: 52px; font-size: 18px; }
+.lang-sel { width: auto; min-width: 140px; padding: 8px 10px; font-size: 16px; }
+
+/* ----- Ноты (sheets.js): кнопка в песне, окно листов, файл с аккордами и нотами ----- */
+.shbtn { display: block; width: 100%; margin: 0 0 12px; min-height: 44px; font-weight: 600; }
+.shbtn.add { font-weight: 400; color: var(--muted); border-style: dashed; }
+.gotbar { display: flex; align-items: center; gap: 8px; margin: 0 0 10px; padding: 6px 6px 6px 12px; border-radius: 10px; background: var(--field); border: 1px solid var(--line); font-size: 14px; color: var(--muted); }
+.gotbar span { flex: 1; }
+.sh-zoom { min-width: 3.2em; text-align: center; font-size: 13px; color: var(--muted); }
+.sh-body { flex: 1; overflow: auto; padding: 8px 10px; -webkit-overflow-scrolling: touch; }
+.shp { margin: 0 0 14px; width: calc(100% * var(--shz, 1)); }
+.shp img { display: block; width: 100%; height: auto; background: #fff; border-radius: 4px; }
+.shp figcaption { display: flex; align-items: center; gap: 8px; padding: 4px 2px; font-size: 13px; color: var(--muted); position: sticky; left: 0; max-width: calc(100vw - 20px); }
+.shp figcaption span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.shp figcaption button { min-height: 34px; padding: 0 12px; }
+/* Ноты на весь экран: один лист, листание свайпом и краями */
+.sh-fs { display: none; }
+#shDlg.fs { width: 100%; background: #000; }
+#shDlg.fs > .sheet-head, #shDlg.fs > .sh-body, #shDlg.fs > .sh-foot { display: none; }
+#shDlg.fs > .sh-fs { display: block; position: relative; flex: 1; min-height: 0; }
+.sh-stage { position: absolute; inset: 0; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
+.sh-stage img { display: block; background: #fff; -webkit-user-drag: none; pointer-events: none; }
+.sh-stage.page { touch-action: none; display: flex; align-items: center; justify-content: center; }
+.sh-stage.page img { max-width: 100%; max-height: 100%; object-fit: contain; }
+.sh-stage.width { touch-action: pan-y; overflow-y: auto; overflow-x: hidden; }
+.sh-stage.width img { width: 100%; height: auto; }
+.sh-fsbar { position: absolute; left: 0; right: 0; top: 0; display: flex; align-items: center; gap: 8px; padding: calc(8px + env(safe-area-inset-top)) 10px 8px; background: rgba(0, 0, 0, .72); color: #fff; transition: none; }
+.sh-fsbar.off { display: none; }
+.sh-fsbar button { min-height: 44px; padding: 0 14px; background: rgba(255, 255, 255, .14); color: #fff; border: 1px solid rgba(255, 255, 255, .3); }
+.sh-pg { flex: 1; text-align: center; font-size: 16px; }
+.sh-foot { display: flex; gap: 8px; padding: 8px 12px calc(10px + env(safe-area-inset-bottom)); }
+.sh-foot button { flex: 1; min-height: 46px; }
+.sh-foot:not(:has(button:not([hidden]))) { display: none; }
+.ext { margin-bottom: 10px; border-bottom: 2px solid var(--line); }
+.ext-h { font-weight: 600; padding: 8px 12px 0; }
+.ext .hint { padding: 0 12px; margin: 2px 0 6px; }
+.ext-row { display: flex; align-items: stretch; }
+.ext-row .item { flex: 1; min-width: 0; }
+.ext-x { width: 44px; background: none; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; font-size: 22px; color: var(--muted); }
+.im-list { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
+.im-row { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; text-align: left; padding: 10px 12px; }
+.im-row .hint { font-size: 12px; }

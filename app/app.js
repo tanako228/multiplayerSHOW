@@ -21,9 +21,9 @@
 'use strict';
 const $ = (id) => document.getElementById(id);
 const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
-const ROLES = [['musician', 'Музыкант'], ['vocal', 'Вокалист'], ['leader', 'Лидер'], ['sound', 'Звук'], ['tech', 'Техник']];
+const ROLES = [['musician', 'Музыкант'], ['pianist', 'Пианист'], ['vocal', 'Вокалист'], ['leader', 'Лидер'], ['sound', 'Звук'], ['tech', 'Техник']];
 const PING_MS = 15000;
-const fmt = (t) => (t ? new Date(t).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—');
+const fmt = (t) => (t ? new Date(t).toLocaleString(I18n.loc, { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—');
 const ls = { get: (k, d) => { try { const v = localStorage.getItem(k); return v == null ? d : v; } catch { return d; } }, set: (k, v) => { try { localStorage.setItem(k, v); } catch { /* приватный режим */ } } };
 const standalone = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
 const BAD = ['auth', 'off', 'closed'];
@@ -197,7 +197,7 @@ async function runSync(full) {
       renderList();
       renderSets();
       // Оператор поправил открытую песню — показать новый текст, не теряя места
-      if (screen === 'Song' && cur && cur.song && Store.songs.has(cur.id) && Store.songs.get(cur.id) !== cur.src) {
+      if (screen === 'Song' && cur && cur.song && Store.songs.has(cur.id) && Store.songs.get(cur.id) !== cur.base) {
         const y = window.scrollY;
         openSong(cur.id, false, { pl: cur.pl, eid: cur.eid, key: cur.key });
         window.scrollTo(0, y);
@@ -206,6 +206,7 @@ async function runSync(full) {
       // На экране песня, которой не было на телефоне, — пришла
       if (follow && live.kind === 'song' && screen === 'Song' && cur && cur.note) followLive();
     }
+    Sheets.prefetch(); // листы нот — на телефон, чтобы были без сети
     if (first || full) {
       toast(`Песни загружены: ${Store.songs.size}`);
       if (first) welcome();
@@ -340,7 +341,7 @@ const QUICK = ['Повтор припева', 'Ещё раз', 'Тише', 'Гр
 let msgs = [];
 let mcT = 0;
 const canMsg = () => !!(Store.me && Store.me.perms && Store.me.perms.msg);
-const hm = (t) => new Date(t).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+const hm = (t) => new Date(t).toLocaleTimeString(I18n.loc, { hour: '2-digit', minute: '2-digit' });
 function gotMsg(m, fresh) {
   if (!m || !m.id || msgs.some((x) => x.id === m.id)) return;
   msgs.push(m);
@@ -500,11 +501,14 @@ async function exportMine() {
   for (const st of MY_STORES) data[st] = await Store.allRec(st).catch(() => []);
   for (const k of myKeys()) data.ls[k] = ls.get(k, '');
   const blob = new Blob([JSON.stringify(data)], { type: 'application/json' });
-  const name = `мои-пометки-${new Date().toISOString().slice(0, 10)}.json`;
-  // Телефон умеет «Поделиться» файлом — удобнее (почта, мессенджер, «Файлы»); иначе — скачать
-  const file = typeof File === 'function' ? new File([blob], name, { type: 'application/json' }) : null;
+  await shareFile(blob, `мои-пометки-${new Date().toISOString().slice(0, 10)}.json`);
+}
+// Телефон умеет «Поделиться» файлом — удобнее (почта, мессенджер, «Файлы»); иначе — скачать.
+// Android даёт делиться не всеми видами файлов (.json — нет, .txt — да)
+async function shareFile(blob, name, text) {
+  const file = typeof File === 'function' ? new File([blob], name, { type: blob.type }) : null;
   if (file && navigator.canShare && navigator.canShare({ files: [file] })) {
-    try { await navigator.share({ files: [file], title: name }); return; } catch (e) { if (e && e.name === 'AbortError') return; }
+    try { await navigator.share({ files: [file], title: name, ...(text ? { text } : {}) }); return; } catch (e) { if (e && e.name === 'AbortError') return; }
   }
   const a = el('a');
   a.href = URL.createObjectURL(blob);
@@ -516,8 +520,10 @@ async function exportMine() {
 }
 async function importMine(file) {
   let d;
-  try { d = JSON.parse(await file.text()); } catch { toast('Это не файл с пометками'); return; }
-  if (!d || d.kind !== 'team-mine' || !Array.isArray(d.marks)) { toast('Это не файл с пометками приложения группы'); return; }
+  let t = '';
+  try { t = await file.text(); } catch { toast('Не получилось прочитать файл'); return; }
+  try { d = JSON.parse(t); } catch { d = null; }
+  if (!d || d.kind !== 'team-mine' || !Array.isArray(d.marks)) { if (!Sheets.openText(t, true)) toast('Это не файл с пометками приложения группы'); return; }
   const n = (d.marks || []).length + (d.mine || []).length;
   if (!(await ask(`Загрузить из файла ${n} записей (пометки, заметки, мои версии) и настройки? Записи тех же песен на этом телефоне заменятся.`, 'Загрузить'))) return;
   for (const st of MY_STORES) for (const r of d[st] || []) if (r && r.id) await Store.putRec(st, r).catch(() => {});
@@ -562,6 +568,22 @@ async function doInstall() {
 window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); installEv = e; paintInstall(); });
 window.addEventListener('appinstalled', () => { installEv = null; paintInstall(); });
 
+// Первый запуск: выбор языка (по умолчанию английский); потом — в «Сведениях»
+function askLang() {
+  if (ls.get('mps.langSet', '')) return;
+  const d = $('langDlg');
+  d.addEventListener('cancel', (e) => e.preventDefault());
+  d.onclick = (e) => {
+    const b = e.target.closest('button[data-l]');
+    if (!b) return;
+    I18n.set(b.dataset.l);
+    ls.set('mps.langSet', '1');
+    d.close();
+    rerender();
+  };
+  d.showModal();
+}
+
 // Первый запуск: песни загрузились первый раз — что где
 function welcome() {
   if (ls.get('mps.welcomed', '') || !Store.me) return;
@@ -593,8 +615,7 @@ const canCtl = () => !!(Store.me && Store.me.perms && Store.me.perms.control) &&
 function liveView() {
   const l = live;
   if (l.kind === 'song' && Store.songs.has(l.item)) {
-    const s = Store.songs.get(l.item);
-    return { id: s.id, name: s.name, slides: s.slides, song: true, src: s, pl: l.pl, eid: l.eid, key: keyOf(l.eid) };
+    return songView(Store.songs.get(l.item), { pl: l.pl, eid: l.eid, key: keyOf(l.eid) });
   }
   if ((l.kind === 'bible' || l.kind === 'text') && liveSlides && liveSlides.slides.length) {
     return { id: l.item, name: l.name, kind: l.kind, src: liveSlides, pl: l.pl, eid: l.eid,
@@ -608,7 +629,7 @@ function liveView() {
 function followLive() {
   const v = liveView();
   if (Pen.isOpen && screen === 'Song') { markLive(false); return; } // открыт пенал — песню под рукой не менять
-  if (screen === 'Song' && cur && cur.id === v.id && cur.src === v.src) { markLive(true); return; } // тот же пункт — только слайд
+  if (screen === 'Song' && cur && cur.id === v.id && (cur.base || cur.src) === (v.base || v.src)) { markLive(true); return; } // тот же пункт — только слайд
   // Экран очистили — песня остаётся перед глазами (доигрывают), снимается только отметка; в списке — остаёмся в списке
   if (live.kind === 'none' && (screen === 'Lib' || (cur && !cur.note))) { markLive(false); return; }
   openView(v, screen === 'Lib');
@@ -663,7 +684,7 @@ function setSets(list) {
   renderSets();
 }
 const keyOf = (eid) => { for (const st of sets) for (const e of st.entries) if (e.eid === eid) return e.key || ''; return ''; };
-const dayName = (d) => { try { return new Date(d + 'T12:00').toLocaleDateString('ru-RU', { weekday: 'short', day: 'numeric', month: 'long' }); } catch { return d; } };
+const dayName = (d) => { try { return new Date(d + 'T12:00').toLocaleDateString(I18n.loc, { weekday: 'short', day: 'numeric', month: 'long' }); } catch { return d; } };
 const KIND = { song: '', bible: 'Библия', media: 'Видео', deck: 'Презентация', audio: 'Музыка', custom: 'Слайды', mixed: 'Слайды' };
 function renderSets() {
   const box = $('setList');
@@ -684,7 +705,9 @@ function renderSets() {
       b.dataset.eid = e.eid;
       b.dataset.set = st.id;
       const has = e.kind === 'song' && Store.songs.has(e.item);
-      b.append(el('span', 'n', String(i + 1)), el('span', 't', e.name));
+      const tt = el('span', 't', e.name);
+      tt.dataset.noi18n = ''; // названия песен не переводим
+      b.append(el('span', 'n', String(i + 1)), tt);
       if (KIND[e.kind]) b.append(el('span', 'kind', KIND[e.kind]));
       if (e.key) b.append(el('span', 'key', e.key));
       if (e.kind === 'song' && !has) b.classList.add('dim');
@@ -742,7 +765,37 @@ function firstLine(s) {
   const z = s.slides.find((x) => x.text.trim());
   return z ? z.text.trim().split('\n')[0] : '';
 }
+// «Не синхронизированные»: песни из ссылки/файла, которых ещё нет в программе (только на этом телефоне)
+function renderExt() {
+  const box = $('extBox');
+  const q = $('q').value.trim().toLowerCase();
+  const rs = Sheets.extList().filter((r) => !q || r.name.toLowerCase().includes(q));
+  box.hidden = !rs.length;
+  box.replaceChildren();
+  if (!rs.length) return;
+  box.append(el('div', 'ext-h', 'Не синхронизированные'), el('p', 'hint', 'Пришли от другого телефона, в программе пока не появились. Лежат только у вас.'));
+  for (const r of rs) {
+    const row = el('div', 'ext-row');
+    const b = el('button', 'item');
+    b.type = 'button';
+    const t1 = el('span', 't', r.name);
+    const t2 = el('span', 's', [r.who && `от ${r.who}`, r.sheets.length && `нот: ${r.sheets.length}`].filter(Boolean).join(' · '));
+    t1.dataset.noi18n = '';
+    t2.dataset.noi18n = '';
+    b.append(t1, t2);
+    b.onclick = () => Sheets.openExt(r.id);
+    const x = el('button', 'ext-x', '×');
+    x.type = 'button';
+    x.setAttribute('aria-label', 'Убрать');
+    x.dataset.noi18n = '';
+    x.onclick = async () => { if (await ask(`Убрать «${r.name}» из «Не синхронизированные»? Она лежит только на этом телефоне.`, 'Убрать')) { await Sheets.delExt(r.id); renderExt(); } };
+    row.append(b, x);
+    box.append(row);
+  }
+}
+window.renderExt = renderExt;
 function renderList() {
+  renderExt();
   rows = Store.search($('q').value, $('libSel').value);
   shown = 0;
   $('list').replaceChildren();
@@ -766,7 +819,11 @@ function more() {
     b.type = 'button';
     b.setAttribute('role', 'listitem');
     b.dataset.id = s.id;
-    b.append(el('span', 't', s.name), el('span', 's', firstLine(s)));
+    const t1 = el('span', 't', s.name);
+    const t2 = el('span', 's', firstLine(s));
+    t1.dataset.noi18n = '';
+    t2.dataset.noi18n = '';
+    b.append(t1, t2);
     frag.append(b);
   }
   list.append(frag);
@@ -792,6 +849,7 @@ function setTr(id, t, capo) {
   if (!t && !capo) delete trAll[id]; else trAll[id] = { t, capo };
   ls.set('mps.tr', JSON.stringify(trAll));
 }
+const canChords = () => !!(Store.me && Store.me.perms && Store.me.perms.chords) && conn === 'ok';
 const keyNow = (v) => { const s = v.src || {}; const tr = v.tr || { t: 0 }; return s.key ? Chords.keyShift(s.key, tr.t) || s.key : v.key || ''; };
 // Строка аккордов «[Am]Сла[G]ва» → места в строке слайда (по счёту букв: пробелы и знаки могут отличаться)
 function chordMarks(line, raw, n, flat) {
@@ -802,14 +860,118 @@ function chordMarks(line, raw, n, flat) {
   const atLetter = (s, k) => { let c = 0; for (let i = 0; i < s.length; i++) { if (isL(s[i])) { if (c === k) return i; c++; } } return s.length; };
   return sp.marks.map((m) => ({ at: atLetter(line, letters(sp.text, m.at)), c: Chords.shift(m.c, n, flat) }));
 }
+/* ----- Правка аккордов с телефона (право «Может править аккорды») ----- */
+
+// Текст песни без повторов — по частям, с обозначениями [Куплет 1]
+function plainOf(v) {
+  const out = [];
+  for (const z of v.slides || []) {
+    if ((z.occ || 1) > 1) continue;
+    if (z.pi === 0 && (z.label || z.part)) out.push((out.length ? '\n' : '') + '[' + (z.label || z.part) + ']');
+    else if (out.length) out.push('');
+    out.push(String(z.text || '').trim());
+  }
+  return out.join('\n');
+}
+function openChordsEd() {
+  const v = cur;
+  if (!v || !v.song || !v.id) return;
+  const s = v.src || {};
+  $('chTitle').textContent = v.name;
+  $('chTa').value = Chords.toRows(s.chords || plainOf(v)); // аккорды — строкой над текстом
+  $('chPaste').value = '';
+  // быстрые аккорды в тональности песни: I ii iii IV V vi
+  const n = s.key ? Chords.interval('C', s.key) : 7;
+  const flat = Chords.flatFor(s.key || 'G', 0, '');
+  const keys = ['C', 'Dm', 'Em', 'F', 'G', 'Am'].map((c) => Chords.shift(c, n, flat));
+  $('chKeys').replaceChildren(...keys.map((c) => Object.assign(el('button', '', c), { type: 'button' })).map((b) => { b.dataset.c = b.textContent; return b; }));
+  $('chDlg').showModal();
+  chTab(s.chords ? 2 : 1);
+  $('chHint').textContent = s.chords ? 'Аккорды стоят строкой над текстом: сдвигайте пробелами, чтобы аккорд был над нужным слогом. Текст песни в программе не меняется.'
+    : 'Так выглядит текст песни. Добавьте над строкой строку аккордов (например «Am    G») — каждый аккорд над своим слогом. Кнопки выше вставляют аккорд в место курсора.';
+}
+// Шаг 1 — вставить текст с аккордами, шаг 2 — результат
+function chTab(n) {
+  $('chP1').hidden = n !== 1;
+  $('chP2').hidden = n !== 2;
+  $('chT1').setAttribute('aria-pressed', String(n === 1));
+  $('chT2').setAttribute('aria-pressed', String(n === 2));
+}
+// Аккорд в место курсора (кнопка «[ ]» — пустые скобки, курсор внутри)
+function putChord(c) {
+  const ta = $('chTa');
+  const a = ta.selectionStart;
+  const b = ta.selectionEnd;
+  ta.setRangeText(c, a, b, 'end');
+  ta.focus();
+}
+// Что вставили (с сайта, из файла) — на ОРИГИНАЛЬНЫЙ текст песни: слова и обозначения частей не меняются, добавляются аккорды
+function fitChordsEd() {
+  const v = cur;
+  const src = $('chPaste').value;
+  if (!src.trim()) { toast('Сначала вставьте текст с аккордами'); return; }
+  if (!Chords.hasChords(src)) { toast('Не вижу аккордов: они должны быть в [скобках] или строкой над словами'); return; }
+  const r = Chords.align(src, plainOf(v));
+  if (!r.exact && !r.fuzzy) { toast('Строки не похожи на текст этой песни — проверьте, что вставили ту же песню'); return; }
+  $('chTa').value = Chords.toRows(r.text);
+  chTab(2);
+  $('chHint').textContent = `Аккорды легли на ${r.exact + r.fuzzy} из ${r.total} строк основного текста${r.fuzzy ? ` (${r.fuzzy} — по похожести, проверьте)` : ''}${r.none ? `; без аккордов: ${r.none}` : ''}. Поправьте при необходимости и нажмите «Сохранить в программу».`;
+}
+function loadChordsFile() {
+  const f = $('chFileIn').files[0];
+  $('chFileIn').value = '';
+  if (!f) return;
+  const rd = new FileReader();
+  rd.onload = () => {
+    let t = String(rd.result || '').replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n');
+    // ChordPro: {title: …}, {soc} … — служебные строки убираем, части оставляем
+    t = t.split('\n').map((l) => {
+      const d = l.trim().match(/^\{\s*([\w-]+)\s*(?::\s*(.*?))?\s*\}$/);
+      if (!d) return l.trim().startsWith('#') ? null : l;
+      const k = d[1].toLowerCase();
+      if (/^(soc|start_of_chorus)$/.test(k)) return '[' + (d[2] || 'Припев') + ']';
+      if (/^(sov|start_of_verse)$/.test(k)) return '[' + (d[2] || 'Куплет') + ']';
+      if (/^(sob|start_of_bridge)$/.test(k)) return '[' + (d[2] || 'Бридж') + ']';
+      if ((k === 'c' || k === 'comment') && d[2]) return '[' + d[2] + ']';
+      return null;
+    }).filter((l) => l !== null).join('\n');
+    $('chPaste').value = t;
+    fitChordsEd();
+  };
+  rd.onerror = () => toast('Не получилось прочитать файл');
+  rd.readAsText(f);
+}
+let chBusy = false;
+async function saveChordsEd() {
+  const v = cur;
+  if (!v || !v.id || chBusy) return;
+  const text = Chords.toInline($('chTa').value).replace(/\s+$/, '');
+  if (text.trim() && !Chords.hasChords(text)) { toast('В тексте нет аккордов — впишите их строкой над словами'); return; }
+  if (!canChords()) { toast('Нет связи с программой или право снято — аккорды не отправлены'); return; }
+  chBusy = true;
+  $('chSave').disabled = true;
+  try {
+    await Store.api('/songs/chords', { method: 'POST', body: { id: v.id, chords: text } });
+    $('chDlg').close();
+    toast(text.trim() ? 'Аккорды сохранены в программе' : 'Аккорды убраны');
+    await runSync();
+    const s = Store.songs.get(v.id);
+    if (cur && cur.id === v.id && s) { const y = window.scrollY; openSong(v.id, false, { pl: cur.pl, eid: cur.eid, key: cur.key }); window.scrollTo(0, y); markLive(false); }
+  } catch (e) {
+    toast(e.message || 'Не получилось отправить аккорды');
+  } finally {
+    chBusy = false;
+    $('chSave').disabled = false;
+  }
+}
 function paintKey() {
   const v = cur;
   const s = (v && v.src) || {};
-  const can = !!(v && v.song && (s.chords || s.key || v.key));
+  const can = !!(v && v.song && (s.chords || s.key || v.key || canChords()));
   $('songKey').hidden = !can;
   if (!can) return;
   const tr = v.tr || { t: 0, capo: 0 };
-  $('songKey').textContent = (keyNow(v) || (s.chords ? 'Аккорды' : '')) + (tr.capo ? ` · капо ${tr.capo}` : '');
+  $('songKey').textContent = (keyNow(v) || (s.chords || canChords() ? 'Аккорды' : '')) + (tr.capo ? ` · капо ${tr.capo}` : '');
   $('songKey').classList.toggle('moved', !!tr.t);
 }
 function paintKeyDlg() {
@@ -818,14 +980,18 @@ function paintKeyDlg() {
   const s = v.src || {};
   const tr = v.tr || { t: 0, capo: 0 };
   $('kChords').checked = chordsShown();
+  $('kFs').textContent = fs;
+  $('kCfs').textContent = cfs;
   $('kChords').disabled = !s.chords;
   const sign = (n) => (n > 0 ? '+' + n : String(n));
   $('kKey').textContent = s.key ? keyNow(v) + (tr.t ? ` (${sign(tr.t)})` : '') : tr.t ? sign(tr.t) : 'как написано';
   $('kCapo').textContent = tr.capo ? String(tr.capo) : 'нет';
   const shape = s.key ? Chords.keyShift(s.key, tr.t - tr.capo) : '';
-  $('kHint').textContent = !s.chords ? 'У этой песни нет аккордов. Оператор может вписать их в окне песни («Аккорды для сценического экрана»).'
+  $('kHint').textContent = !s.chords ? (canChords() ? 'У этой песни нет аккордов — впишите их кнопкой «Править аккорды».' : 'У этой песни нет аккордов. Оператор может вписать их в окне песни («Аккорды для сценического экрана»).')
     : tr.capo ? `Капо на ${tr.capo}-м ладу: аккорды показаны аппликатурой${shape ? ' ' + shape : ''}, звучит ${keyNow(v) || 'как написано'}.`
       : s.key ? `Тональность в программе — ${s.key}.` + (v.key && Chords.interval(s.key, v.key) ? ` В сетлисте — ${v.key}.` : '') : '';
+  $('kEdit').hidden = !canChords() || !v.id;
+  $('kShare').hidden = !Sheets.canShare(v);
   $('kReset').disabled = !tr.t && !tr.capo;
 }
 function retune(t, capo) {
@@ -897,15 +1063,62 @@ function setFs(v) {
   fs = Math.min(44, Math.max(14, v));
   document.documentElement.style.setProperty('--fs', fs + 'px');
   ls.set('mps.fs', String(fs));
+  spaceChords();
+}
+// Размер аккордов — отдельно от текста (меню «Аккорды и тональность»)
+let cfs = Math.min(40, Math.max(10, Number(ls.get('mps.cfs', 18)) || 18));
+function setCfs(v) {
+  cfs = Math.min(40, Math.max(10, v));
+  document.documentElement.style.setProperty('--cfs', cfs + 'px');
+  ls.set('mps.cfs', String(cfs));
+  if ($('kCfs')) $('kCfs').textContent = cfs;
+  spaceChords();
+}
+// Слипшиеся аккорды: если подпись упирается в следующую — раздвигаем слова (отступ у значка .cd), пока хватает места
+let spaceT = 0;
+function spaceChords() {
+  cancelAnimationFrame(spaceT);
+  spaceT = requestAnimationFrame(() => {
+    const body = $('songBody');
+    if (!body || screen !== 'Song') return;
+    const lines = [...body.querySelectorAll('.ln.ch')];
+    for (const ln of lines) for (const c of ln.querySelectorAll('.cd')) c.style.marginLeft = '';
+    const gap = cfs * 0.35;
+    for (const ln of lines) {
+      const cds = [...ln.querySelectorAll('.cd')];
+      if (cds.length < 2) continue;
+      const pos = cds.map((c) => { const r = c.getBoundingClientRect(); return { l: r.left, t: Math.round(r.top), w: c.firstChild.offsetWidth }; });
+      let shift = 0;
+      let prev = null;
+      for (let i = 0; i < cds.length; i++) {
+        const q = pos[i];
+        if (!prev || Math.abs(q.t - prev.t) > cfs * 0.6) { shift = 0; prev = { r: -1e9, t: q.t }; }
+        const left = q.l + shift;
+        const need = prev.r + gap - left;
+        if (need > 0.5) { cds[i].style.marginLeft = need.toFixed(1) + 'px'; shift += need; }
+        prev = { r: q.l + shift + q.w, t: q.t };
+      }
+    }
+    if (window.Pen && Pen.relayout) Pen.relayout(); // пометки держатся за слова — слова сдвинулись
+  });
+}
+let spaceW = 0;
+window.addEventListener('resize', () => { if (window.innerWidth !== spaceW) { spaceW = window.innerWidth; spaceChords(); } });
+// base — песня как пришла из программы; src — она же с аккордами из чужого файла (got, sheets.js), если человек их наложил у себя
+function songView(s, ctx) {
+  const g = Sheets.got(s.id);
+  const src = g && g.chords ? { ...s, chords: g.chords, key: g.key || s.key } : s;
+  return { id: s.id, name: s.name, slides: s.slides, song: true, src, base: s, got: g, ...(ctx || {}) };
 }
 function openSong(id, push, ctx) {
   const s = Store.songs.get(id);
   if (!s) return false;
-  openView({ id, name: s.name, slides: s.slides, song: true, src: s, ...(ctx || {}) }, push);
+  openView(songView(s, ctx), push);
   return true;
 }
 function openView(v, push) {
   if (screen === 'Lib') listY = window.scrollY;
+  const fresh = !(screen === 'Song' && cur && cur.id && cur.id === v.id); // перешли на другую песню (а не обновили эту)
   cur = v;
   $('songTitle').textContent = v.name;
   const body = $('songBody');
@@ -920,6 +1133,7 @@ function openView(v, push) {
   const info = [keyNow(v) && `Тональность ${keyNow(v)}` + (v.tr.t && src.key ? ` (в программе ${src.key})` : ''),
     v.tr.capo && `капо ${v.tr.capo}`, src.tempo && `♩ = ${src.tempo}`, src.time].filter(Boolean);
   if (v.song && info.length) body.append(el('p', 'meta', info.join(' · ')));
+  if (v.song) Sheets.bar(v, body); // ноты и «аккорды из файла»
   paintKey();
   // «Моя версия»: свой текст с оформлением, свои пометки
   let slides = v.slides;
@@ -949,16 +1163,19 @@ function openView(v, push) {
   }
   if (!v.slides.length && !v.note) body.append(el('p', 'hint', 'Нет текста'));
   show('Song');
+  spaceChords();
   window.scrollTo(0, 0);
   if (push) history.pushState({ song: v.id || 'live' }, '');
   else if (!history.state || !history.state.song) history.pushState({ song: v.id || 'live' }, '');
   Pen.show(v);
+  if (push && fresh) Sheets.auto(v); // роль «Пианист» — сразу ноты на весь экран
 }
 // Текст слайда: строка — .ln, слово — .w (по словам держатся пометки); аккорды — значки .cd внутри слов;
 // rich — разметка «Моей версии» (Mine.parse): выделить / замазать / подчеркнуть — обёртки внутри слов, подписи — между словами
-const cdEl = (c) => { const i = el('i', 'cd'); i.dataset.c = c; return i; };
+const cdEl = (c) => { const i = el('i', 'cd'); i.append(el('b', '', c)); return i; };
 function textBlock(text, chordLines, n, flat, rich) {
   const tx = el('div', 'tx');
+  tx.dataset.noi18n = '';
   let k = 0; // аккорды приложены к непустым строкам слайда
   for (const raw of String(text).split('\n')) {
     const p = rich ? Mine.parse(raw) : { text: raw, fx: [], caps: [] };
@@ -1130,6 +1347,19 @@ function wire() {
   $('kDown').onclick = () => cur && cur.tr && retune(cur.tr.t <= -11 ? 12 + cur.tr.t - 1 : cur.tr.t - 1, cur.tr.capo);
   $('cUp').onclick = () => cur && cur.tr && retune(cur.tr.t, cur.tr.capo + 1);
   $('cDown').onclick = () => cur && cur.tr && retune(cur.tr.t, cur.tr.capo - 1);
+  $('kEdit').onclick = () => { $('keyDlg').close(); openChordsEd(); };
+  $('kShare').onclick = () => { $('keyDlg').close(); Sheets.share(cur); };
+  $('chX').onclick = () => $('chDlg').close();
+  $('chSave').onclick = saveChordsEd;
+  $('chFit').onclick = fitChordsEd;
+  $('chT1').onclick = () => chTab(1);
+  $('chT2').onclick = () => chTab(2);
+  $('chClip').onclick = async () => { try { $('chPaste').value = await navigator.clipboard.readText(); } catch { toast('Телефон не дал прочитать буфер — нажмите в поле и выберите «Вставить»'); $('chPaste').focus(); } };
+  $('chFile').onclick = () => $('chFileIn').click();
+  $('chFileIn').onchange = loadChordsFile;
+  $('chClear').onclick = async () => { if (await ask('Убрать все аккорды этой песни? Текст песни останется. Оператор сможет вернуть их кнопкой «Отменить» в программе (Ctrl+Z).', 'Убрать')) { $('chTa').value = ''; saveChordsEd(); } };
+  $('chKeys').addEventListener('pointerdown', (e) => { if (e.target.closest('button')) e.preventDefault(); }); // фокус остаётся в поле — клавиатура не прыгает
+  $('chKeys').addEventListener('click', (e) => { const b = e.target.closest('button'); if (b) putChord(b.dataset.c); });
   $('kReset').onclick = () => { if (cur) { delete trAll[cur.id]; ls.set('mps.tr', JSON.stringify(trAll)); rerender(); paintKeyDlg(); } };
   // Вход по паролю
   $('joinPw').addEventListener('input', paintJoinMode);
@@ -1175,12 +1405,19 @@ function wire() {
   // Свои данные и установка
   $('iExport').onclick = () => exportMine().catch(() => toast('Не получилось сохранить файл'));
   $('iImport').onclick = () => $('iImportFile').click();
+  $('iSongOpen').onclick = () => $('iSongFile').click();
+  $('iSongFile').onchange = () => { const f = $('iSongFile').files[0]; $('iSongFile').value = ''; if (f) { $('sheet').close(); Sheets.openFile(f); } };
+  Sheets.wire();
   $('iImportFile').onchange = () => { const f = $('iImportFile').files[0]; $('iImportFile').value = ''; if (f) { $('sheet').close(); importMine(f); } };
   $('iInstall').onclick = doInstall;
   $('welInst').onclick = doInstall;
   $('welGo').onclick = () => $('welDlg').close();
-  $('fsMinus').onclick = () => setFs(fs - 2);
-  $('fsPlus').onclick = () => setFs(fs + 2);
+  $('kFsDown').onclick = () => { setFs(fs - 2); $('kFs').textContent = fs; };
+  $('kFsUp').onclick = () => { setFs(fs + 2); $('kFs').textContent = fs; };
+  $('kCfsDown').onclick = () => setCfs(cfs - 1);
+  $('kCfsUp').onclick = () => setCfs(cfs + 1);
+  $('fsMinus').onclick = () => { setFs(fs - 2); $('kFs').textContent = fs; };
+  $('fsPlus').onclick = () => { setFs(fs + 2); $('kFs').textContent = fs; };
   // Полоса «На экране»: текст — посмотреть, что там; кнопка — следовать / листать самому
   $('liveText').onclick = () => { openView(liveView(), screen === 'Lib'); markLive(true); };
   $('liveMode').onclick = () => setFollow(!follow);
@@ -1207,11 +1444,16 @@ function wire() {
   $('iPenSnd').onchange = () => { Pen.sound = $('iPenSnd').checked; };
   setTheme(theme());
   Pen.init();
+  // Кнопки стилуса и педали: листать — только когда листаете сами (или в пенале)
+  Stylus.init({ canScroll: () => (screen === 'Song' && follow && !Pen.isOpen ? 'Сейчас «Следовать» — кнопкой листают в режиме «Листать самому»' : '') });
+  $('iStylus').onclick = () => { $('sheet').close(); Stylus.show(); };
+  $('ppStylus').onclick = () => { $('penPop').hidden = true; Stylus.show(); };
   Mine.wire(rerender);
   Pen.onChange = () => { paintBar(); markLive(false); };
   document.addEventListener('visibilitychange', () => { if (!document.hidden) wake(); });
   window.addEventListener('online', wake);
   setFs(fs);
+  setCfs(cfs);
 }
 
 function registerSW() {
@@ -1232,14 +1474,19 @@ function registerSW() {
     await Store.open();
     await Store.load();
     await Mine.init();
+    await Sheets.init();
     sets = (await Store.getMeta('sets')) || [];
   } catch (e) {
     showJoin('Браузер не даёт хранить данные (' + (e.message || e) + '). Откройте не в режиме «Инкогнито».');
     return;
   }
   registerSW();
+  askLang();
   if (Store.token) startLib();
   else if (Store.songs.size && Store.meta.lib) { startLib(); conn = 'auth'; paintConn(); }
   else if (await Store.getMeta('join')) showWait();
   else showJoin();
+  if (Store.songs.size) Sheets.fromShare();
+  Sheets.fromLink();
+  renderExt();
 })();

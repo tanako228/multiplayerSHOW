@@ -34,6 +34,9 @@
       font: inherit; color: var(--text); background: var(--field);
       border: 1px solid var(--line); border-radius: calc(6px * var(--rk, 1)); padding: 7px 12px;
     }
+    /* Раскрытый список выбора — цвета темы, непрозрачный (у стекла --field прозрачный — список выходил светлым с белым текстом) */
+    select option, select optgroup { background-color: var(--field-solid, #1a2733); color: var(--text); }
+    select option:disabled { color: var(--muted); }
     input[type=text] { min-width: 0; }
     button { cursor: pointer; }
     button:hover { border-color: var(--muted); }
@@ -62,6 +65,7 @@
     .tab:hover .mp-icon { filter: none; transform: translateY(-1px); }
     .icon-only { padding: 4px 6px; }
     .icon-only .mp-icon { width: 20px; height: 20px; }
+    #voiceOpen.listen { box-shadow: inset 0 0 0 2px var(--live); } /* Библия по голосу слушает */
     .set-nav .mp-icon { width: 20px; height: 20px; }
     .view-toggle .mp-icon { width: 16px; height: 16px; }
 
@@ -451,8 +455,10 @@
 
     /* Меню правой кнопки */
     .ctx-menu { position: fixed; z-index: 1000; min-width: 230px; max-height: 70vh; overflow-y: auto; background: var(--panel); border: 1px solid var(--line); border-radius: calc(8px * var(--rk, 1)); padding: 4px; box-shadow: 0 8px 24px rgba(0, 0, 0, .45); }
+    .ctx-menu[popover] { inset: auto; margin: 0; color: inherit; } /* меню в окне — в верхнем слое (showMenu) */
     .ctx-menu button { display: flex; width: 100%; justify-content: space-between; gap: 18px; background: none; border: 0; border-radius: calc(5px * var(--rk, 1)); padding: 7px 10px; text-align: left; }
     .ctx-menu button:hover:not(:disabled) { background: var(--live-soft); color: var(--live); }
+    .ctx-menu .ctx-ic { display: inline-flex; align-items: center; gap: 9px; }
     .ctx-menu button:disabled { opacity: .45; cursor: default; }
     .ctx-key { color: var(--muted); font-size: 12px; }
     .ctx-sep { height: 1px; background: var(--line); margin: 4px 6px; }
@@ -507,7 +513,7 @@
     .q-pl select { max-width: 200px; }
     .song-col .hint { color: var(--muted); font-size: 12px; line-height: 1.4; margin: 0; }
     /* Текст песни: под прозрачным полем — слой #songBack с полосами цвета части (как маркером) */
-    .song-text { position: relative; flex: 1; min-height: 200px; display: flex; background: var(--field); border: 1px solid var(--line); border-radius: calc(6px * var(--rk, 1)); overflow: hidden; }
+    .song-text { position: relative; flex: 1 0 200px; min-height: 200px; display: flex; background: var(--field); border: 1px solid var(--line); border-radius: calc(6px * var(--rk, 1)); overflow: hidden; }
     #songText, #songBack > div { font-family: inherit; font-size: 14px; line-height: 1.5; letter-spacing: normal; padding: 10px 12px; white-space: pre-wrap; overflow-wrap: break-word; tab-size: 8; }
     #songText { position: relative; z-index: 1; flex: 1; min-height: 0; resize: none; color: var(--text); background: transparent; border: 0; border-radius: calc(6px * var(--rk, 1)); margin: 0; }
     #songBack { position: absolute; inset: 0; overflow: hidden; pointer-events: none; }
@@ -526,6 +532,15 @@
     #songChords { width: 100%; height: 160px; resize: vertical; font: 13px/1.45 Consolas, "Cascadia Mono", monospace; color: var(--text); background: var(--field); border: 1px solid var(--line); border-radius: calc(6px * var(--rk, 1)); padding: 8px 10px; }
     .song-chords-bar { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
     .song-chords-bar .hint { margin: 0; }
+    /* Левая колонка окна песни: блоки «Аккорды» и «Ноты» раскрыты — не вылезать под кнопки окна, а прокручиваться */
+    .song-edit > .song-col:first-child { overflow-y: auto; overflow-x: hidden; padding-right: 4px; }
+    .song-sheets { display: flex; gap: 8px; overflow-x: auto; padding: 2px 0 4px; flex: none; }
+    .song-sheets:empty { display: none; }
+    .sheet-card { flex: none; width: 72px; display: flex; flex-direction: column; gap: 3px; font-size: 11px; color: var(--muted); }
+    .sheet-card img { width: 72px; height: 94px; object-fit: contain; background: #fff; border: 1px solid var(--line); border-radius: calc(4px * var(--rk, 1)); }
+    .sheet-card span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .sheet-card .sc-btns { display: flex; gap: 2px; }
+    .sheet-card .sc-btns button { flex: 1; padding: 1px 0; min-width: 0; font-size: 12px; }
     .song-chords-bar button { flex: none; white-space: nowrap; }
     .song-warn { color: var(--warn) !important; }
     .song-sub { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
@@ -941,8 +956,8 @@
     /* Проигрыватель под предпросмотром: видео или музыка */
     #player, #vplayer { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; padding: 8px 10px; border: 1px solid var(--line); border-radius: calc(8px * var(--rk, 1)); background: var(--field); }
     #player.idle, #vplayer.idle { opacity: .5; transition: opacity .2s; }
-    #player.idle:hover, #vplayer.idle:hover { opacity: .8; }
-    #player button svg, #vplayer button svg { width: 11px; height: 11px; display: block; margin: auto; }
+    #player.idle:hover, #vplayer.idle:hover:hover { opacity: .8; }
+    #player button svg, #vplayer button svg svg { width: 11px; height: 11px; display: block; margin: auto; }
     #muPick { width: 26px !important; height: 22px !important; }
     .pl-line { display: flex; align-items: center; gap: 8px; min-width: 0; }
     #playerKind, #vKind { flex: none; font-size: 10px; text-transform: uppercase; letter-spacing: .06em; color: var(--ink); background: var(--muted); border-radius: calc(4px * var(--rk, 1)); padding: 1px 6px; }
@@ -957,8 +972,8 @@
     #timeEnd, #vTimeEnd { text-align: right; }
     .vol-ico { width: 14px; height: 12px; flex: none; color: var(--muted); }
     #player button.mute-btn, #vplayer button.mute-btn { width: 26px; height: 22px; background: none; border-color: transparent; }
-    #player button.mute-btn:hover, #vplayer button.mute-btn:hover { border-color: var(--line); }
-    #player button.mute-btn svg, #vplayer button.mute-btn svg { width: 14px; height: 12px; }
+    #player button.mute-btn:hover, #vplayer button.mute-btn:hover:hover { border-color: var(--line); }
+    #player button.mute-btn svg, #vplayer button.mute-btn svg svg { width: 14px; height: 12px; }
     .mute-btn .slash { display: none; }
     .mute-btn.on { border-color: var(--warn) !important; }
     .mute-btn.on .vol-ico { color: var(--warn); }
@@ -1607,6 +1622,52 @@
     .te-row input[type=number] { width: 58px; }
     .te-row input[type=range] { flex: 1; min-width: 50px; }
     .te-row input[type=color] { width: 30px; height: 26px; flex: none; }
+    .te-row .cpk-field { width: 30px; height: 26px; flex: none; }
+    /* Окно «Цвета» (colorpicker.js): сетка, спектр, ползунки, прозрачность */
+    .cpk-field { position: relative; padding: 0; border: 1px solid var(--line); border-radius: calc(6px * var(--rk, 1)); overflow: hidden; width: 44px; height: 30px; flex: none;
+      background: repeating-conic-gradient(#d8d8d8 0 25%, #8e8e8e 0 50%) 0 0 / 10px 10px; }
+    .cpk-field i { position: absolute; inset: 0; }
+    .cpk { --cpbg: #262628; --cpfield: #1c1c1e; --cpseg: #3a3a3c; --cpsel: #636366; --cptext: #f2f2f7; --cpmuted: #8e8e93; --cpline: rgba(255, 255, 255, .12);
+      position: fixed; inset: auto; left: 0; top: 0; margin: 0; z-index: 10000; max-height: calc(100vh - 12px); overflow: auto;
+      width: min(340px, calc(100vw - 20px)); padding: 0 0 4px; color: var(--cptext); background: var(--cpbg); border: 0; border-radius: 16px; box-shadow: 0 18px 50px rgba(0, 0, 0, .55); }
+    .cpk-head { cursor: move; user-select: none; display: grid; grid-template-columns: 44px 1fr 44px; align-items: center; padding: 8px 8px 4px; }
+    .cpk-head h2 { margin: 0; text-align: center; font-size: 17px; font-weight: 600; }
+    .cpk-ic { display: grid; place-items: center; width: 36px; height: 36px; padding: 0; border: 0; border-radius: 50%; background: none; color: #0a84ff; }
+    .cpk-x { justify-self: end; width: 28px; height: 28px; margin-right: 6px; background: var(--cpseg); color: var(--cpmuted); font-size: 18px; line-height: 1; }
+    .cpk-seg { display: flex; margin: 6px 14px 12px; padding: 2px; border-radius: 9px; background: var(--cpseg); }
+    .cpk-seg button { flex: 1; padding: 6px 4px; border: 0; border-radius: 7px; background: none; font-size: 13px; font-weight: 500; color: var(--cptext); }
+    .cpk-seg button[aria-pressed=true] { background: var(--cpsel); font-weight: 600; }
+    .cpk-pane { margin: 0 14px; }
+    #cpkGrid { display: grid; grid-template-columns: repeat(12, 1fr); border-radius: 8px; overflow: hidden; touch-action: none; }
+    #cpkGrid i { position: relative; display: block; aspect-ratio: 1; }
+    #cpkGrid i.on { z-index: 1; box-shadow: 0 0 0 2px #fff, 0 0 0 3px rgba(0, 0, 0, .35); border-radius: 3px; }
+    .cpk-spec { position: relative; touch-action: none; }
+    .cpk-spec canvas { display: block; width: 100%; height: auto; aspect-ratio: 3 / 2; border-radius: 8px; }
+    .cpk-ring { position: absolute; width: 26px; height: 26px; margin: -13px 0 0 -13px; border-radius: 50%; border: 3px solid #fff; box-shadow: 0 0 0 .5px rgba(0, 0, 0, .3), 0 2px 6px rgba(0, 0, 0, .35); pointer-events: none; }
+    .cpk-sl label, .cpk-lbl { display: block; margin: 12px 14px 6px; font-size: 12px; font-weight: 600; letter-spacing: .02em; color: var(--cpmuted); }
+    .cpk-lbl small { font-weight: 400; letter-spacing: 0; }
+    .cpk-sl label { margin: 10px 0 6px; }
+    .cpk-sl label:first-child { margin-top: 2px; }
+    .cpk-slr { display: flex; align-items: center; gap: 12px; }
+    .cpk-pad { margin: 0 14px; }
+    .cpk-n { flex: none; width: 66px; height: 34px; padding: 0 8px; border: 0; border-radius: 8px; background: var(--cpfield); color: var(--cptext); font: 500 15px/34px system-ui, sans-serif; text-align: center; -moz-appearance: textfield; }
+    .cpk-n::-webkit-inner-spin-button, .cpk-n::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+    .cpk-pct { display: flex; align-items: center; justify-content: center; gap: 2px; padding: 0 6px; }
+    .cpk-pct input { width: 34px; height: 30px; padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: right; -moz-appearance: textfield; }
+    .cpk-pct input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+    .cpk-hex { display: flex; align-items: center; justify-content: flex-end; gap: 10px; margin: 12px 0 0; font-size: 14px; }
+    .cpk-hex input { width: 96px; height: 34px; padding: 0 10px; border: 0; border-radius: 8px; background: var(--cpfield); color: var(--cptext); font: 500 15px system-ui, sans-serif; text-transform: uppercase; }
+    .cpk-slr input[type=range] { flex: 1; min-width: 0; height: 30px; margin: 0; border-radius: 15px; -webkit-appearance: none; appearance: none; background: var(--trk, #888); cursor: pointer; }
+    .cpk-slr input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 28px; height: 28px; border-radius: 50%; background: transparent; border: 4px solid #fff; box-shadow: 0 0 0 .5px rgba(0, 0, 0, .3), 0 2px 5px rgba(0, 0, 0, .35); }
+    .cpk-slr input.cpk-op { background: var(--trk), repeating-conic-gradient(#d8d8d8 0 25%, #8e8e8e 0 50%) 0 0 / 15px 15px; }
+    .cpk-foot { display: flex; align-items: flex-start; gap: 14px; margin: 14px 0 0; padding: 14px 14px 10px; border-top: 1px solid var(--cpline); }
+    .cpk-cur { position: relative; flex: none; width: 60px; height: 60px; border-radius: 9px; overflow: hidden; background: repeating-conic-gradient(#d8d8d8 0 25%, #8e8e8e 0 50%) 0 0 / 15px 15px; box-shadow: inset 0 0 0 .5px var(--cpline); }
+    .cpk-cur i { position: absolute; inset: 0; background: var(--cur, #000); }
+    .cpk-sw { display: flex; flex-wrap: wrap; gap: 10px; align-content: flex-start; }
+    .cpk-sw button { position: relative; width: 32px; height: 32px; padding: 0; border: 0; border-radius: 50%; background: repeating-conic-gradient(#d8d8d8 0 25%, #8e8e8e 0 50%) 0 0 / 10px 10px; overflow: hidden; }
+    .cpk-sw button i { position: absolute; inset: 0; border-radius: 50%; background: var(--c); }
+    .cpk-sw button.on { box-shadow: 0 0 0 2px var(--cpbg), 0 0 0 4px var(--cpmuted); overflow: visible; }
+    .cpk-sw .cpk-add { display: grid; place-items: center; background: var(--cpseg); color: var(--cptext); }
     .te-row input.hex { width: 74px; flex: none !important; font-family: Consolas, monospace; }
     .te-hint { color: var(--muted); font-size: 11.5px; line-height: 1.45; margin: 0; }
     .te-seg { display: inline-flex; border: 1px solid var(--line); border-radius: calc(6px * var(--rk, 1)); overflow: hidden; flex-wrap: wrap; }
@@ -1649,7 +1710,7 @@
     html.ui-glow .vslide.live { box-shadow: 0 0 0 2px var(--live), var(--glow); }
     html.ui-glow .ui-theme[aria-pressed="true"] { box-shadow: 0 0 0 1px var(--live), var(--glow); }
     html.ui-glow .tab[aria-selected=true] { text-shadow: 0 0 var(--glow-px) color-mix(in srgb, var(--live) 70%, transparent); border-bottom-color: var(--live); }
-    html.ui-glow input[type=checkbox]:checked, html.ui-glow input[type=radio]:checked, html.ui-glow input[type=range] { filter: drop-shadow(0 0 calc(var(--glow-px) / 2) var(--live)); }
+    html.ui-glow input[type=checkbox]:checked, html.ui-glow input[type=radio]:checked, html.ui-glow input[type=range]:not(.cpk *) { filter: drop-shadow(0 0 calc(var(--glow-px) / 2) var(--live)); }
     html.ui-glow #outHint.on, html.ui-glow .set-nav button[aria-current=true] { text-shadow: 0 0 var(--glow-px) color-mix(in srgb, var(--live) 60%, transparent); }
     /* Стекло: окно — мягкий градиент, панели полупрозрачные (--panel/--field с прозрачностью), всплывающие — с размытием */
     html.ui-glass, html.ui-glass body {
@@ -1658,7 +1719,9 @@
         linear-gradient(160deg, color-mix(in srgb, var(--ink) 88%, #fff 6%), var(--ink)) fixed;
     }
     html.ui-glass .ctx-menu, html.ui-glass .note-pop, html.ui-glass .ly-pop, html.ui-glass #srcPop, html.ui-glass .mc-picker,
-    html.ui-glass .il-pop, html.ui-glass #mcDock, html.ui-glass .st-pop, html.ui-glass #status { backdrop-filter: blur(18px) saturate(1.3); }
+    html.ui-glass .il-pop, html.ui-glass #mcDock, html.ui-glass .st-pop, html.ui-glass #status, html.ui-glass dialog,
+    html.ui-glass #quick, html.ui-glass .te-pop, html.ui-glass .ui-pop { backdrop-filter: blur(var(--blur, 18px)) saturate(1.3); }
+    /* .ui-pop — общий класс всплывающих панелей (новая плавающая панель — давайте ей этот класс, тогда стекло и размытие работают сами) */
     html.ui-glass aside, html.ui-glass .tabs, html.ui-glass .set-nav { box-shadow: inset 0 1px 0 rgba(255, 255, 255, .05); }
     html.ui-glass select, html.ui-glass button:not(.tab), html.ui-glass input[type=text], html.ui-glass input[type=number] { box-shadow: inset 0 1px 0 rgba(255, 255, 255, .06); }
     html.ui-glow.ui-glass button.primary:not(.on), html.ui-glow.ui-glass button[aria-pressed=true] { box-shadow: inset 0 1px 0 rgba(255, 255, 255, .18), var(--glow); }
@@ -1667,15 +1730,15 @@
       background-image: linear-gradient(180deg, rgba(255, 255, 255, .16), rgba(255, 255, 255, .03) 48%, rgba(0, 0, 0, .06));
       border-color: color-mix(in srgb, var(--line) 55%, rgba(255, 255, 255, .22));
       box-shadow: inset 0 1px 0 rgba(255, 255, 255, .28), inset 0 -1px 1px rgba(0, 0, 0, .22), 0 2px 8px rgba(0, 0, 0, .22);
-      backdrop-filter: blur(10px) saturate(1.6);
+      backdrop-filter: blur(calc(var(--blur, 18px) * .55)) saturate(1.6);
     }
     html.ui-liquid .set-nav button:not([aria-current=true]) { background-image: none; box-shadow: none; border-color: transparent; backdrop-filter: none; }
     html.ui-liquid aside, html.ui-liquid .tabs, html.ui-liquid .mu-pane, html.ui-liquid #bookNav, html.ui-liquid .svc-side, html.ui-liquid .bm-box,
     html.ui-liquid dialog, html.ui-liquid #quick, html.ui-liquid .ly-box, html.ui-liquid #pool, html.ui-liquid .mc-side, html.ui-liquid .mc-props,
-    html.ui-liquid .ae-side, html.ui-liquid .sc-side, html.ui-liquid .te-side, html.ui-liquid .te-insp {
+    html.ui-liquid .ae-side, html.ui-liquid .sc-side, html.ui-liquid .te-side, html.ui-liquid .te-insp, html.ui-liquid .ui-pop {
       background-image: linear-gradient(155deg, rgba(255, 255, 255, .08), rgba(255, 255, 255, 0) 38%);
       box-shadow: inset 0 1px 0 rgba(255, 255, 255, .14), inset 1px 0 0 rgba(255, 255, 255, .05), 0 8px 30px rgba(0, 0, 0, .25);
-      backdrop-filter: blur(24px) saturate(1.6);
+      backdrop-filter: blur(calc(var(--blur, 18px) * 1.33)) saturate(1.6);
     }
     html.ui-glow.ui-liquid button.primary:not(.on), html.ui-glow.ui-liquid button[aria-pressed=true] { box-shadow: inset 0 1px 0 rgba(255, 255, 255, .35), inset 0 -1px 1px rgba(0, 0, 0, .25), var(--glow); }
     /* Оформление темы «Жар» / «Неон» (deco: 'aura', tools.js: UI_THEMES): чёрный фон с тёплым свечением снизу
@@ -1694,19 +1757,19 @@
     }
     html[data-ui-deco=aura] .tab[aria-selected=true] { color: var(--text); border-image: linear-gradient(90deg, var(--live), var(--brown)) 1; }
     html[data-ui-deco=aura] :is(.tile.live, .sl.live) { box-shadow: 0 0 0 1px var(--live), 0 10px 30px -6px color-mix(in srgb, var(--live) 55%, transparent); }
-    html[data-ui-deco=aura] :is(dialog, .ctx-menu, .note-pop, .ly-pop, #srcPop, .st-pop) {
+    html[data-ui-deco=aura] :is(dialog, .ctx-menu, .note-pop, .ly-pop, #srcPop, .st-pop, .ui-pop) {
       border: 1px solid rgba(255, 255, 255, .09);
       box-shadow: inset 0 1px 0 rgba(255, 255, 255, .08), 0 20px 60px rgba(0, 0, 0, .55);
     }
-    html[data-ui-deco=aura] dialog { backdrop-filter: blur(22px) saturate(1.3); }
+    html[data-ui-deco=aura] dialog { backdrop-filter: blur(calc(var(--blur, 18px) * 1.2)) saturate(1.3); }
     /* ----- Элементы управления aura (tools.js: auraSyncRanges, makeKnob) ----- */
     /* Ползунки (как шкала Spotify): тонкая дорожка, залита акцентом до значения (--pct), белая светящаяся ручка */
-    html[data-ui-deco=aura] input[type=range] { -webkit-appearance: none; appearance: none; height: 16px; background: transparent; }
-    html[data-ui-deco=aura] input[type=range]::-webkit-slider-runnable-track { height: 4px; border-radius: 999px;
+    html[data-ui-deco=aura] input[type=range]:not(.cpk *) { -webkit-appearance: none; appearance: none; height: 16px; background: transparent; }
+    html[data-ui-deco=aura] input[type=range]:not(.cpk *)::-webkit-slider-runnable-track { height: 4px; border-radius: 999px;
       background: linear-gradient(90deg, var(--live), color-mix(in srgb, var(--live) 60%, var(--brown)) var(--pct, 0%), color-mix(in srgb, var(--line) 80%, #fff 14%) var(--pct, 0%)); }
-    html[data-ui-deco=aura] input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 14px; height: 14px; margin-top: -5px; border-radius: 50%; background: #fff; box-shadow: 0 0 0 3px color-mix(in srgb, var(--live) 45%, transparent), 0 0 12px color-mix(in srgb, var(--live) 70%, transparent); }
-    html[data-ui-deco=aura] input[type=range]:hover::-webkit-slider-thumb { box-shadow: 0 0 0 5px color-mix(in srgb, var(--live) 40%, transparent), 0 0 16px var(--live); }
-    html[data-ui-deco=aura] input[type=range]:disabled { opacity: .4; }
+    html[data-ui-deco=aura] input[type=range]:not(.cpk *)::-webkit-slider-thumb { -webkit-appearance: none; width: 14px; height: 14px; margin-top: -5px; border-radius: 50%; background: #fff; box-shadow: 0 0 0 3px color-mix(in srgb, var(--live) 45%, transparent), 0 0 12px color-mix(in srgb, var(--live) 70%, transparent); }
+    html[data-ui-deco=aura] input[type=range]:not(.cpk *):hover::-webkit-slider-thumb { box-shadow: 0 0 0 5px color-mix(in srgb, var(--live) 40%, transparent), 0 0 16px var(--live); }
+    html[data-ui-deco=aura] input[type=range]:not(.cpk *):disabled { opacity: .4; }
     /* Перемотка: потолще, ручка — маленькая точка */
     html[data-ui-deco=aura] :is(#seek, #vSeek)::-webkit-slider-runnable-track { height: 5px; box-shadow: 0 0 10px -2px color-mix(in srgb, var(--live) 60%, transparent); }
     html[data-ui-deco=aura] :is(#seek, #vSeek)::-webkit-slider-thumb { width: 11px; height: 11px; margin-top: -3px; }
@@ -1762,15 +1825,15 @@
       border: 1px solid rgba(255, 255, 255, .08); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .06), 0 20px 50px rgba(0, 0, 0, .5);
     }
     /* Ползунок (как шкала «25 lbs»): тонкая линия, жёлтая до значения, риски под ней, тёмная ручка-шайба в жёлтом ореоле */
-    html[data-ui-deco=amber] input[type=range] { -webkit-appearance: none; appearance: none; height: 22px;
+    html[data-ui-deco=amber] input[type=range]:not(.cpk *) { -webkit-appearance: none; appearance: none; height: 22px;
       background: repeating-linear-gradient(90deg, color-mix(in srgb, var(--text) 25%, transparent) 0 1px, transparent 1px 7px) 0 100% / 100% 4px no-repeat; }
-    html[data-ui-deco=amber] input[type=range]::-webkit-slider-runnable-track { height: 2px; border-radius: 1px;
+    html[data-ui-deco=amber] input[type=range]:not(.cpk *)::-webkit-slider-runnable-track { height: 2px; border-radius: 1px;
       background: linear-gradient(90deg, var(--live) var(--pct, 0%), color-mix(in srgb, var(--line) 70%, #fff 15%) var(--pct, 0%)); }
-    html[data-ui-deco=amber] input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 16px; height: 16px; margin-top: -7px; border-radius: 50%;
+    html[data-ui-deco=amber] input[type=range]:not(.cpk *)::-webkit-slider-thumb { -webkit-appearance: none; width: 16px; height: 16px; margin-top: -7px; border-radius: 50%;
       background: linear-gradient(180deg, #45464c, #18191c); border: 1px solid rgba(255, 255, 255, .1);
       box-shadow: 0 0 0 2px #141518, 0 0 14px 4px color-mix(in srgb, var(--live) 45%, transparent), 0 3px 6px rgba(0, 0, 0, .6); }
-    html[data-ui-deco=amber] input[type=range]:hover::-webkit-slider-thumb { box-shadow: 0 0 0 2px #141518, 0 0 18px 7px color-mix(in srgb, var(--live) 55%, transparent), 0 3px 6px rgba(0, 0, 0, .6); }
-    html[data-ui-deco=amber] input[type=range]:disabled { opacity: .4; }
+    html[data-ui-deco=amber] input[type=range]:not(.cpk *):hover::-webkit-slider-thumb { box-shadow: 0 0 0 2px #141518, 0 0 18px 7px color-mix(in srgb, var(--live) 55%, transparent), 0 3px 6px rgba(0, 0, 0, .6); }
+    html[data-ui-deco=amber] input[type=range]:not(.cpk *):disabled { opacity: .4; }
     /* Перемотка (как «20 Seconds»): толстая «таблетка» в чёрной оправе, заливка оранжевый → жёлтый */
     html[data-ui-deco=amber] :is(#seek, #vSeek) { height: 18px; background: none; }
     html[data-ui-deco=amber] :is(#seek, #vSeek)::-webkit-slider-runnable-track { height: 7px; border-radius: 999px; box-shadow: 0 0 0 3px #0d0e10;
@@ -1808,6 +1871,57 @@
     html[data-ui-deco=amber] .ui-knob:is(:hover, :focus-visible) .kn-cap { box-shadow: inset 0 1px 0 rgba(255, 255, 255, .12), 0 0 0 2px color-mix(in srgb, var(--live) 55%, transparent); }
     .ui-th-pv[data-deco=amber] i:nth-child(3) { border-radius: 999px; box-shadow: 0 0 8px var(--e); }
     .ui-th-pv[data-deco=amber] i:nth-child(2) { background: repeating-linear-gradient(90deg, var(--d) 0 1px, transparent 1px 4px); height: 6px; box-shadow: none; }
+    /* ----- Тема «Закат» (deco: 'sunset'): по фото «Apply Filters» — сиренево-серое стекло, тёплое свечение снизу,
+       полосы — тёмный утопленный жёлоб и светящаяся белая «таблетка» с розово-оранжевым ореолом ----- */
+    html[data-ui-deco=sunset], html[data-ui-deco=sunset] body {
+      background:
+        radial-gradient(55% 22% at 50% 104%, rgba(255, 160, 120, .55), transparent 70%),
+        radial-gradient(30% 10% at 50% 100%, rgba(255, 236, 214, .45), transparent 70%),
+        linear-gradient(180deg, color-mix(in srgb, var(--ink) 85%, #fff 12%), var(--ink) 55%, color-mix(in srgb, var(--ink) 90%, #000)) fixed;
+    }
+    html[data-ui-deco=sunset] :is(aside, .tabs, .set-nav) { box-shadow: inset 0 1px 0 rgba(255, 255, 255, .22); }
+    html[data-ui-deco=sunset] button.primary:not(.on) { border-color: transparent; border-radius: 999px; padding-inline: 14px;
+      background: linear-gradient(90deg, #ffd9c4, #fffaf4); color: var(--live-ink); box-shadow: 0 0 6px #fff, 0 0 16px -2px rgba(255, 140, 110, .9); }
+    html[data-ui-deco=sunset] .tab[aria-selected=true] { color: #fff7ef; text-shadow: 0 0 10px rgba(255, 150, 115, .9); border-image: linear-gradient(90deg, #fffaf4, #ff9a7a) 1; }
+    html[data-ui-deco=sunset] :is(.tile.live, .sl.live) { box-shadow: 0 0 0 2px #fff3e4, 0 0 12px #fff, 0 0 30px -4px rgba(255, 140, 110, .9); }
+    html[data-ui-deco=sunset] :is(dialog, .ctx-menu, .note-pop, .ly-pop, #srcPop, .st-pop) {
+      border: 1px solid rgba(255, 255, 255, .28); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .3), 0 20px 50px rgba(30, 30, 60, .5);
+    }
+    /* Ползунок: жёлоб утоплен, заливка до значения (--pct) — белая с персиковым краем, ореол — полоса света по ширине заливки */
+    html[data-ui-deco=sunset] input[type=range]:not(.cpk *) { -webkit-appearance: none; appearance: none; height: 22px;
+      background: linear-gradient(180deg, transparent 10%, rgba(255, 150, 115, .5) 50%, transparent 90%) 0 0 / var(--pct, 0%) 100% no-repeat; }
+    html[data-ui-deco=sunset] input[type=range]:not(.cpk *)::-webkit-slider-runnable-track { height: 10px; border-radius: 999px;
+      background: linear-gradient(90deg, #ffd3bd, #fffaf4 var(--pct, 0%), #3b3c57 var(--pct, 0%)); box-shadow: inset 0 1px 3px rgba(0, 0, 0, .45), 0 1px 0 rgba(255, 255, 255, .18); }
+    html[data-ui-deco=sunset] input[type=range]:not(.cpk *)::-webkit-slider-thumb { -webkit-appearance: none; width: 10px; height: 10px; margin-top: 0; border: 0; border-radius: 50%;
+      background: #fff; box-shadow: 0 0 6px #fff, 0 0 14px 2px rgba(255, 140, 110, .85); }
+    html[data-ui-deco=sunset] input[type=range]:not(.cpk *):hover::-webkit-slider-thumb { box-shadow: 0 0 8px #fff, 0 0 20px 5px rgba(255, 140, 110, .9); }
+    html[data-ui-deco=sunset] input[type=range]:not(.cpk *):disabled { opacity: .4; }
+    /* Перемотка — потолще, как на фото */
+    html[data-ui-deco=sunset] :is(#seek, #vSeek) { height: 24px; }
+    html[data-ui-deco=sunset] :is(#seek, #vSeek)::-webkit-slider-runnable-track { height: 12px; }
+    html[data-ui-deco=sunset] :is(#seek, #vSeek)::-webkit-slider-thumb { width: 12px; height: 12px; }
+    html[data-ui-deco=sunset] :is(#player, #vplayer).muted :is(#volume, #vVolume)::-webkit-slider-runnable-track { background: linear-gradient(90deg, var(--muted) var(--pct, 0%), #3b3c57 var(--pct, 0%)); }
+    /* Проигрыватель: «играть» — светящаяся персиковая кнопка, остальные — просто значки */
+    html[data-ui-deco=sunset] :is(#playPause, #vPlay) { width: 34px; height: 34px; border-radius: 50%; border-color: transparent; font-size: 13px;
+      background: radial-gradient(circle at 50% 35%, #fffaf4, #ffd9c4); color: #c8604a; box-shadow: 0 0 8px #fff, 0 0 22px rgba(255, 140, 110, .8); }
+    html[data-ui-deco=sunset] :is(#muPrev, #muNext, #stop, #vStop) { background: none; border-color: transparent; box-shadow: none; backdrop-filter: none; color: var(--muted); }
+    html[data-ui-deco=sunset] :is(#muPrev, #muNext, #stop, #vStop):hover { color: var(--text); }
+    html[data-ui-deco=sunset] .pl-btns { align-items: center; }
+    /* Переключатели: выключен — утопленная тёмная таблетка, включён — светящаяся белая с коралловым кружком */
+    html[data-ui-deco=sunset] input[type=checkbox] { -webkit-appearance: none; appearance: none; position: relative; flex: none; width: 30px; height: 16px; margin: 0 2px; vertical-align: middle; border-radius: 999px; cursor: pointer;
+      background: #3b3c57; border: 0; box-shadow: inset 0 1px 3px rgba(0, 0, 0, .5), 0 1px 0 rgba(255, 255, 255, .15); filter: none; }
+    html[data-ui-deco=sunset] input[type=checkbox]::before { content: ""; position: absolute; left: 2px; top: 2px; width: 12px; height: 12px; border-radius: 50%; background: #9a9cb8; }
+    html[data-ui-deco=sunset] input[type=checkbox]:checked { background: #fff6ec; box-shadow: 0 0 6px #fff, 0 0 14px rgba(255, 140, 110, .85); }
+    html[data-ui-deco=sunset] input[type=checkbox]:checked::before { left: 16px; background: #d0684f; }
+    html[data-ui-deco=sunset] input[type=checkbox]:indeterminate::before { left: 9px; }
+    html[data-ui-deco=sunset] input[type=checkbox]:disabled { opacity: .4; cursor: default; }
+    html[data-ui-deco=sunset] input[type=checkbox]:focus-visible { outline: 2px solid var(--live); outline-offset: 2px; }
+    /* Крутилка: кольцо рисок как у aura, ручка — сиреневое стекло с тёплым отсветом снизу */
+    html[data-ui-deco=sunset] .ui-knob .kn-arc { background: conic-gradient(from -136deg, #ff9a7a, #fffaf4 calc(var(--pct, 0%) * .75), transparent 0); filter: drop-shadow(0 0 3px rgba(255, 140, 110, .9)); }
+    html[data-ui-deco=sunset] .ui-knob .kn-cap { background: radial-gradient(90% 60% at 50% 110%, rgba(255, 160, 120, .55), transparent 70%), linear-gradient(180deg, #8f91b0, #4a4c69);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, .35), 0 4px 10px rgba(30, 30, 60, .5); }
+    .ui-th-pv[data-deco=sunset] { background: radial-gradient(70% 50% at 50% 120%, rgba(255, 160, 120, .7), transparent 70%), var(--a); }
+    .ui-th-pv[data-deco=sunset] i:nth-child(3) { border-radius: 999px; background: #fffaf4; box-shadow: 0 0 4px #fff, 0 0 10px #ff9a7a; }
     /* Шрифт программы (settings.uiFont): только системные шрифты Windows */
     html[data-ui-font=tech], html[data-ui-font=narrow] { font-family: Bahnschrift, "Segoe UI", system-ui, sans-serif; }
     html[data-ui-font=narrow] { font-stretch: 87.5%; }
@@ -1852,6 +1966,8 @@
     <button id="addMenu" class="tab-btn add-menu" data-icon="add" title="Добавить: песню, импорт, источник, файл, библиотеку…" aria-haspopup="menu">＋</button>
     <button id="svcTheme" class="tab-btn icon-only" data-icon="theme" title="Тема: для выделенных пунктов «Содержания» (Ctrl/Shift+щелчок, Ctrl+A), а если ничего не выделено — для того, что на экране"></button>
     <button id="poolToggle" class="tab-btn" data-icon="pool" title="Медиапул: файлы из закреплённых папок (F8)">Медиапул</button>
+    <button id="voiceOpen" class="tab-btn icon-only" data-icon="bvoice" title="Библия по голосу: программа слушает проповедника и предлагает место, которое он назвал или читает"></button>
+    <button id="svcOpen" class="tab-btn" data-icon="service" aria-haspopup="menu" title="Служение: проверка перед началом, плашки и бегущая строка">Служение ▾</button>
     <button id="teamOpen" class="tab-btn" data-icon="team" title="Группа: приложение для телефонов музыкантов и певцов — адрес, сертификат, доступ">Группа</button>
     <button id="openSettings" class="tab-btn" data-icon="settings" title="Настройки: монитор и вывод, показ, звук, горячие клавиши">Настройки</button>
     </div>
@@ -2575,6 +2691,11 @@
         </section>
         <section class="set-sec" data-sec="look" hidden>
           <div class="set-group">
+            <h2>Язык программы</h2>
+            <div class="field"><span>Язык</span><select id="uiLang" data-noi18n></select></div>
+            <p class="hint">Русский, English или Eesti. Меняется сразу, без перезапуска. Тексты слайдов, песни и Библия не переводятся.</p>
+          </div>
+          <div class="set-group">
             <h2>Тема программы</h2>
             <div id="uiThemes" class="ui-themes"></div>
             <div class="btns-row">
@@ -2596,9 +2717,10 @@
             <div class="field"><span>Скругление углов</span><span class="btns-row" style="margin:0;align-items:center"><code id="uiRadiusVal"></code><input type="range" id="uiRadius" min="0" max="16" step="1" value="6" data-def="6"></span></div>
             <div class="field"><span>Панели</span><select id="uiGlass"><option value="">Обычные</option><option value="glass">Стекло</option><option value="liquid">Liquid glass</option></select></div>
             <div class="field"><span>Прозрачность панелей</span><span class="btns-row" style="margin:0;align-items:center"><code id="uiAlphaVal"></code><input type="range" id="uiAlpha" min="0" max="60" step="2" value="16" data-def="16"></span></div>
+            <div class="field"><span>Размытие под панелями</span><span class="btns-row" style="margin:0;align-items:center"><code id="uiBlurVal"></code><input type="range" id="uiBlur" min="0" max="40" step="1" value="18" data-def="18"></span></div>
             <div class="field"><span>Шрифт программы</span><select id="uiFont"></select></div>
             <div class="field"><label class="check"><input type="checkbox" id="uiCaps"> Заголовки и вкладки заглавными буквами</label></div>
-            <p class="hint">Свечение — неоновый ореол у выбранных кнопок, вкладок и слайдов в эфире (0 — выключено). Стекло — полупрозрачные панели на мягком градиенте; Liquid glass — ещё и объёмные блики на кнопках и краях панелей. Технический шрифт делает мелкие подписи моноширинными. Эффекты сохраняются в пресет вместе с цветами.</p>
+            <p class="hint">Свечение — неоновый ореол у выбранных кнопок, вкладок и слайдов в эфире (0 — выключено). Стекло — полупрозрачные панели на мягком градиенте; размытие — насколько расплывается то, что видно сквозь окна, меню и панели (0 — чёткое); Liquid glass — ещё и объёмные блики на кнопках и краях панелей. Технический шрифт делает мелкие подписи моноширинными. Эффекты сохраняются в пресет вместе с цветами.</p>
           </div>
           <div class="set-group">
             <h2>Пресеты настроек</h2>
@@ -2726,7 +2848,17 @@
           <textarea id="songChords" spellcheck="false" placeholder="[Куплет 1]&#10;[Am]Первая стро[G]ка куплета&#10;&#10;или аккорды строкой над словами:&#10;Am         G&#10;Первая строка куплета"></textarea>
           <div class="song-chords-bar">
             <button id="songChordsFill" type="button" title="Скопировать сюда текст песни и дописать аккорды">Взять текст песни</button>
+            <button id="songChordsLoad" type="button" title="Файл или текст с аккордами (ChordPro, txt): аккорды ложатся на текст этой песни, сам текст не меняется">Загрузить аккорды…</button>
             <span class="hint">Музыканты видят аккорды над словами текущего слайда (блок «Аккорды»). Зрителям аккорды не выводятся.</span>
+          </div>
+        </details>
+        <!-- Ноты для телефонов группы (song.sheets): фото и PDF → листы-картинки -->
+        <details id="songSheetsBox" class="song-chords">
+          <summary>Ноты для группы <span id="songSheetsN" class="hint"></span></summary>
+          <div class="song-sheets" id="songSheets"></div>
+          <div class="song-chords-bar">
+            <button id="songSheetsAdd" type="button" title="Фото или скан нот (JPEG, PNG) или PDF — PDF делится на страницы">Добавить фото или PDF…</button>
+            <span class="hint">Листы нот видят музыканты на телефонах (кнопка «Ноты» у песни), и без сети тоже. Зрителям не выводятся.</span>
           </div>
         </details>
       </div>
@@ -3206,8 +3338,11 @@
     </div>
   </dialog>
 
+  <script src="i18n.js"></script>
+  <script src="lang.js"></script>
   <script src="icons.js"></script>
   <script src="iconlib.js"></script>
+  <script src="colorpicker.js"></script>
   <script src="scene.js"></script>
   <script src="compose.js"></script>
   <script src="bible.js"></script>
@@ -3217,6 +3352,7 @@
   <script src="playlist.js"></script>
   <script src="chords.js"></script>
   <script src="songs.js"></script>
+  <script src="songimport.js"></script>
   <script src="tools.js"></script>
   <script src="music.js"></script>
   <script src="sources.js"></script>
@@ -3230,6 +3366,8 @@
   <script src="qr.js"></script>
   <script src="remote.js"></script>
   <script src="team.js"></script>
+  <script src="service.js"></script>
+  <script src="voice.js"></script>
   <script src="splash.js"></script>
 </body>
 </html>

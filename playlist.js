@@ -85,7 +85,7 @@ function flushLib() {
 
 /* ----- Отмена и повтор (Ctrl+Z, Ctrl+Shift+Z): снимки содержимого при каждом сохранении ----- */
 // Правки за 0,3 с до сохранения — один шаг. Открытый список (view) не входит: отмена не переключает вид.
-const HIST_KEYS = ['items', 'libraries', 'playlists', 'themes', 'themeFor', 'tplFor', 'themesLive', 'macros', 'fileMacros', 'screens', 'scenes', 'scenePresets', 'timers', 'verseSplits'];
+const HIST_KEYS = ['items', 'libraries', 'playlists', 'themes', 'themeFor', 'tplFor', 'themesLive', 'macros', 'fileMacros', 'screens', 'scenes', 'scenePresets', 'timers', 'verseSplits', 'lowerThirds'];
 const HIST_MAX = 30;           // шагов назад
 const HIST_CHARS = 80e6;       // и не больше ~80 млн символов на всю историю (большие библиотеки), но не меньше 5 шагов
 let histCur = null;            // снимок того, что сохранено сейчас
@@ -118,6 +118,7 @@ function histApply(snap) {
   if (typeof teAfterUndo === 'function') teAfterUndo(); // вкладка «Темы» — по вернувшимся темам
   if (typeof mcAfterUndo === 'function') mcAfterUndo(); // «Макросы» — по вернувшимся макросам
   if (typeof scAfterUndo === 'function') scAfterUndo(); // «Экраны» — экраны и сцены как были
+  if (typeof ltAfterUndo === 'function') ltAfterUndo(); // окно «Плашки» (service.js) — по вернувшимся плашкам
   if (JSON.stringify(lib.themesLive || null) !== liveWas) refreshLive(); // отменили «Применить тему» — экран с прежней темой
   if (JSON.stringify(lib.verseSplits || null) !== splitsWas) bibleLookChanged(); // вернули деление стиха на части
 }
@@ -350,6 +351,8 @@ function toggleFold(key) {
 }
 
 function renderSide() {
+  // Перерисовка не сбрасывает прокрутку списка (выбрали нижний плейлист — список не прыгает наверх)
+  const sideScroll = $('sideBox').scrollTop;
   const isCur = (kind, x) => listsTab() && !!lib.view && lib.view.kind === kind && lib.view.id === x.id;
   const row = (kind, x, count) => {
     const b = Object.assign(document.createElement('button'), { className: 'svc-row' + (isCur(kind, x) ? ' cur' : ''), draggable: true });
@@ -440,7 +443,20 @@ function renderSide() {
   const open = v ? v.name : '';
   $('tileSide').title = 'Развернуть плейлисты и библиотеки' + (open ? ` (открыто: ${open})` : '');
   $('tileContent').title = 'Развернуть содержание' + (v ? ` (${v.name}: ${viewEntries().length} шт.)` : '');
+  keepSideScroll(sideScroll);
   updatePlaylistLive();
+}
+
+// Вернуть прокрутку списка слева; панель стала ниже — выбранная строка остаётся видна
+function keepSideScroll(top) {
+  const box = $('sideBox');
+  if (box.hidden) return;
+  box.scrollTop = top;
+  const cur = box.querySelector('.svc-row.cur');
+  if (!cur) return;
+  const r = cur.getBoundingClientRect(), br = box.getBoundingClientRect();
+  if (r.bottom > br.bottom) box.scrollTop += r.bottom - br.bottom + 4;
+  else if (r.top < br.top) box.scrollTop -= br.top - r.top + 4;
 }
 
 // Галочки «выполнено» (v.done — ключи пунктов) и включение режима задач (v.todo)
@@ -468,12 +484,16 @@ function renderContent() {
   const kind = lib.view.kind;
   $('contentTitle').textContent = (kind === 'pl' ? 'Плейлист: ' : 'Библиотека: ') + v.name;
   const entries = viewEntries();
+  // Перерисовка не сбрасывает прокрутку «Содержания» (бросили файл в список — он не прыгает наверх)
+  const box = $('contentBox'), keepTop = box.dataset.view === viewKey() ? box.scrollTop : 0;
+  box.dataset.view = viewKey();
   if (!entries.length) {
     const empty = Object.assign(document.createElement('div'), { className: 'svc-empty' });
     empty.append(Object.assign(document.createElement('img'), { src: 'brand/icon.svg', alt: '', draggable: false }), document.createTextNode('Нет содержимого'));
     $('contentList').replaceChildren(empty);
     return;
   }
+  requestAnimationFrame(() => { box.scrollTop = keepTop; });
   $('contentList').replaceChildren(...entries.map((x) => {
     const { key, item } = x;
     const b = Object.assign(document.createElement('button'), { className: 'svc-sub', title: `${item.name} — ${Slides.PRES_NAMES[item.kind] || 'Презентация'}\nЩелчок или Enter — открыть в ленте`, draggable: true });
@@ -516,6 +536,7 @@ function renderContent() {
     });
     return b;
   }));
+  box.scrollTop = keepTop;
 }
 
 /* ----- Выделение пунктов «Содержания»: Ctrl+щелчок — по одному, Shift+щелчок — диапазон, Ctrl+A — все ----- */
@@ -1187,15 +1208,24 @@ function showMenu(e, items) {
       continue;
     }
     const b = Object.assign(document.createElement('button'), { textContent: it.label, disabled: !!it.disabled });
+    if (it.icon && typeof Icons !== 'undefined') { const l = Object.assign(document.createElement('span'), { className: 'ctx-ic', textContent: it.label }); l.prepend(Icons.el(it.icon)); b.replaceChildren(l); }
     if (it.key) b.append(Object.assign(document.createElement('span'), { className: 'ctx-key', textContent: it.key }));
     b.addEventListener('click', () => { closeMenu(); it.fn(); });
     ctxMenu.append(b);
   }
-  // открыто окно (например, «Настройки → Экран и вывод») — меню внутри него, иначе окажется под ним
-  ([...document.querySelectorAll('dialog[open]')].pop() || document.body).append(ctxMenu);
+  // открыто окно (например, «Настройки → Экран и вывод») — меню внутри него, иначе окажется под ним.
+  // И в верхнем слое (popover): края окна его не обрезают, размытие фона окна (оформление «Аура») не сдвигает
+  const dlg = [...document.querySelectorAll('dialog[open]')].pop();
+  (dlg || document.body).append(ctxMenu);
+  if (dlg && ctxMenu.showPopover) { ctxMenu.popover = 'manual'; ctxMenu.showPopover(); }
+  // Всегда целиком в окне программы; ox/oy — если меню всё же отсчитывается не от угла экрана
+  ctxMenu.style.left = '0px';
+  ctxMenu.style.top = '0px';
   const r = ctxMenu.getBoundingClientRect();
-  ctxMenu.style.left = Math.min(e.clientX, window.innerWidth - r.width - 6) + 'px';
-  ctxMenu.style.top = Math.min(e.clientY, window.innerHeight - r.height - 6) + 'px';
+  const x = Math.max(6, Math.min(e.clientX, window.innerWidth - r.width - 6));
+  const y = Math.max(6, Math.min(e.clientY, window.innerHeight - r.height - 6));
+  ctxMenu.style.left = x - r.left + 'px';
+  ctxMenu.style.top = y - r.top + 'px';
 }
 let menuClosed = { tag: '', t: 0 }; // какое меню закрыли и когда — повторный щелчок по «＋» закрывает, а не открывает снова
 function closeMenu() { if (ctxMenu) { menuClosed = { tag: ctxMenu.dataset.tag || '', t: Date.now() }; ctxMenu.remove(); ctxMenu = null; } }
@@ -1719,7 +1749,7 @@ function freeName(kind, base) {
 
 // «＋» сразу создаёт плейлист или библиотеку с датой; переименовать — правой кнопкой или двойным щелчком
 function createView(kind) {
-  const name = freeName(kind, (kind === 'pl' ? 'Плейлист ' : 'Библиотека ') + new Date().toLocaleDateString('ru-RU'));
+  const name = freeName(kind, (kind === 'pl' ? 'Плейлист ' : 'Библиотека ') + new Date().toLocaleDateString(I18n.loc));
   const x = kind === 'pl' ? { id: newId(), name, entries: [] } : { id: newId(), name, items: [] };
   (kind === 'pl' ? lib.playlists : lib.libraries).push(x);
   setView(kind, x.id);
@@ -1829,6 +1859,7 @@ function openAddMenu() {
     ...(noNew ? [{ label: 'Открыт плейлист: новое — в библиотеке, сюда — перетащить', disabled: true, fn() {} }, '-'] : []),
     { label: 'Добавить песню', key: 'Ctrl+N', disabled: noNew, fn: () => { setTab('service'); openSongDialog(null); } },
     { label: 'Импортировать песни…', disabled: noNew, fn: inLists(importSongs) },
+    { label: 'Перенести песни из другой программы…', title: 'OpenLP, EasyWorship 6/7, ProPresenter (.pro), SongSelect (CCLI)', disabled: noNew, fn: inLists(() => importSongs(true)) },
     { label: 'Добавить Live-источник', fn: () => { if (!settings.poolOpen) togglePool(); setSrcMode(true); } },
     { label: 'Добавить файл…', key: 'Ctrl+O', disabled: noNew, fn: () => (listsTab() ? inLists(svcAddFiles)() : pickFiles()) },
     { label: 'Добавить библиотеку', fn: () => createView('lib') },

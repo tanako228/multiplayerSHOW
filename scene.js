@@ -144,13 +144,14 @@ const Scene = (() => {
     .layer .ob .tx .ref { margin-top: .9em; opacity: .8; font-weight: 600; font-size: max(.5em, 2.5cqh); }
     .layer .ob .ln2 { -webkit-box-decoration-break: clone; box-decoration-break: clone; }
     .layer .ob .pf { position: absolute; left: 50%; top: 50%; box-sizing: border-box; }
+    .layer .ob > .plw { position: absolute; left: 0; right: 0; box-sizing: border-box; pointer-events: none; }
     .layer .ob .w { display: inline-block; white-space: nowrap; }
     .layer .ob .w > .u { display: inline-block; }
     .layer .ob > .shp, .layer .ob > svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
     .layer .ob > .ln { position: absolute; left: 0; right: 0; top: 50%; transform: translateY(-50%); }
     .layer .ob > .ah { position: absolute; right: 0; top: 50%; transform: translateY(-50%); clip-path: polygon(0 0, 100% 50%, 0 100%); }
     .layer .ob > .m { width: 100%; height: 100%; display: block; }
-    .layer.leaving > :not(.ob.dyn), .layer.leaving .pf { visibility: hidden; }
+    .layer.leaving > :not(.ob.dyn), .layer.leaving .pf, .layer.leaving .plw { visibility: hidden; }
     .layer.leaving .ob.dyn, .layer.leaving .ob.dyn .pl, .layer.leaving .ob.dyn .ln2 { background: none !important; backdrop-filter: none !important; box-shadow: none !important; border-color: transparent !important; }
   `;
   document.head.append(style);
@@ -592,7 +593,7 @@ const Scene = (() => {
   }
   const cq = (v) => num(v, 0) + 'cqh';
   const offs = (s) => { const a = (num(s.angle, 90) * Math.PI) / 180; const d = num(s.dist, 0); return `${(Math.cos(a) * d).toFixed(3)}cqh ${(Math.sin(a) * d).toFixed(3)}cqh`; };
-  const boxShadow = (s) => (s && s.on ? `${offs(s)} ${cq(s.blur)} ${rgba(s.color, s.op)}` : '');
+  const boxShadow = (s) => (s && s.on ? `${offs(s)} ${cq(s.blur)} ${cq(s.spread)} ${rgba(s.color, s.op)}` : ''); // spread — «Размер» (у подложки)
   const dropShadow = (s) => (s && s.on ? `drop-shadow(${offs(s)} ${cq(s.blur)} ${rgba(s.color, s.op)})` : '');
   const cssUrl = (u) => `url("${String(u).replace(/"/g, '%22')}")`;
 
@@ -804,6 +805,9 @@ const Scene = (() => {
     const lines = plate && p.mode === 'lines';
     const f = o.tfill || {};
     const cut = f.type === 'cut' && plate;
+    // «Во весь блок»: подложка (или полосы по строкам) — от края до края текстового блока; у бегущей строки — нет
+    const full = plate && !!p.full && (lines || !p.mode || p.mode === 'block') && !(o.scroll && o.scroll.on);
+    const strips = full && lines && !cut; // полосы во всю ширину (иначе full — одна подложка во всю ширину)
     const pl = make('div', 'pl');
     const tx = make('div', 'tx');
     // По строкам: подложка у каждой строки — текст в строчном span
@@ -859,7 +863,10 @@ const Scene = (() => {
 
     if (plate) {
       const off = num(p.dx, 0) || num(p.dy, 0) ? `translate(${cq(p.dx)}, ${cq(p.dy)})` : '';
-      if (lines && !cut) {
+      if (strips) {
+        // Полосы во всю ширину блока: строки меряются после подгонки текста (lineStrips)
+        el._lw = { p, off };
+      } else if (lines && !cut) {
         tx.querySelectorAll('.ln2').forEach((s) => { plateLook(s, p, cut); s.style.padding = `0 ${cq(p.pad)}`; s.style.backdropFilter = ''; });
         if (off) pl.style.transform = off;
       } else if (p.mode === 'fixed') {
@@ -888,9 +895,15 @@ const Scene = (() => {
       } else {
         el._plate = pl;
         plateLook(pl, p, cut);
-        pl.style.padding = cq(p.pad);
+        if (full) {
+          // Во всю ширину блока: поля блока уходят внутрь подложки — текст стоит там же, где без неё
+          const bp = cq(o.pad);
+          Object.assign(pl.style, { alignSelf: 'stretch', maxWidth: 'none', margin: `0 calc(-1 * ${bp})`, padding: `${cq(p.pad)} ${bp}` });
+        } else pl.style.padding = cq(p.pad);
         if (off) pl.style.transform = off;
       }
+      // Тень подложки не обрезается краями блока (текст «как задано» — по-прежнему обрезается)
+      if (p.shadow && p.shadow.on && o.fit !== 'none') el.classList.add('vis');
     }
 
     const sc = o.scroll || {};
@@ -910,7 +923,7 @@ const Scene = (() => {
     if (o.fit === 'box' && !sc.on) el.style.height = 'auto';
     el._tx = tx;
     el._pl = pl;
-    if (two) { tx.style.width = '100%'; pl.style.width = '100%'; pl.style.alignSelf = 'stretch'; }
+    if (two) { tx.style.width = '100%'; if (!full || strips) pl.style.width = '100%'; pl.style.alignSelf = 'stretch'; }
     pl.append(tx);
     el.append(pl);
     return el;
@@ -1038,6 +1051,49 @@ const Scene = (() => {
     if (ds.scroll) { startScroll(el); return; }
     fitSize(el, base, min, max, set);
     if (ds.cut) cutMask(el);
+    if (el._lw) lineStrips(el);
+  }
+
+  // Полосы подложки во всю ширину блока — по одной под каждой строкой текста (строки меряются на экране)
+  function lineStrips(el) {
+    const { p, off } = el._lw;
+    el.querySelectorAll(':scope > .plw').forEach((s) => s.remove());
+    const W = el.offsetWidth;
+    if (!W) return;
+    const rot = el.style.transform;
+    if (rot) el.style.transform = 'none'; // мерить без поворота и отражения
+    const er = el.getBoundingClientRect();
+    const sc = er.width / W || 1;
+    const rows = []; // { c, h, lh } — середина строки, высота букв и межстрочный шаг, px блока
+    const walk = document.createTreeWalker(el._tx, NodeFilter.SHOW_TEXT);
+    const rg = document.createRange();
+    for (let n = walk.nextNode(); n; n = walk.nextNode()) {
+      if (!n.nodeValue.trim()) continue;
+      rg.selectNodeContents(n);
+      const lh = parseFloat(getComputedStyle(n.parentElement).lineHeight);
+      for (const r of rg.getClientRects()) {
+        if (r.width < 1 || r.height < 1) continue;
+        const h = r.height / sc;
+        const c = (r.top - er.top) / sc - el.clientTop + h / 2;
+        // Та же строка (номер стиха, кусок другим шрифтом, соседняя колонка) — одна полоса по самому крупному куску
+        const row = rows.find((x) => Math.abs(x.c - c) < Math.max(x.h, h) * 0.4);
+        const it = { c, h, lh: lh > 0 ? lh : h };
+        if (!row) rows.push(it);
+        else if (h > row.h) Object.assign(row, it);
+      }
+    }
+    if (rot) el.style.transform = rot;
+    // Полоса — на всю высоту строки (межстрочный шаг), между соседними — зазор
+    const g = Math.max(0, num(p.gap, 0.8));
+    const frag = document.createDocumentFragment();
+    for (const r of rows) {
+      const s = make('div', 'plw');
+      plateLook(s, p, false);
+      Object.assign(s.style, { top: `calc(${r.c - r.lh / 2}px + ${g / 2}cqh)`, height: `calc(${r.lh}px - ${g}cqh)` });
+      if (off) s.style.transform = off;
+      frag.append(s);
+    }
+    el.prepend(frag); // под текстом
   }
   function fitSize(el, base, min, max, set) {
     const tx = el._tx;
@@ -1182,7 +1238,81 @@ const Scene = (() => {
     }
   });
 
+  /* ----- Нижние плашки и бегущая строка (service.js, слой «Плашки») -----
+     content: { type: 'lower', lt: { kind: 'lt'|'ticker', look: band|glass|line|box, pos: left|center|right,
+       title, sub, accent, color, font, speed (% высоты экрана в секунду, бегущая строка) } } */
+  const esc2 = (s) => String(s == null ? '' : s);
+  function buildLower(c) {
+    const p = c.lt || {};
+    const layer = make('div', 'layer lower');
+    layer.style.cssText += ';background:transparent;pointer-events:none;overflow:hidden;';
+    const acc = p.accent || '#e5484d';
+    const fg = p.color || '#ffffff';
+    const fam = family(p.font || 'segoe');
+    if (p.kind === 'ticker') {
+      // Бегущая строка: полоса внизу, текст едет справа налево по кругу
+      const bar = make('div');
+      bar.style.cssText = `position:absolute;left:0;right:0;bottom:4cqh;height:8cqh;display:flex;align-items:center;overflow:hidden;background:${p.look === 'glass' ? 'rgba(10,14,22,.55)' : 'rgba(8,10,16,.88)'};${p.look === 'glass' ? 'backdrop-filter:blur(1.2cqh);' : ''}border-top:.4cqh solid ${acc};font-family:${fam};color:${fg};`;
+      const tag = p.title ? make('div', '', esc2(p.title)) : null;
+      if (tag) { tag.style.cssText = `position:relative;z-index:2;flex:none;height:100%;display:flex;align-items:center;padding:0 2.4cqh;background:${acc};font-weight:700;font-size:3.4cqh;text-transform:uppercase;letter-spacing:.06em;white-space:nowrap;`; bar.append(tag); }
+      const lane = make('div');
+      lane.style.cssText = 'position:relative;flex:1;height:100%;overflow:hidden;';
+      const run = make('div', '', esc2(p.sub || p.title || ''));
+      run.style.cssText = 'position:absolute;top:0;bottom:0;left:0;display:flex;align-items:center;white-space:nowrap;font-size:3.8cqh;font-weight:500;padding-left:100%;';
+      lane.append(run);
+      bar.append(lane);
+      layer.append(bar);
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        const H = layer.clientHeight || 1080;
+        const px = (Math.max(1, num(p.speed, 12)) * H) / 100;
+        const w = run.scrollWidth;
+        if (w > 0 && run.animate) run.animate([{ transform: 'translateX(0)' }, { transform: `translateX(${-w}px)` }], { duration: (w / px) * 1000, iterations: Infinity });
+      }));
+      if (!p.still) bar.animate([{ transform: 'translateY(140%)' }, { transform: 'none' }], { duration: 450, easing: 'cubic-bezier(.2,.7,.2,1)' });
+      return layer;
+    }
+    // Плашка: заголовок (имя) и подпись (служение), слева / по центру / справа
+    const pos = p.pos || 'left';
+    const box = make('div');
+    const side = pos === 'center' ? 'left:50%;transform:translateX(-50%);' : pos === 'right' ? 'right:6cqw;' : 'left:6cqw;';
+    box.style.cssText = `position:absolute;bottom:9cqh;${side}max-width:70cqw;font-family:${fam};color:${fg};text-align:${pos};`;
+    const t = make('div', '', esc2(p.title));
+    const s = p.sub ? make('div', '', esc2(p.sub)) : null;
+    t.style.cssText = 'font-size:5.2cqh;font-weight:700;line-height:1.15;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
+    if (s) s.style.cssText = 'font-size:3.2cqh;font-weight:500;line-height:1.2;opacity:.92;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
+    const look = p.look || 'band';
+    if (look === 'band') {
+      // Полоса цветом акцента под заголовком, подпись — тёмной полосой ниже
+      t.style.cssText += `background:${acc};padding:1.1cqh 2.6cqh;display:inline-block;`;
+      if (s) s.style.cssText += 'background:rgba(8,10,16,.85);padding:.8cqh 2.6cqh;margin-top:0;';
+      box.style.display = 'flex';
+      box.style.flexDirection = 'column';
+      box.style.alignItems = pos === 'center' ? 'center' : pos === 'right' ? 'flex-end' : 'flex-start';
+    } else if (look === 'glass') {
+      box.style.cssText += `background:rgba(12,16,24,.5);backdrop-filter:blur(1.4cqh);border-radius:1.6cqh;padding:1.6cqh 3cqh;border-${pos === 'right' ? 'right' : 'left'}:.7cqh solid ${acc};box-shadow:0 1cqh 4cqh rgba(0,0,0,.35);`;
+    } else if (look === 'line') {
+      // Только текст с тенью и тонкой линией акцента
+      box.style.textShadow = '0 .3cqh 1.2cqh rgba(0,0,0,.9)';
+      const ln = make('div');
+      ln.style.cssText = `height:.5cqh;width:14cqh;background:${acc};margin:${pos === 'center' ? '1cqh auto' : pos === 'right' ? '1cqh 0 1cqh auto' : '1cqh 0'};border-radius:1cqh;`;
+      box.append(t, ln);
+      if (s) box.append(s);
+      layer.append(box);
+      if (!p.still) box.animate([{ opacity: 0, translate: '0 3cqh' }, { opacity: 1, translate: '0 0' }], { duration: 500, easing: 'cubic-bezier(.2,.7,.2,1)' });
+      return layer;
+    } else {
+      // box — белая карточка с цветной полосой
+      box.style.cssText += `background:#ffffff;color:#14161c;padding:1.5cqh 3cqh;border-radius:.6cqh;border-top:.8cqh solid ${acc};box-shadow:0 1cqh 4cqh rgba(0,0,0,.4);`;
+    }
+    box.append(t);
+    if (s) box.append(s);
+    layer.append(box);
+    if (!p.still) box.animate([{ opacity: 0, translate: pos === 'right' ? '4cqw 0' : pos === 'center' ? '0 3cqh' : '-4cqw 0' }, { opacity: 1, translate: '0 0' }], { duration: 550, easing: 'cubic-bezier(.2,.7,.2,1)' });
+    return layer;
+  }
+
   function build(content) {
+    if (content.type === 'lower') return buildLower(content);
     if (content.type === 'live') return buildLive(content);
     if (content.type !== 'text' && content.type !== 'custom') return buildMedia(content);
     const t = pickTpl(content);

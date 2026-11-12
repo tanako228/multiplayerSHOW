@@ -3,6 +3,8 @@ const dgram = require('dgram');
 const ndi = require('./ndi');
 const cast = require('./cast');
 const team = require('./teamsrv');
+const voice = require('./voicesrv'); // Библия по голосу: модели Vosk и окно распознавания
+voice.early(); // свой протокол mpsvoice: — до app.ready
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
@@ -19,6 +21,34 @@ const EXT = {
   presentation: ['pptx', 'ppt', 'ppsx', 'pps', 'odp'],
 };
 const ALL_EXT = Object.values(EXT).flat();
+
+// Язык окон выбора файлов: окно оператора сообщает язык (I18n → api.setLang), заголовки и фильтры
+// переводим тем же словарём lang.js, что и интерфейс (i18n.js грузим без окна, нужна только функция t)
+let uiT = (s) => s;
+ipcMain.on('ui:lang', (_e, lang) => {
+  try {
+    const vm = require('vm');
+    const ctx = { localStorage: { getItem: () => lang, setItem() {} }, document: { readyState: 'loading', addEventListener() {} }, MutationObserver: function () { this.observe = () => {}; }, queueMicrotask() {}, CustomEvent: function () {} };
+    vm.createContext(ctx);
+    vm.runInContext(fs.readFileSync(path.join(__dirname, 'i18n.js'), 'utf8') + ';this.I18n = I18n;', ctx);
+    if (lang !== 'ru') vm.runInContext(fs.readFileSync(path.join(__dirname, 'lang.js'), 'utf8'), ctx);
+    uiT = (s) => (typeof s === 'string' ? ctx.I18n.t(s) : s);
+  } catch { uiT = (s) => s; }
+});
+const trDlg = (o) => {
+  if (!o || typeof o !== 'object') return o;
+  const r = { ...o };
+  for (const k of ['title', 'buttonLabel', 'message', 'detail']) if (o[k]) r[k] = uiT(o[k]);
+  if (Array.isArray(o.filters)) r.filters = o.filters.map((f) => ({ ...f, name: uiT(f.name) }));
+  if (Array.isArray(o.buttons)) r.buttons = o.buttons.map(uiT);
+  return r;
+};
+for (const k of ['showOpenDialog', 'showSaveDialog', 'showMessageBox']) {
+  try {
+    const f = dialog[k].bind(dialog);
+    dialog[k] = (w, o) => (o === undefined ? f(trDlg(w)) : f(w, trDlg(o)));
+  } catch { /* не вышло — окна останутся по-русски */ }
+}
 
 // Программа называется multiplayerSHOW, но данные остаются в старой папке %APPDATA%\church-presenter
 // (библиотека, Библии, настройки) — иначе после переименования всё «пропало» бы
@@ -439,6 +469,85 @@ function convertPresentation(file, width) {
       }
     );
   });
+}
+
+/* ---------- Ноты песни (song.sheets = [{ file, name, w, h }]): фото и PDF → JPEG-листы в userData\sheets ----------
+   Имя файла — по содержимому (одинаковый лист не плодится). PDF рисует сам Windows (Windows.Data.Pdf), без сторонних программ.
+   Листы уходят на телефоны группы (teamapi.js: /api/v1/sheets/…), в репозиторий — как обычные файлы программы. */
+const SHEET_MAX = 2400; // длинная сторона листа, px
+const SHEET_PAGES = 40; // больше страниц из одного PDF не берём
+const sheetDir = () => path.join(app.getPath('userData'), 'sheets');
+function pdfPages(file) {
+  return new Promise((resolve, reject) => {
+    if (process.platform !== 'win32') return reject(new Error('PDF читается только в Windows'));
+    const out = fs.mkdtempSync(path.join(os.tmpdir(), 'mps-pdf-'));
+    const script = [
+      "$ErrorActionPreference = 'Stop'",
+      'Add-Type -AssemblyName System.Runtime.WindowsRuntime',
+      "$ext = [System.WindowsRuntimeSystemExtensions].GetMethods() | Where-Object { $_.Name -eq 'AsTask' -and $_.GetParameters().Count -eq 1 }",
+      "$asOp = ($ext | Where-Object { $_.GetParameters()[0].ParameterType.Name -eq 'IAsyncOperation`1' })[0]",
+      "$asAct = ($ext | Where-Object { $_.GetParameters()[0].ParameterType.Name -eq 'IAsyncAction' })[0]",
+      'function Wait-Op($op, [Type]$t) { $k = $asOp.MakeGenericMethod($t).Invoke($null, @($op)); $k.Wait(-1) | Out-Null; $k.Result }',
+      'function Wait-Act($op) { $k = $asAct.Invoke($null, @($op)); $k.Wait(-1) | Out-Null }',
+      '[void][Windows.Storage.StorageFile, Windows.Storage, ContentType = WindowsRuntime]',
+      '[void][Windows.Storage.StorageFolder, Windows.Storage, ContentType = WindowsRuntime]',
+      '[void][Windows.Data.Pdf.PdfDocument, Windows.Data.Pdf, ContentType = WindowsRuntime]',
+      '[void][Windows.Data.Pdf.PdfPageRenderOptions, Windows.Data.Pdf, ContentType = WindowsRuntime]',
+      '[void][Windows.Storage.Streams.IRandomAccessStream, Windows.Storage.Streams, ContentType = WindowsRuntime]',
+      'try { $src = Wait-Op ([Windows.Storage.StorageFile]::GetFileFromPathAsync($env:CP_FILE)) ([Windows.Storage.StorageFile])',
+      "  $doc = Wait-Op ([Windows.Data.Pdf.PdfDocument]::LoadFromFileAsync($src)) ([Windows.Data.Pdf.PdfDocument]) } catch { [Console]::Error.WriteLine('BAD_PDF'); exit 3 }",
+      '$dst = Wait-Op ([Windows.Storage.StorageFolder]::GetFolderFromPathAsync($env:CP_OUT)) ([Windows.Storage.StorageFolder])',
+      '$n = [Math]::Min([int]$doc.PageCount, [int]$env:CP_MAX)',
+      'for ($i = 0; $i -lt $n; $i++) {',
+      '  $page = $doc.GetPage([uint32]$i)',
+      '  $ro = New-Object Windows.Data.Pdf.PdfPageRenderOptions',
+      '  $ro.DestinationWidth = [uint32]$env:CP_W',
+      "  $f = Wait-Op ($dst.CreateFileAsync(('p' + ($i + 1) + '.png'), [Windows.Storage.CreationCollisionOption]::ReplaceExisting)) ([Windows.Storage.StorageFile])",
+      '  $s = Wait-Op ($f.OpenAsync([Windows.Storage.FileAccessMode]::ReadWrite)) ([Windows.Storage.Streams.IRandomAccessStream])',
+      '  Wait-Act ($page.RenderToStreamAsync($s, $ro))',
+      '  $s.Dispose(); $page.Dispose()',
+      '}',
+    ].join('\n');
+    const encoded = Buffer.from(script, 'utf16le').toString('base64');
+    execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', encoded],
+      { env: { ...process.env, CP_FILE: file, CP_OUT: out, CP_W: String(SHEET_MAX), CP_MAX: String(SHEET_PAGES) }, windowsHide: true, timeout: 180000 },
+      (err, _so, stderr) => {
+        const num = (f) => parseInt((f.match(/\d+/) || ['0'])[0], 10);
+        let list = [];
+        try { list = fs.readdirSync(out).filter((f) => /\.png$/i.test(f)).sort((a, b) => num(a) - num(b)).map((f) => fs.readFileSync(path.join(out, f))); } catch { list = []; }
+        fs.rmSync(out, { recursive: true, force: true });
+        if (list.length) return resolve(list);
+        reject(new Error(/BAD_PDF/.test(stderr || '') ? 'PDF не открылся (повреждён или защищён паролем)' : 'не получилось прочитать PDF' + (err && err.killed ? ' (слишком долго)' : '')));
+      });
+  });
+}
+// Картинка → лист нот (JPEG). Пустая картинка (формат не понят) — ошибка
+function sheetSave(img, name) {
+  if (!img || img.isEmpty()) throw new Error('картинка не открылась (подходят JPEG и PNG)');
+  let { width: w, height: h } = img.getSize();
+  if (Math.max(w, h) > SHEET_MAX) {
+    const k = SHEET_MAX / Math.max(w, h);
+    img = img.resize({ width: Math.round(w * k), height: Math.round(h * k), quality: 'best' });
+    ({ width: w, height: h } = img.getSize());
+  }
+  const buf = img.toJPEG(86);
+  fs.mkdirSync(sheetDir(), { recursive: true });
+  const file = path.join(sheetDir(), crypto.createHash('sha1').update(buf).digest('hex').slice(0, 16) + '.jpg');
+  if (!fs.existsSync(file)) fs.writeFileSync(file, buf);
+  return { file, name: String(name || 'Ноты').slice(0, 120), w, h };
+}
+// Файл или байты (с телефона) → листы: [{ file, name, w, h }]
+async function sheetsFrom({ file, buf, name, pdf }) {
+  const base = String(name || (file ? path.basename(file, path.extname(file)) : 'Ноты')).replace(/\.(pdf|jpe?g|png|heic|webp)$/i, '');
+  const isPdf = pdf || (file && /\.pdf$/i.test(file)) || (buf && buf.slice(0, 5).toString() === '%PDF-');
+  if (!isPdf) return [sheetSave(buf ? nativeImage.createFromBuffer(buf) : nativeImage.createFromPath(file), base)];
+  let src = file;
+  let tmp = '';
+  if (!src) { tmp = path.join(os.tmpdir(), `mps-${Date.now().toString(36)}.pdf`); fs.writeFileSync(tmp, buf); src = tmp; }
+  try {
+    const pages = await pdfPages(src);
+    return pages.map((b, i) => sheetSave(nativeImage.createFromBuffer(b), pages.length > 1 ? `${base} — стр. ${i + 1}` : base));
+  } finally { if (tmp) fs.rmSync(tmp, { force: true }); }
 }
 
 async function describeFiles(paths, opts) {
@@ -1832,23 +1941,82 @@ app.whenReady().then(() => {
     return fontsOut();
   });
 
+  // Ноты песни (окно песни): выбрать фото/PDF → листы [{ file, name, w, h }] и ошибки по файлам
+  ipcMain.handle('sheets:pick', async (e) => {
+    const res = await dialog.showOpenDialog(BrowserWindow.fromWebContents(e.sender), {
+      title: 'Ноты: фото или PDF', properties: ['openFile', 'multiSelections'],
+      filters: [{ name: 'Ноты (PDF, JPEG, PNG)', extensions: ['pdf', 'jpg', 'jpeg', 'png'] }],
+    });
+    if (res.canceled) return null;
+    const sheets = [];
+    const errors = [];
+    for (const f of res.filePaths) {
+      if (/\.pdf$/i.test(f)) notify(`Ноты: читаю «${path.basename(f)}»…`);
+      try { sheets.push(...(await sheetsFrom({ file: f }))); } catch (err) { errors.push(`${path.basename(f)}: ${err.message}`); }
+    }
+    notify('');
+    return { sheets, errors };
+  });
+
   /* ---------- Песни: импорт и экспорт открытыми форматами (TXT, ChordPro, JSON) ---------- */
 
   const SONG_EXT = ['txt', 'text', 'md', 'cho', 'chopro', 'chordpro', 'crd', 'pro', 'json'];
+  // Из других программ: OpenLP (songs.sqlite, OpenLyrics .xml), EasyWorship 6/7 (Songs.db + SongWords.db),
+  // ProPresenter (.pro 5/6 — XML, 7 — двоичный), SongSelect (.usr, .txt). Разбор текста — songimport.js в окне
+  const OTHER_EXT = ['sqlite', 'db', 'xml', 'usr', 'pro', 'pro6', 'pro5'];
+
+  // Базы SQLite других программ → строки таблиц (без разбора текста)
+  function songsFromDb(file, buf) {
+    const db = sqliteReader(buf);
+    if (db.has('songs')) {
+      // OpenLP: songs(id, title, alternate_title, lyrics — XML, verse_order, ccli_number, copyright, song_number), authors
+      const authors = new Map((db.table('authors') || []).map((a) => [a.id, String(a.display_name || [a.first_name, a.last_name].filter(Boolean).join(' ') || '')]));
+      const links = db.table('authors_songs') || [];
+      return { from: 'openlp', songs: db.table('songs').map((s) => ({
+        title: s.title, alt: s.alternate_title, lyrics: s.lyrics, order: s.verse_order, ccli: s.ccli_number, copyright: s.copyright, number: s.song_number,
+        authors: links.filter((l) => l.song_id === s.id).map((l) => authors.get(l.author_id)).filter(Boolean),
+      })) };
+    }
+    if (db.has('song')) {
+      // EasyWorship 6/7: Songs.db — song(rowid, title, author, copyright, reference_number), слова — SongWords.db: word(song_id, words — RTF)
+      let words = new Map();
+      const wf = ['SongWords.db', 'songwords.db'].map((n) => path.join(path.dirname(file), n)).find((p) => fs.existsSync(p));
+      if (wf) { try { words = new Map((sqliteReader(fs.readFileSync(wf)).table('word') || []).map((w) => [Number(w.song_id), w.words])); } catch { /* без слов */ } }
+      const rows = db.table('song').map((s) => ({ id: Number(s.rowid != null ? s.rowid : s.id != null ? s.id : s._rowid), title: s.title, author: s.author, copyright: s.copyright, ccli: s.reference_number, words: s.words }));
+      return { from: 'ew', noWords: !wf, songs: rows.map((s) => ({ ...s, words: s.words || words.get(s.id) || '' })) };
+    }
+    if (db.has('word')) throw new Error('это файл слов EasyWorship — выберите рядом с ним Songs.db');
+    throw new Error('в базе нет песен (поддерживаются OpenLP и EasyWorship 6/7)');
+  }
 
   // Байты отдаём окну: кодировку (UTF-8, UTF-16, Windows-1251) разбирает окно через TextDecoder
-  ipcMain.handle('songs:open', async (e) => {
+  ipcMain.handle('songs:open', async (e, opts) => {
+    const other = !!(opts && opts.other);
     const res = await dialog.showOpenDialog(BrowserWindow.fromWebContents(e.sender), {
-      title: 'Импорт песен', properties: ['openFile', 'multiSelections'],
-      filters: [{ name: 'Песни (текст, ChordPro, JSON)', extensions: SONG_EXT }, { name: 'Все файлы', extensions: ['*'] }],
+      title: other ? 'Импорт песен из других программ' : 'Импорт песен', properties: ['openFile', 'multiSelections'],
+      filters: other
+        ? [{ name: 'OpenLP, EasyWorship, ProPresenter, SongSelect', extensions: [...OTHER_EXT, 'txt'] }, { name: 'Все файлы', extensions: ['*'] }]
+        : [{ name: 'Песни (текст, ChordPro, JSON)', extensions: SONG_EXT }, { name: 'Все файлы', extensions: ['*'] }],
     });
     if (res.canceled) return [];
     return res.filePaths.map((p) => {
       const name = path.basename(p, path.extname(p));
       const ext = path.extname(p).slice(1).toLowerCase();
-      try { return { name, ext, bytes: fs.readFileSync(p) }; } catch { return { name, ext, error: true }; }
+      try {
+        const bytes = fs.readFileSync(p);
+        if (bytes.toString('latin1', 0, 15) === 'SQLite format 3') {
+          try { return { name, ext, db: songsFromDb(p, bytes) }; } catch (err) { return { name, ext, error: err.message }; }
+        }
+        return { name, ext, bytes };
+      } catch { return { name, ext, error: true }; }
     });
   });
+
+  // Проверка перед служением (service.js): есть ли файлы на диске
+  ipcMain.handle('files:check', (_e, paths) => (Array.isArray(paths) ? paths.map((p) => { try { return !!p && fs.existsSync(String(p)); } catch { return false; } }) : []));
+
+  // Библия по голосу (voicesrv.js)
+  voice.setup({ ipcMain, getControl: () => control, webPreferences, unzip, dialog });
 
   // Одна песня: формат по расширению, которое выбрал пользователь (.txt или .json)
   ipcMain.handle('songs:save', async (e, { name, text, json }) => {
@@ -1914,8 +2082,35 @@ app.whenReady().then(() => {
     notify: (i) => { if (control && !control.isDestroyed()) control.webContents.send('team:info', i); },
     // Телефон с правом «листать» нажал «Дальше» / слайд — окну оператора (team.js: onTeamCmd)
     cmd: (c) => { if (control && !control.isDestroyed()) control.webContents.send('team:cmd', c); },
+    // Телефон с правом «править аккорды» прислал аккорды песни — окну оператора; ответ придёт через team:chordsDone
+    chords: (c) => new Promise((ok, no) => {
+      if (!control || control.isDestroyed()) return no(new Error('Окно программы закрыто'));
+      const rid = ++chordReq;
+      const t = setTimeout(() => { chordWait.delete(rid); no(new Error('Программа не ответила')); }, 8000);
+      chordWait.set(rid, { ok, no, t });
+      control.webContents.send('team:chords', { ...c, rid });
+    }),
+    // Ноты с телефона: { id, buf, name, who } — добавить (фото/PDF → листы здесь), { id, del: имя файла, who } — убрать.
+    // Пишет окно оператора (team.js: onTeamSheets), ответ — тем же team:chordsDone
+    sheets: async (c) => {
+      const add = c.buf ? await sheetsFrom({ buf: c.buf, name: c.name }) : [];
+      return new Promise((ok, no) => {
+        if (!control || control.isDestroyed()) return no(new Error('Окно программы закрыто'));
+        const rid = ++chordReq;
+        const t = setTimeout(() => { chordWait.delete(rid); no(new Error('Программа не ответила')); }, 8000);
+        chordWait.set(rid, { ok: () => ok({ n: add.length }), no, t });
+        control.webContents.send('team:sheets', { id: c.id, add, del: c.del || '', who: c.who, rid });
+      });
+    },
   });
   app.on('will-quit', team.shutdown);
+  ipcMain.handle('team:chordsDone', (_e, r) => {
+    const w = r && chordWait.get(r.rid);
+    if (!w) return;
+    chordWait.delete(r.rid);
+    clearTimeout(w.t);
+    if (r.err) w.no(new Error(String(r.err))); else w.ok({});
+  });
 
   ipcMain.handle('pool:list', async (_e, dir) => {
     try {
@@ -2257,14 +2452,18 @@ app.whenReady().then(() => {
         if (ch === ',' && !depth) { cols.push(cur.trim()); cur = ''; } else cur += ch;
       }
       const defs = cols.filter((c) => c && !/^(primary|unique|constraint|foreign|check)\s/i.test(c))
-        .map((c) => ({ name: c.split(/\s+/)[0].replace(/^["'`[]|["'`\]]$/g, '').toLowerCase(), rowid: /integer\s+primary\s+key/i.test(c) }));
+        .map((c) => ({ name: c.split(/\s+/)[0].replace(/^["'`[]|["'`\]]$/g, '').toLowerCase(), rowid: /integer\s+(not\s+null\s+)?primary\s+key/i.test(c), int: /^\S+\s+integer/i.test(c) }));
+      // «PRIMARY KEY (id)» отдельной строкой (OpenLP): такой столбец INTEGER — тоже номер строки, в записи он пустой
+      const pk = cols.map((c) => c.match(/^primary\s+key\s*\(\s*["'`[]?(\w+)["'`\]]?\s*\)$/i)).find(Boolean);
+      const pkd = pk && defs.find((d) => d.name === pk[1].toLowerCase());
+      if (pkd && pkd.int) pkd.rowid = true;
       tables.set(String(r[1]).toLowerCase(), { root: r[3], defs });
     }
     const table = (name) => {
       const t = tables.get(name);
       if (!t) return null;
       return rows(t.root).map(([rowid, vals]) => {
-        const o = {};
+        const o = { _rowid: rowid };
         t.defs.forEach((d, i) => { o[d.name] = d.rowid && vals[i] == null ? rowid : vals[i]; });
         return o;
       });
@@ -2422,6 +2621,8 @@ function rmStop() {
 }
 const rmNotify = () => { if (control && !control.isDestroyed()) control.webContents.send('remote:info', rmInfo()); team.changed(); };
 // Сервер нужен, пока есть хоть один доступ к презентации или включён доступ для группы (простой адрес /app/ по Wi-Fi)
+let chordReq = 0;
+const chordWait = new Map(); // ответы окна оператора на аккорды с телефона
 const rmWant = () => { if (rmState.grants.length || team.on()) rmStart(); else rmStop(); };
 
 // Что видит телефон: только своя презентация

@@ -9,6 +9,10 @@
   "orientation": "any",
   "background_color": "#051822",
   "theme_color": "#051822",
+  "share_target": {
+    "action": "/app/share", "method": "POST", "enctype": "multipart/form-data",
+    "params": { "title": "title", "text": "text", "files": [{ "name": "file", "accept": ["text/plain", ".txt", "application/json", ".json"] }] }
+  },
   "icons": [
     { "src": "icon-192.png", "sizes": "192x192", "type": "image/png" },
     { "src": "icon-256.png", "sizes": "256x256", "type": "image/png" },

@@ -35,7 +35,7 @@ const DEFAULTS = {
   outAutoOn: false, // при запуске: вывод на монитор и экраны/сцены — как были (выключено — всё выключено)
   inkKeep: false, poolOpen: false, poolH: 240, poolFolders: [], poolCur: '', poolFit: 'contain',
   poolSrc: false, // в медиапуле открыт раздел «Источники»
-  uiTheme: '', uiColors: {}, uiGlow: 0, uiGlass: '', uiRadius: 6, uiAlpha: 16, uiFont: '', uiCaps: false, plFeed: true, // uiGlow/uiGlass/uiRadius/uiAlpha/uiFont/uiCaps — эффекты оформления (tools.js, applyUiColors)
+  uiTheme: '', uiColors: {}, uiGlow: 0, uiGlass: '', uiRadius: 6, uiAlpha: 16, uiBlur: 18, uiFont: '', uiCaps: false, plFeed: true, // uiGlow/uiGlass/uiRadius/uiAlpha/uiBlur/uiFont/uiCaps — эффекты оформления (tools.js, applyUiColors)
   // uiTheme — тема программы (UI_THEMES в tools.js), пусто — «Тёмно-синяя» sideFold: false, contentFold: false,
   musicRoot: '', musicSrc: null, musicVol: 0.8, fadeOut: 2, fadeIn: 1, autoNext: true,
   scaleBible: 190, scaleScreen: 170, // ширина слайда-миниатюры (Scale под предпросмотром)
@@ -880,6 +880,8 @@ const LAYER_KINDS = {
   // Overlay — поверх основной презентации; сам сюда ничего не идёт (только пункт/макрос с этим слоем).
   // Показ в Overlay не сбивает выделение слайда на экране (plShown), ленту и авто-переключение основной презентации.
   overlay: { name: 'Overlay', icon: 'layers', takes: [], sound: true, over: true },
+  // Нижние плашки и бегущая строка (service.js): поверх всего, как Overlay — не сбивают слайд на экране
+  lower: { name: 'Плашки', icon: 'lowerthird', takes: ['lower'], sound: false, over: true },
 };
 const DEFAULT_LAYERS = [{ id: 'source', kind: 'source' }, { id: 'media', kind: 'media' }, { id: 'pres', kind: 'pres' }];
 const layerOn = {}; // слой → { build, label, content, marks } — что в нём сейчас
@@ -894,6 +896,11 @@ function layerDefs() {
   if (!settings.ovMig) {
     settings.ovMig = true;
     for (const l of list) if (l.kind === 'pres' && /^\s*overlay/i.test(l.name || '')) l.kind = 'overlay';
+  }
+  // Слой «Плашки» — сверху, один раз (потом его можно убрать или передвинуть, как любой слой)
+  if (!settings.ltMig) {
+    settings.ltMig = true;
+    if (!list.some((l) => l.kind === 'lower')) list.push({ id: list.some((l) => l.id === 'lower') ? 'lower' + Date.now().toString(36) : 'lower', kind: 'lower' });
   }
   return list;
 }
@@ -2804,8 +2811,8 @@ function renderTrRows() {
     const info = Object.assign(document.createElement('div'), { className: 'tr-info' });
     const name = Object.assign(document.createElement('input'), { type: 'text', value: t.name, title: 'Название перевода' });
     name.addEventListener('change', () => { t.name = name.value.trim() || t.name; saveTrIndex(); });
-    const meta = [t.format, t.books && `книг: ${t.books}`, t.verses && `стихов: ${t.verses.toLocaleString('ru-RU')}`,
-      t.file && `файл: ${t.file}`, t.added && new Date(t.added).toLocaleDateString('ru-RU')].filter(Boolean).join(' · ');
+    const meta = [t.format, t.books && `книг: ${t.books}`, t.verses && `стихов: ${t.verses.toLocaleString(I18n.loc)}`,
+      t.file && `файл: ${t.file}`, t.added && new Date(t.added).toLocaleDateString(I18n.loc)].filter(Boolean).join(' · ');
     // Сокращение: пусто — из первых букв названия (видно серым)
     const abbr = Object.assign(document.createElement('input'), { type: 'text', value: t.abbr || '', placeholder: trAbbr({ name: t.name }), maxLength: 20, className: 'tr-abbr', title: 'Сокращение (например, RST). Пусто — первые буквы названия' });
     abbr.addEventListener('change', () => { t.abbr = abbr.value.trim(); saveTrIndex(); });
@@ -2926,6 +2933,12 @@ const ACTIONS = [
     ['clearMedia', 'Очистить слой «Медиа»', ['F3'], () => clearKind('media')],
     ['clearSource', 'Очистить слой «Источники»', ['F4'], () => clearKind('source')],
     ['clearOverlay', 'Очистить слои «Overlay»', [], () => clearKind('overlay')],
+    ['clearLower', 'Убрать плашку или бегущую строку', [], () => clearKind('lower')],
+    ['svcCheck', 'Проверка перед служением', [], () => svcCheck()],
+    ['lowerThirds', 'Плашки и бегущая строка', [], () => ltOpen()],
+    ['voiceToggle', 'Библия по голосу: включить или выключить', [], () => vcToggle()],
+    ['voiceShow', 'Библия по голосу: показать последнее найденное место', [], () => vcShowTop()],
+    ['voiceWords', 'Библия по голосу: поиск места по словам — включить или выключить', [], () => vsToggle()],
     ['output', 'Включить или выключить вывод в зал', ['F9'], () => $('outToggle').click()],
     ['draw', 'Быстрая анимация: крупный план и рисование поверх слайда', ['Ctrl+KeyE'], () => openInk()],
     ['inkClear', 'Стереть рисунок с экрана', ['Ctrl+Shift+KeyE'], () => inkWipeLive()],

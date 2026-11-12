@@ -14,6 +14,9 @@
    каждый «экран-программа» и элемент 'program' получает свою копию слоёв (с маской слоёв). */
 const Compose = (() => {
   const make = (tag, cls) => { const n = document.createElement(tag); if (cls) n.className = cls; return n; };
+  // Подписи сценического экрана на языке программы: в окнах вывода переводим сами (там i18n.js не трогает
+  // экран целиком — тексты песен и надписи макета остаются как есть), в окне оператора переводит i18n.js
+  const L = (t) => (window.I18n && I18n.manual ? I18n.t(t) : t);
   const NONE = { type: 'none', ms: 0 };
 
   const css = document.createElement('style');
@@ -389,7 +392,7 @@ const Compose = (() => {
 
   function missing(host, text) {
     const el = make('div', 'cmp-miss');
-    el.textContent = text;
+    el.textContent = L(text);
     host.append(el);
     return { el };
   }
@@ -491,7 +494,7 @@ const Compose = (() => {
       if (type === 'program') n._prog = progMount(el, { layers: it.layers || s.layers, sound, ink: it.ink !== false, alpha: sh.opts.alpha }); // свои слои блока или слои сцены
       else {
         n._info = { el, which: type, ink: type === 'cur' && it.ink !== false };
-        if (type === 'only' && n._edit) { n._info.ph = make('div', 'cmp-miss'); n._info.ph.textContent = 'Только для сцены: то, что оператор отправит сюда'; c.append(n._info.ph); }
+        if (type === 'only' && n._edit) { n._info.ph = make('div', 'cmp-miss'); n._info.ph.textContent = L('Только для сцены: то, что оператор отправит сюда'); c.append(n._info.ph); }
         infos.add(n._info);
         paintInfo(n._info, true);
         if (type === 'cur') { n._info.inkFit = inkFits(n._info); if (n._info.inkFit) setInk(el, P.ink, false); }
@@ -708,7 +711,50 @@ const Compose = (() => {
     t.style.paintOrder = it.strokeOut ? 'stroke fill' : ''; // обводка снаружи букв (не съедает тонкие буквы)
     if (n._in) paintStage(n, true);
     else if (it.type === 'text' && it.run && it.run.on) runText(n, t, it);
-    else { stopRun(n); t.textContent = it.type === 'clock' ? clockText(it) : it.text || ''; }
+    else {
+      stopRun(n); t.textContent = it.type === 'clock' ? clockText(it) : it.text || '';
+      fitPlain(t, it);
+      if (!t.clientWidth) requestAnimationFrame(() => n._txt === t && fitPlain(t, it));
+    }
+  }
+
+  // Подгонка размера текста (как «Не помещается» в редакторе тем): tfit = none | shrink | grow | both.
+  // Раньше было auto: у инфоблоков «сам» (auto !== false), у надписи и часов — выключено
+  const FIT_MODES = ['none', 'shrink', 'grow', 'both'];
+  function fitMode(it) {
+    if (FIT_MODES.includes(it.tfit)) return it.tfit;
+    return (it.type === 'text' || it.type === 'clock' ? it.auto : it.auto !== false) ? 'shrink' : 'none';
+  }
+  // fits() — влезает ли текст при нынешнем размере шрифта t
+  function fitSize(t, it, fits) {
+    const mode = fitMode(it);
+    const size = Math.max(4, num(it.size, 64));
+    const mn = Math.max(4, num(it.minSize, 12));
+    const mx = Math.max(size, num(it.maxSize, 400));
+    let lo = size, hi = size;
+    if (mode === 'shrink') lo = Math.min(size, mn);
+    else if (mode === 'grow') hi = mx;
+    else if (mode === 'both') { lo = Math.min(size, mn); hi = mx; }
+    t.style.fontSize = hi + 'px';
+    if (hi === lo || fits()) return;
+    t.style.fontSize = lo + 'px';
+    if (!fits()) return;
+    for (let k = 0; k < 10 && hi - lo > 0.5; k++) {
+      const m = (lo + hi) / 2;
+      t.style.fontSize = m + 'px';
+      if (fits()) lo = m; else hi = m;
+    }
+    t.style.fontSize = Math.floor(lo) + 'px';
+  }
+  function fitPlain(t, it) {
+    t.style.fontSize = Math.max(4, num(it.size, 64)) + 'px';
+    if (fitMode(it) === 'none') return;
+    const pad = num(it.pad, 0);
+    if (t.clientWidth - 2 * pad <= 0 || t.clientHeight - 2 * pad <= 0) return;
+    const ai = t.style.alignItems, jc = t.style.justifyContent;
+    t.style.alignItems = t.style.justifyContent = 'flex-start'; // иначе переполнение вверх/влево не видно в scroll*
+    fitSize(t, it, () => t.scrollHeight <= t.clientHeight + 1 && t.scrollWidth <= t.clientWidth + 1);
+    t.style.alignItems = ai; t.style.justifyContent = jc;
   }
 
   // Бегущая строка у надписи: влево (в одну строку) или вверх (титры); растворение у краёв
@@ -783,7 +829,7 @@ const Compose = (() => {
 
   // Что показать в блоке: { text } | { lines: [{ t, cls }] } | { chords, next }; label — подпись сверху; empty — нет данных
   function stageValue(type, it, st, edit, now) {
-    const ph = (t) => (edit ? { text: t, ph: true, empty: true } : { text: '', empty: true });
+    const ph = (t) => (edit ? { text: L(t), ph: true, empty: true } : { text: '', empty: true });
     const pre = it.prefix ? it.prefix + ' ' : '';
     switch (type) {
       case 'curText': case 'nextText': {
@@ -797,8 +843,8 @@ const Compose = (() => {
       case 'plist': {
         const show = it.show || 'both';
         const lines = [];
-        if (show !== 'next') lines.push({ t: (show === 'both' ? 'Сейчас: ' : '') + (st.plCur || '—') });
-        if (show !== 'cur') lines.push({ t: (show === 'both' ? 'Далее: ' : '') + (st.plNext || '—'), cls: show === 'both' ? 'dim' : '' });
+        if (show !== 'next') lines.push({ t: (show === 'both' ? L('Сейчас: ') : '') + (st.plCur || '—') });
+        if (show !== 'cur') lines.push({ t: (show === 'both' ? L('Далее: ') : '') + (st.plNext || '—'), cls: show === 'both' ? 'dim' : '' });
         return { lines, empty: !st.plCur && !st.plNext };
       }
       case 'count': return st.n ? { text: pre + (it.fmt === 'n' ? String(st.i) : `${st.i} / ${st.n}`) } : ph(pre + '3 / 12');
@@ -829,10 +875,10 @@ const Compose = (() => {
       case 'cap': {
         const c = st.cap || {};
         const lines = [];
-        if (c.rec) lines.push({ t: '● ЗАПИСЬ ' + fmtMs(now - c.rec, 'hms', true), cls: 'red' });
-        if (c.live) lines.push({ t: '● ЭФИР ' + fmtMs(now - c.live, 'hms', true), cls: 'red' });
-        if (c.ndi) lines.push({ t: 'NDI-выходов: ' + c.ndi, cls: 'dim' });
-        if (!lines.length) lines.push({ t: 'Не в эфире', cls: 'dim' });
+        if (c.rec) lines.push({ t: L('● ЗАПИСЬ') + ' ' + fmtMs(now - c.rec, 'hms', true), cls: 'red' });
+        if (c.live) lines.push({ t: L('● ЭФИР') + ' ' + fmtMs(now - c.live, 'hms', true), cls: 'red' });
+        if (c.ndi) lines.push({ t: L('NDI-выходов: ') + c.ndi, cls: 'dim' });
+        if (!lines.length) lines.push({ t: L('Не в эфире'), cls: 'dim' });
         return { lines };
       }
       case 'part': return partValue(it, st.part, edit, pre);
@@ -854,8 +900,8 @@ const Compose = (() => {
     const lines = [];
     if (show !== 'next') lines.push({ t: pre + nm(p.cur), c: colT ? p.curC : '' });
     if (show !== 'cur') {
-      if (p.next) lines.push({ t: (show === 'both' ? (it.dir === 'row' ? '' : 'Далее: ') : pre) + nm(p.next), cls: show === 'both' ? 'dim' : '', c: colT ? p.nextC : '' }); // в строку — стрелка вместо «Далее»
-      else lines.push({ t: show === 'both' ? 'Последняя часть' : pre + 'Конец', cls: 'dim' });
+      if (p.next) lines.push({ t: (show === 'both' ? (it.dir === 'row' ? '' : L('Далее: ')) : pre) + nm(p.next), cls: show === 'both' ? 'dim' : '', c: colT ? p.nextC : '' }); // в строку — стрелка вместо «Далее»
+      else lines.push({ t: show === 'both' ? L('Последняя часть') : pre + L('Конец'), cls: 'dim' });
     }
     return { lines, row: it.dir === 'row', bg: it.pcol === 'bg' ? (show === 'next' ? p.nextC : p.curC) || '' : undefined, ph: sample };
   }
@@ -881,7 +927,7 @@ const Compose = (() => {
       cls: x.s === 'done' ? (strike ? 'done strike' : 'done') : x.s === 'now' ? 'now' : '',
       c: x.s === 'now' ? it.curC || '#ffd84a' : '',
     }));
-    if (!lines.length) return edit ? { text: 'Очередь: нет подходящих пунктов', ph: true, empty: true } : { text: '', empty: true };
+    if (!lines.length) return edit ? { text: L('Очередь: нет подходящих пунктов'), ph: true, empty: true } : { text: '', empty: true };
     return { label: it.title || '', lines, row: it.dir === 'row', ph: sample };
   }
 
@@ -944,29 +990,17 @@ const Compose = (() => {
     if (relen) autoFit(n, it);
   }
 
-  // Размер текста — сам: самый крупный, при котором текст влезает в блок (не больше «Размера», не меньше minSize)
+  // Размер текста инфоблока: по режиму подгонки (fitMode)
   function autoFit(n, it) {
     const t = n._txt;
     const box = n._in;
-    const max = Math.max(4, num(it.size, 64));
-    t.style.fontSize = max + 'px';
-    if (it.auto === false) return;
+    t.style.fontSize = Math.max(4, num(it.size, 64)) + 'px';
+    if (fitMode(it) === 'none') return;
     const pad = num(it.pad, 0);
     const W = t.clientWidth - 2 * pad;
     const H = t.clientHeight - 2 * pad;
     if (W <= 0 || H <= 0) return;
-    const fits = () => box.scrollHeight <= H + 1 && box.scrollWidth <= W + 1;
-    if (fits()) return;
-    let lo = Math.max(4, Math.min(max, num(it.minSize, 12)));
-    let hi = max;
-    t.style.fontSize = lo + 'px';
-    if (!fits()) return;
-    for (let k = 0; k < 10 && hi - lo > 0.5; k++) {
-      const m = (lo + hi) / 2;
-      t.style.fontSize = m + 'px';
-      if (fits()) lo = m; else hi = m;
-    }
-    t.style.fontSize = Math.floor(lo) + 'px';
+    fitSize(t, it, () => box.scrollHeight <= H + 1 && box.scrollWidth <= W + 1);
   }
   setInterval(() => { for (const n of stageNodes) if (TICK.has(n._type)) paintStage(n); }, 250);
 

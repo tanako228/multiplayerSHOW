@@ -7,3 +7,14 @@ out/
 .claude/
 видео/
 npm
+
+# мои личные файлы (заметки для Claude, задания, выпуск версий) — лежат на диске, но не в GitHub
+CLAUDE.md
+HANDOFF.md
+НОВЫЙ-ЧАТ.md
+ТЗ-*.md
+ИНСТРУКЦИЯ-GITHUB.md
+выпустить.cmd
+подключить-github.cmd
+Тема Индустриал.json
+Тема Индустриал Liquid glass.json

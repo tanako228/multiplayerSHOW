@@ -112,7 +112,8 @@ contextBridge.exposeInMainWorld('api', {
   onFonts: (cb) => on('fonts:changed', cb),
   saveJson: (opts) => ipcRenderer.invoke('json:save', opts),
   openJson: (opts) => ipcRenderer.invoke('json:open', opts),
-  songsOpen: () => ipcRenderer.invoke('songs:open'),
+  songsOpen: (opts) => ipcRenderer.invoke('songs:open', opts), // opts.other — базы и файлы других программ
+  sheetsPick: () => ipcRenderer.invoke('sheets:pick'), // ноты песни: фото/PDF → { sheets: [{ file, name, w, h }], errors }
   songSave: (opts) => ipcRenderer.invoke('songs:save', opts),
   songsSaveMany: (songs) => ipcRenderer.invoke('songs:saveMany', songs),
 
@@ -129,6 +130,7 @@ contextBridge.exposeInMainWorld('api', {
   ndiFind: () => ipcRenderer.invoke('ndi:find'),
   ndiOpen: (name) => ipcRenderer.invoke('ndi:open', name),
   ndiClose: (key) => ipcRenderer.send('ndi:close', key),
+  setLang: (lang) => ipcRenderer.send('ui:lang', lang), // язык окон выбора файлов (i18n.js → main.js)
   ndiAck: (key) => ipcRenderer.send('ndi:ack', key),
   onNdiVideo: (cb) => on('ndi:video', cb),
   onNdiAudio: (cb) => on('ndi:audio', cb),
@@ -171,7 +173,21 @@ contextBridge.exposeInMainWorld('api', {
   teamDo: (a) => ipcRenderer.invoke('team:do', a), // люди и устройства: { act, id, … } (teamapi.js: act)
   teamLive: (l) => ipcRenderer.invoke('team:live', l), // что на экране — телефонам группы
   onTeamCmd: (cb) => on('team:cmd', cb), // телефон листает: { cmd: next|prev|show|clear, item, sid, pl, eid, who }
+  onTeamChords: (cb) => on('team:chords', cb), // аккорды песни с телефона: { id, chords, key?, who, rid }
+  onTeamSheets: (cb) => on('team:sheets', cb), // ноты песни с телефона: { id, add: [листы], del: имя файла, who, rid }
+  teamChordsDone: (r) => ipcRenderer.invoke('team:chordsDone', r), // ответ: { rid, err? }
   onTeamInfo: (cb) => on('team:info', cb),
+  // Библия по голосу (voice.js, voicesrv.js): модели Vosk, скрытое окно распознавания
+  voiceState: () => ipcRenderer.invoke('voice:state'),
+  voiceGet: (lang) => ipcRenderer.invoke('voice:get', lang), // скачать модель языка
+  voiceFile: (lang) => ipcRenderer.invoke('voice:file', lang), // своя модель из .zip
+  voiceStart: (cfg) => ipcRenderer.invoke('voice:start', cfg), // { lang, mic, label }
+  voiceStop: (why) => ipcRenderer.invoke('voice:stop', why), // why — откуда выключили (в журнал)
+  onVoiceText: (cb) => on('voice:text', cb), // { text, final } | { state, error } | { level }
+  onVoiceProgress: (cb) => on('voice:progress', cb),
+  voiceSend: (m) => ipcRenderer.send('voice:send', m), // только из voice.html
+  // Проверка перед служением: какие файлы есть на диске → [true|false]
+  filesCheck: (paths) => ipcRenderer.invoke('files:check', paths),
   onThumbDraw: (cb) => on('thumb:draw', cb),
   thumbReady: () => ipcRenderer.send('thumb:ready'),
 });

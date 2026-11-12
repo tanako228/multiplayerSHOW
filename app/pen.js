@@ -66,6 +66,10 @@ const Pen = (() => {
   let openKey = '';
   let tool = TOOLS[lsGet('mps.tool', '')] ? lsGet('mps.tool', '') : '';
   let ruler = false;
+  let temp = '';        // инструмент на время, пока зажата кнопка стилуса (stylus.js)
+  let prevTool = '';    // что было в руке до «взять кнопкой» — вернуть повторным нажатием
+  let downs = 0;        // сколько раз начинали писать / стирать (кнопка стилуса: зажали и писали или просто нажали)
+  const hand = () => (temp && TOOLS[temp] ? temp : tool);
   let penOnly = lsGet('mps.penOnly', '0') === '1';
   let penSeen = penOnly;
   let undo = [];
@@ -453,15 +457,18 @@ const Pen = (() => {
 
   function setInput() {
     if (!over) return;
-    over.classList.toggle('on', isOpen && (DRAW(tool) || tool === 'eraser'));
-    over.classList.toggle('erase', isOpen && tool === 'eraser');
+    const t = hand();
+    over.classList.toggle('on', isOpen && (DRAW(t) || t === 'eraser'));
+    over.classList.toggle('erase', isOpen && t === 'eraser');
   }
   function local(e) {
     const br = body.getBoundingClientRect();
     return [e.clientX - br.left, e.clientY - br.top];
   }
+  // Стилус: касание кончиком (1) или обратным концом-ластиком (32). Кнопка в воздухе — не касание
+  const touching = (e) => e.pointerType !== 'pen' || (e.buttons & 33) !== 0;
   function onDown(e) {
-    if (!isOpen) return;
+    if (!isOpen || !touching(e)) return;
     if (e.pointerType === 'pen' && !penSeen) { penSeen = true; if (!penOnly) setPenOnly(true, true); }
     ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY, type: e.pointerType });
     const fingers = [...ptrs.values()].filter((p) => p.type === 'touch').length;
@@ -476,6 +483,9 @@ const Pen = (() => {
     try { over.setPointerCapture(e.pointerId); } catch { /* уже */ }
     const [x, y] = local(e);
     if (eyedrop) { eyedrop = false; measure(); takeColor(x, y); return; }
+    // Обратный конец стилуса — всегда ластик; зажата кнопка стилуса — её инструмент
+    const tool = e.pointerType === 'pen' && (e.buttons & 32) ? 'eraser' : hand();
+    downs++;
     if (tool === 'eraser') {
       measure();
       erasing = { id: e.pointerId, type: e.pointerType, list: [], last: { x, y, t: e.timeStamp } };
@@ -499,6 +509,13 @@ const Pen = (() => {
     liveDraw();
   }
   function onMove(e) {
+    // Кнопку стилуса зажали в воздухе, потом коснулись (или подняли кончик, не отпуская кнопку) — это не down/up,
+    // а move со сменой кнопки: e.button 0 — кончик, 5 — обратный конец
+    if (e.pointerType === 'pen' && (e.button === 0 || e.button === 5)) {
+      const mine = (drawing && drawing.id === e.pointerId) || (erasing && erasing.id === e.pointerId);
+      if (touching(e) && !mine) { onDown(e); return; }
+      if (!touching(e) && mine) { onUp(e); return; }
+    }
     const q = ptrs.get(e.pointerId);
     if (q) { q.x = e.clientX; q.y = e.clientY; }
     if (pan && pan.ids.has(e.pointerId)) { panMove(); return; }
@@ -1405,8 +1422,43 @@ const Pen = (() => {
     window.addEventListener('pagehide', flush);
   }
 
+  /* ----- Кнопки стилуса (stylus.js) ----- */
+
+  // Зажали кнопку — инструмент на время (отпустили — прежний)
+  function setTemp(id) {
+    temp = TOOLS[id] && id !== 'ruler' ? id : '';
+    setInput();
+  }
+  function afterPick() {
+    if (!DRAW(tool)) ruler = false;
+    lsSet('mps.tool', tool);
+    toast(tool ? TOOLS[tool].name : 'Предмет отложили — пальцем листать');
+    $('penPop').hidden = true;
+    paintDesk();
+    paintBar();
+    setInput();
+  }
+  // Нажали и отпустили — взять насовсем; ещё раз — вернуть, что было в руке
+  function take(id) {
+    if (!isOpen || !TOOLS[id] || id === 'ruler') return;
+    if (tool === id) { tool = TOOLS[prevTool] && prevTool !== id ? prevTool : ''; prevTool = id; } else { prevTool = tool; tool = id; }
+    afterPick();
+  }
+  // Следующий пишущий предмет по кругу
+  const CYCLE = ['stylus', 'pencil', 'pen', 'mRed', 'mBlue', 'mGreen', 'hl'];
+  function cycle() {
+    if (!isOpen) return;
+    const id = CYCLE[(CYCLE.indexOf(tool) + 1) % CYCLE.length];
+    if (tool !== id) prevTool = tool;
+    tool = id;
+    afterPick();
+  }
+
   return {
     init, show, open, close, editNote, relayout: sched,
+    setTemp, take, cycle, undo: () => { if (isOpen) step(true); },
+    get downs() { return downs; },
+    tools: () => Object.keys(TOOLS).filter((id) => id !== 'ruler').map((id) => [id, TOOLS[id].name]),
     get isOpen() { return isOpen; },
     get sound() { return Snd.on; },
     set sound(v) { Snd.on = v; },

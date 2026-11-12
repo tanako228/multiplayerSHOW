@@ -1,0 +1,13 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <!-- Скрытое окно «Библия по голосу» (voicesrv.js): Vosk — WebAssembly в воркере из blob:, модель — mpsvoice: -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' blob: 'unsafe-eval' 'wasm-unsafe-eval'; worker-src blob:; connect-src 'self' mpsvoice: data: blob:">
+  <title>MP Show — голос</title>
+</head>
+<body>
+  <script src="node_modules/vosk-browser/dist/vosk.js"></script>
+  <script src="voice-win.js"></script>
+</body>
+</html>

@@ -298,7 +298,7 @@ const partColor = (label) => { const t = lib && label ? Songs.typeOf(label, part
 /* ===== Окно песни: текст с разметкой и аранжировки ===== */
 
 let songEditing = null; // презентация, которую правим, или null для новой
-let songDraft = null;   // { arrangements, arr, number } — правки до «Сохранить»
+let songDraft = null;   // { arrangements, arr, number, sheets } — правки до «Сохранить»
 
 const curArr = () => songDraft.arrangements.find((a) => a.id === songDraft.arr) || null;
 
@@ -306,7 +306,7 @@ function openSongDialog(item) {
   if (!item && plNoCreate()) return; // новая песня — только в библиотеке (playlist.js)
   songEditing = item;
   const s = item && item.song;
-  songDraft = { arrangements: s ? JSON.parse(JSON.stringify(s.arrangements || [])) : [], arr: s ? s.arr || '' : '', number: s ? s.number || '' : '' };
+  songDraft = { arrangements: s ? JSON.parse(JSON.stringify(s.arrangements || [])) : [], arr: s ? s.arr || '' : '', number: s ? s.number || '' : '', sheets: s && Array.isArray(s.sheets) ? s.sheets.slice() : [] };
   $('songDlgTitle').textContent = item ? 'Изменить песню' : 'Новая песня';
   $('songName').value = item ? item.name : '';
   $('songGenre').value = (s && s.genre) || '';
@@ -320,6 +320,8 @@ function openSongDialog(item) {
   $('songKeyIn').value = (s && s.key) || '';
   $('songTempo').value = (s && s.tempo) || '';
   $('songTime').value = (s && s.time) || '';
+  renderSongSheets();
+  $('songSheetsBox').open = songDraft.sheets.length > 0;
   renderPartBar();
   songHot = { part: '', occ: '' };
   updateSongView();
@@ -621,6 +623,7 @@ function songSave() {
   const chords = $('songChords').value.replace(/\s+$/, '');
   if (chords.trim()) song.chords = chords; // аккорды для сценического экрана (stage.js)
   Songs.songMeta(song, { key: $('songKeyIn').value, tempo: $('songTempo').value, time: $('songTime').value }); // для телефонов группы
+  if (songDraft.sheets.length) song.sheets = songDraft.sheets; // ноты для телефонов группы
   if (songEditing) {
     const first = !songEditing.song;
     if (!first) followRenames(songEditing.song.text, text, song.arrangements);
@@ -650,7 +653,7 @@ async function songLoadFile() {
   if (s.song.key) $('songKeyIn').value = s.song.key;
   if (s.song.tempo) $('songTempo').value = s.song.tempo;
   if (s.song.time) $('songTime').value = s.song.time;
-  songDraft = { arrangements: s.song.arrangements, arr: '', number: s.song.number || '' };
+  songDraft = { arrangements: s.song.arrangements, arr: '', number: s.song.number || '', sheets: songDraft.sheets };
   updateSongView();
   if (songs.length > 1) flashStatus(`В файле песен: ${songs.length}, открыта первая. Все сразу — кнопка «Импорт» над лентой.`);
 }
@@ -660,6 +663,34 @@ function songExportDraft() {
   const item = { name: $('songName').value.trim() || 'Песня', song: { text: $('songText').value, arrangements: songDraft.arrangements, arr: songDraft.arr, number: songDraft.number, genre: $('songGenre').value.trim(), ccli: $('songCcli').value.trim(), chords: $('songChords').value.trim() || undefined } };
   exportSongs([item]);
 }
+
+// Ноты (song.sheets): листы-картинки в userData\sheets — main.js делает их из фото и PDF; здесь — порядок и состав
+function renderSongSheets() {
+  const list = songDraft.sheets;
+  $('songSheetsN').textContent = list.length ? `(листов: ${list.length})` : '';
+  $('songSheets').replaceChildren(...list.map((x, i) => {
+    const card = Object.assign(document.createElement('div'), { className: 'sheet-card' });
+    const img = Object.assign(document.createElement('img'), { src: window.api.fileUrl(x.file), alt: '', loading: 'lazy', title: x.name });
+    const name = Object.assign(document.createElement('span'), { textContent: x.name, title: x.name });
+    name.dataset.noi18n = '';
+    const bar = Object.assign(document.createElement('div'), { className: 'sc-btns' });
+    const btn = (t, title, fn, off) => { const b = Object.assign(document.createElement('button'), { type: 'button', textContent: t, title, disabled: !!off }); b.onclick = fn; bar.append(b); };
+    const move = (d) => { const [y] = list.splice(i, 1); list.splice(i + d, 0, y); renderSongSheets(); };
+    btn('←', 'Раньше', () => move(-1), i === 0);
+    btn('→', 'Позже', () => move(1), i === list.length - 1);
+    btn('×', 'Убрать лист (до «Сохранить» — можно закрыть окно без сохранения)', () => { list.splice(i, 1); renderSongSheets(); });
+    card.append(img, name, bar);
+    return card;
+  }));
+}
+$('songSheetsAdd').addEventListener('click', async () => {
+  const r = await window.api.sheetsPick();
+  if (!r) return;
+  for (const x of r.sheets) if (!songDraft.sheets.some((y) => y.file === x.file)) songDraft.sheets.push(x);
+  renderSongSheets();
+  if (r.errors.length) showNotice('Не все файлы нот добавлены:\n' + r.errors.join('\n'), true);
+  else if (r.sheets.length) flashStatus(`Ноты: добавлено листов — ${r.sheets.length}. Сохраните песню`);
+});
 
 $('songText').addEventListener('input', updateSongView);
 // Курсор перешёл в другую часть — подсветка за ним
@@ -692,6 +723,30 @@ $('songChordsFill').addEventListener('click', () => {
   $('songChords').value = $('songText').value;
   $('songChords').focus();
 });
+// Аккорды из файла (ChordPro, txt, строки аккордов над словами) → на текст ЭТОЙ песни: текст не меняется, добавляются аккорды
+async function songChordsFile() {
+  const files = await window.api.songsOpen();
+  const f = files.find((x) => x && x.bytes && !x.error);
+  if (!f) return;
+  const raw = decodeText(f.bytes).replace(/^﻿/, '').replace(/\r\n?/g, '\n');
+  let src = '';
+  const first = readSongFile(f)[0];
+  if (first && first.song.chords) src = first.song.chords; // ChordPro: аккорды уже выделены
+  else if (Chords.hasChords(raw)) src = raw;               // обычный текст со строками аккордов
+  if (!src) { showNotice('В файле не нашлось аккордов', true); return; }
+  const text = $('songText').value;
+  if (!text.trim()) { $('songChords').value = src; $('songChordsBox').open = true; flashStatus('Текста песни ещё нет — аккорды загружены как есть'); return; }
+  if ($('songChords').value.trim() && !(await askYes('В поле аккордов уже есть текст. Заменить его загруженными аккордами? Текст песни не изменится.', 'Заменить'))) return;
+  const r = Chords.align(src, text);
+  if (!r.exact && !r.fuzzy) { showNotice('Ни одна строка файла не похожа на текст песни — аккорды не загружены', true); return; }
+  $('songChords').value = r.text;
+  $('songChordsBox').open = true;
+  if (first && first.song.key && !$('songKeyIn').value.trim()) $('songKeyIn').value = first.song.key;
+  if (first && first.song.tempo && !$('songTempo').value.trim()) $('songTempo').value = first.song.tempo;
+  if (first && first.song.time && !$('songTime').value.trim()) $('songTime').value = first.song.time;
+  flashStatus(`Аккорды легли на ${r.exact + r.fuzzy} из ${r.total} строк текста${r.fuzzy ? ` (${r.fuzzy} — по похожести, проверьте)` : ''}${r.none ? `; без аккордов осталось ${r.none}` : ''}. Текст песни не менялся`);
+}
+$('songChordsLoad').addEventListener('click', songChordsFile);
 $('songLoad').addEventListener('click', songLoadFile);
 $('songExport').addEventListener('click', songExportDraft);
 $('arrSel').addEventListener('change', () => { songDraft.arr = $('arrSel').value; updateSongView(); });
@@ -776,25 +831,34 @@ function decodeText(bytes) {
 }
 
 function readSongFile(f) {
-  if (f.error || !f.bytes) return [];
+  if (f.error || !(f.bytes || f.db)) return [];
+  // Другие программы (OpenLP, EasyWorship, ProPresenter, SongSelect) — songimport.js; не их формат — null
+  try { const other = SongImport.read(f, decodeText); if (other) return other; } catch { /* дальше как текст */ }
+  if (!f.bytes) return [];
   const text = decodeText(f.bytes);
   try { return f.ext === 'json' ? Songs.fromJson(JSON.parse(text)) : Songs.fromText(text, f.name, f.ext); } catch { return []; }
 }
 
-async function importSongs() {
+// other — окно выбора с базами и файлами других программ (OpenLP, EasyWorship, ProPresenter, SongSelect)
+async function importSongs(other) {
   if (!findView()) { showNotice('Сначала создайте плейлист или библиотеку', true); return; }
   if (plNoCreate()) return; // песни импортируются только в библиотеку
-  const files = await window.api.songsOpen();
+  const files = await window.api.songsOpen({ other: other === true });
   if (!files.length) return;
+  const many = files.some((f) => f.db && (f.db.songs || []).length > 50);
+  if (many) showNotice('Импорт песен…');
+  await new Promise((r) => setTimeout(r, 30)); // надпись успевает появиться
   const items = [];
   const bad = [];
   for (const f of files) {
     const songs = readSongFile(f);
-    if (!songs.length) bad.push(f.name);
+    if (!songs.length) bad.push(f.name + (typeof f.error === 'string' ? ` (${f.error})` : ''));
+    if (f.db && f.db.noWords) bad.push(`${f.name}: рядом нет SongWords.db — песни без слов не добавлены`);
     for (const s of songs) items.push({ id: newId(), type: 'pres', kind: 'song', name: s.name, song: s.song, slides: Songs.build(s.song) });
   }
+  if (many) showNotice('');
   if (items.length) addItems(items, true);
-  if (bad.length) showNotice('Не нашлось текста песни: ' + bad.join(', '), true);
+  if (bad.length) showNotice((items.length ? `Импортировано песен: ${items.length}. ` : '') + 'Не получилось: ' + bad.join(', '), true);
   else flashStatus(`Импортировано песен: ${items.length}`);
 }
 
@@ -832,8 +896,9 @@ function renderPartTypes() {
   const types = partTypes();
   $('ptRows').replaceChildren(...types.map((t) => {
     const row = Object.assign(document.createElement('div'), { className: 'pt-row' });
-    const color = Object.assign(document.createElement('input'), { type: 'color', value: t.color || '#8b8d98', title: 'Цвет части' });
-    color.addEventListener('change', () => { t.color = color.value; partTypesChanged(); });
+    let pc = t.color || '#8b8d98';
+    const color = ColorPicker.field(pc, null, (v) => { pc = v; }, { onClose: () => { if (pc !== t.color) { t.color = pc; partTypesChanged(); } } });
+    color.title = 'Цвет части';
     const name = Object.assign(document.createElement('input'), { type: 'text', value: t.name, placeholder: 'Название, например Припев' });
     name.addEventListener('change', () => { if (name.value.trim()) t.name = name.value.trim(); partTypesChanged(); });
     const num = Object.assign(document.createElement('label'), { className: 'check', title: 'Сразу с номером: Куплет 1, Куплет 2… Без галочки: Припев, потом Припев 2' });

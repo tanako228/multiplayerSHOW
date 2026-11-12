@@ -80,6 +80,8 @@ const Icons = (() => {
     // Разделы настроек
     show: ['#5ea2ff', '#2a5fe0', `<path d="M9 6.8v10.4l8.4-5.2z" fill="${W}"/>`],
     text: ['#ffb45e', '#de731c', `<path d="M5.4 17.6L9 6.6h1.6l3.6 11" stroke="${W}" stroke-width="1.9" fill="none" stroke-linejoin="round" stroke-linecap="round"/>` + line('M6.7 14h6.2', 1.7) + `<circle cx="16.8" cy="15.6" r="2.2" fill="none" stroke="${W}" stroke-width="1.7"/>` + line('M19 13.2v4.4', 1.7)],
+    bvoice: ['#e8b45a', '#9a5b17', `<path d="M4.8 6.4A1.4 1.4 0 0 1 6.2 5h6.6v11.6H6.2A1.4 1.4 0 0 0 4.8 18z" fill="${W}"/><path d="M4.8 18a1.4 1.4 0 0 1 1.4-1.4h6.6V19H6.2" fill="${W}" opacity=".6"/><path d="M8.8 7.4v5.8M6.9 9.5h3.8" stroke="{d}" stroke-width="1.6" stroke-linecap="round"/>` + line('M15.2 9.6a3.3 3.3 0 0 1 0 4.8M17.6 7.6a6.2 6.2 0 0 1 0 8.8', 1.7)], // Библия по голосу
+    vtext: ['#6fe0b0', '#1e9a6a', line('M5 10.6v2.8M7.6 8.4v7.2M10.2 9.8v4.4', 1.8) + line('M13.4 8.2h5.4M13.4 12h5.4M13.4 15.8h3.6', 1.8)], // речь → текст (поиск места по словам)
     wave: ['#ffb35a', '#d9700f', line('M5.6 10.6v2.8M8.5 8.2v7.6M11.4 5.6v12.8M14.3 8.6v6.8M17.2 7.2v9.6', 1.9)],
     pause: ['#5ea2ff', '#2a5fe0', `<rect x="7.4" y="6.6" width="3.2" height="10.8" rx="1" fill="${W}"/><rect x="13.4" y="6.6" width="3.2" height="10.8" rx="1" fill="${W}"/>`],
     stop: ['#93a3bb', '#46566f', `<rect x="7.2" y="7.2" width="9.6" height="9.6" rx="1.6" fill="${W}"/>`],
@@ -141,6 +143,10 @@ const Icons = (() => {
     announce: ['#ffb057', '#e0662a', `<path d="M5 9.6h3l8.4-4v12.8L8 14.4H5z" fill="${W}"/>` + line('M8.6 14.6l1.4 4.2M18.8 10.2v3.6', 1.8)],
     message: ['#7fb2ff', '#2f63d8', `<path d="M4.8 11.6L19.4 5l-4.2 14.2-3.6-5.4z" fill="${W}"/><path d="M11.6 13.8L19.4 5" stroke="{d}" stroke-width="1.3"/>`],
     props: ['#c38cff', '#7c3fe0', `<path d="M12 4.8l6.4 3.6v7.2L12 19.2l-6.4-3.6V8.4z" fill="${W}"/><path d="M5.6 8.4L12 12l6.4-3.6M12 12v7.2" stroke="{d}" stroke-width="1.3" fill="none" stroke-linejoin="round"/>`],
+    // Служение (service.js, voice.js)
+    service: ['#7fd0ff', '#2a7fd6', `<path d="M12 4.4l1.2 2.4h-2.4z" fill="${W}"/><rect x="11.2" y="6.6" width="1.6" height="3" fill="${W}"/><path d="M6.4 19.2v-6.6l5.6-3.6 5.6 3.6v6.6z" fill="${W}"/><rect x="10.6" y="15" width="2.8" height="4.2" rx="1.2" fill="{d}"/>`],
+    lowerthird: ['#ff8a7a', '#d43a2e', `<rect x="4.6" y="6" width="14.8" height="12" rx="1.8" fill="none" stroke="${W}" stroke-width="1.6"/><rect x="6.4" y="12.6" width="8" height="2.4" rx=".6" fill="${W}"/><rect x="6.4" y="15.4" width="5.4" height="1.4" rx=".5" fill="${W}" opacity=".7"/>`],
+    check: ['#4fe08a', '#14994d', `<rect x="5" y="4.8" width="14" height="14.4" rx="2.4" fill="none" stroke="${W}" stroke-width="1.7"/>` + line('M8.4 12.2l2.6 2.6 4.8-5', 2.2)],
   };
 
   let seq = 0;
