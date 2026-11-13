@@ -34,8 +34,11 @@ function starterThemes() {
 
 // Свои темы (lib.themes) и стандартные из программы (Themes.BUILTIN, themes.js).
 // Правки во вкладке «Темы» — черновик; экран и миниатюры берут применённую копию lib.themesLive[id] (кнопка «Применить тему»)
-const themeById = (id) => (lib ? (lib.themesLive && lib.themesLive[id]) || Themes.find(lib.themes, id) : null);
-const appliedThemes = () => (lib ? lib.themes.map((t) => (lib.themesLive && lib.themesLive[t.id]) || t) : []);
+// lib.extThemes — темы, пришедшие с презентацией с другого компьютера, которых нет среди своих: ими презентация
+// показывается как раньше; в редакторе тем (группа «Из презентаций») правая кнопка — «Сохранить в темы»
+const extThemes = () => (lib && Array.isArray(lib.extThemes) ? lib.extThemes : []);
+const themeById = (id) => (lib ? (lib.themesLive && lib.themesLive[id]) || Themes.find(lib.themes, id) || (id && extThemes().find((t) => t.id === id)) || null : null);
+const appliedThemes = () => (lib ? [...lib.themes.map((t) => (lib.themesLive && lib.themesLive[t.id]) || t), ...extThemes()] : []);
 
 // Какая тема действует: у слайда → у презентации → общая для вида (песни, Библия, картинки, свои слайды)
 // Темы, которой нет (пришла с импортом из другой программы, удалена), — пропускаем: действует выбранная по умолчанию
@@ -280,7 +283,7 @@ function touched(item) {
 /* ----- Миниатюры слайдов ----- */
 
 function slideThumb(item, slide) {
-  // Как в ProPresenter: картинка слайда, под ней полоска с номером и подписью
+  // Картинка слайда, под ней полоска с номером и подписью
   const el = Object.assign(document.createElement('div'), { className: 'sl k-' + slide.k + (slide.extra ? ' extra' : '') });
   if (slide.extra) el.title = 'Дополнительный стих — загружен заранее, показывается по щелчку или стрелкой';
   const pic = Object.assign(document.createElement('div'), { className: 'pic' });
@@ -358,6 +361,8 @@ function renderSide() {
     const b = Object.assign(document.createElement('button'), { className: 'svc-row' + (isCur(kind, x) ? ' cur' : ''), draggable: true });
     b.dataset.view = kind + ':' + x.id; // сюда бросают файлы из медиапула (poolDrop)
     b.append(ico(kind), document.createTextNode(x.name), Object.assign(document.createElement('span'), { className: 'cnt', textContent: count }));
+    // Общая библиотека (profiles.js): правки видны в других профилях, где она подключена
+    if (x.shared) { b.querySelector('.cnt').before(Object.assign(document.createElement('span'), { className: 'shared-mark', textContent: '⇄' })); b.title = 'Общая библиотека: правки видны во всех профилях, где она подключена (Настройки → Профили)'; }
     b.addEventListener('click', () => setView(kind, x.id));
     b.addEventListener('dblclick', () => renameView(kind, x.id));
     b.addEventListener('contextmenu', (e) => { e.preventDefault(); viewMenu(e, kind, x); });
@@ -1209,6 +1214,7 @@ function showMenu(e, items) {
       continue;
     }
     const b = Object.assign(document.createElement('button'), { textContent: it.label, disabled: !!it.disabled });
+    if (it.title) b.title = it.title;
     if (it.icon && typeof Icons !== 'undefined') { const l = Object.assign(document.createElement('span'), { className: 'ctx-ic', textContent: it.label }); l.prepend(Icons.el(it.icon)); b.replaceChildren(l); }
     if (it.key) b.append(Object.assign(document.createElement('span'), { className: 'ctx-key', textContent: it.key }));
     b.addEventListener('click', () => { closeMenu(); it.fn(); });
@@ -1295,6 +1301,7 @@ function presMenu(e, key, item, isPl) {
     ...(lib.macros && lib.macros.length && entryByKey(key) ? [{ label: 'Привязать макрос…', fn: () => mcAttachMenu(e, { kind: 'entry', key }) }] : []),
     ...(typeof stPresMenu === 'function' ? stPresMenu(e, item) : []), // сценический макет при показе (stage.js)
     ...(typeof rmPresMenu === 'function' ? rmPresMenu(item) : []), // пульт с телефона (remote.js)
+    { label: n > 1 ? `Экспорт презентаций (${n})…` : 'Экспорт презентации…', title: 'В файл вместе с её темами — на другом компьютере покажется так же', fn: () => exportPres(n > 1 ? selectedItems().map((y) => y.item) : [item]) },
     { label: 'Копия презентации', fn: () => addItems([{ ...JSON.parse(JSON.stringify(item)), id: newId(), name: item.name + ' (копия)', slides: Slides.copy(item.slides) }], false) },
     '-',
     { label: 'Цвет в списке', colors: MARKS, value: item.color, fn: (c) => setMark(item, c) },
@@ -1825,7 +1832,10 @@ async function deleteView(kind = lib.view && lib.view.kind, id = lib.view && lib
   const isPl = kind === 'pl';
   const v = (isPl ? lib.playlists : lib.libraries).find((x) => x.id === id);
   if (!v) return;
-  if (!(await askYes(isPl ? `Удалить плейлист «${v.name}»? Песни в библиотеках останутся.` : `Удалить библиотеку «${v.name}»? Презентации, которые стоят в плейлистах, там останутся.`, 'Удалить', true))) return;
+  const ask = isPl ? `Удалить плейлист «${v.name}»? Песни в библиотеках останутся.`
+    : v.shared ? `Убрать общую библиотеку «${v.name}» из этого профиля? У других профилей она останется. Презентации, которые стоят в плейлистах, там останутся.`
+      : `Удалить библиотеку «${v.name}»? Презентации, которые стоят в плейлистах, там останутся.`;
+  if (!(await askYes(ask, v.shared ? 'Убрать' : 'Удалить', true))) return;
   if (!(isPl ? lib.playlists : lib.libraries).includes(v)) return; // пока спрашивали, уже удалили (Ctrl+Z, другой вопрос)
   if (isPl) lib.playlists = lib.playlists.filter((p) => p !== v);
   else lib.libraries = lib.libraries.filter((l) => l !== v);
@@ -1871,8 +1881,80 @@ function openAddMenu() {
     { label: 'Из библиотеки в плейлист…', disabled: !isPl, fn: inLists(openLibPick) },
     { label: 'Новый плейлист', fn: () => createView('pl') },
     { label: 'Перевод Библии…', fn: () => pickBibles() },
+    '-',
+    { label: 'Импорт презентации…', title: 'Файл презентации multiplayerSHOW (например, с другого компьютера) — вместе с её темами', disabled: noNew, fn: inLists(importPres) },
+    ...addThemeExportItems(),
   ]);
   ctxMenu.dataset.tag = 'add';
+}
+
+/* ---------- Презентация в файл и из файла — вместе с темами ----------
+   Файл: { app, kind: 'presentation', version, items: [презентация], themes: [темы, которыми они показываются] }.
+   Стандартные темы не кладём — они есть в любой программе. Файлы с диска (картинки, видео, шрифты) не переносятся. */
+function presThemeIds(items) {
+  const ids = new Set();
+  for (const it of items) {
+    if (it.theme) ids.add(it.theme);
+    for (const s of it.slides || []) if (s.theme) ids.add(s.theme);
+  }
+  return [...ids];
+}
+async function exportPres(items) {
+  if (!items.length) return;
+  const themes = presThemeIds(items).map(themeById).filter((t) => t && !t.std);
+  const data = { app: 'church-presenter', kind: 'presentation', version: 1, items: clone(items), themes: Themes.exportData(themes).themes.map((t) => { delete t.ext; return t; }) };
+  const file = await window.api.saveJson({ name: items.length === 1 ? items[0].name : 'Презентации', data, title: 'Экспорт презентации', label: 'Презентация multiplayerSHOW' });
+  if (file) flashStatus('Сохранено: ' + file.split(/[\\/]/).pop() + (themes.length ? ` · тем в файле: ${themes.length}` : ''));
+}
+async function importPres() {
+  if (!findView()) { showNotice('Сначала создайте плейлист или библиотеку', true); return; }
+  if (plNoCreate()) return; // как песни — только в библиотеку
+  const res = await window.api.openJson({ title: 'Импорт презентации', label: 'Презентация multiplayerSHOW (JSON)' });
+  if (!res) return;
+  const d = res.ok ? res.data : null;
+  if (!d || d.kind !== 'presentation' || !Array.isArray(d.items)) { showNotice('Это не файл презентации multiplayerSHOW', true); return; }
+  const items = d.items.filter((it) => it && typeof it === 'object' && Array.isArray(it.slides)).map((it) => {
+    const c = Slides.migrate(clone(it));
+    c.id = newId();
+    c.name = String(c.name || 'Презентация');
+    for (const s of c.slides) if (!s.id) s.id = newId();
+    return c;
+  });
+  if (!items.length) { showNotice('В файле нет презентаций', true); return; }
+  // Темы: своя или стандартная с тем же id уже есть — презентация покажется ею; нет — тема ложится в «Из презентаций»
+  // с прежним id (слайды и выбранные вручную шаблоны её находят) и не теряется, пока её не сохранят в темы
+  if (!Array.isArray(lib.extThemes)) lib.extThemes = [];
+  let ext = 0;
+  for (const t of Array.isArray(d.themes) ? d.themes : []) {
+    if (!t || typeof t !== 'object' || !t.id || Themes.find(lib.themes, t.id) || lib.extThemes.some((x) => x.id === t.id)) continue;
+    const c = Themes.ensure(clone(t));
+    delete c.std;
+    c.name = String(c.name || 'Тема');
+    c.ext = { from: items[0].name };
+    lib.extThemes.push(c);
+    ext++;
+  }
+  addItems(items, true);
+  flashStatus(`Импортировано презентаций: ${items.length}` + (ext ? ` · новых тем: ${ext} — редактор тем, «Из презентаций»: правая кнопка → «Сохранить в темы»` : ''));
+}
+
+// «Экспорт темы» в меню «＋»: то, что открыто в редакторе тем (выбирать заново не нужно). Открыт свой вид слайда
+// («Изменить в редакторе») — его и сохранить как тему или экспортировать; там не открывали — тема песен по умолчанию
+function addThemeExportItems() {
+  const r = typeof teSlideRef === 'function' ? teSlideRef() : null;
+  if (r) {
+    const nm = teSlideName(r.item, r.slide);
+    return [
+      { label: `Сохранить как тему: «${nm}»…`, title: 'Вид слайда, открытый в редакторе тем, станет своей темой — её можно выбрать для любой презентации', fn: () => teSlideSaveTheme(r.item, [r.slide]) },
+      { label: `Экспорт как темы: «${nm}»…`, title: 'Вид слайда, открытый в редакторе тем, — в файл темы', fn: () => teSlideExportTheme(r.item, [r.slide]) },
+    ];
+  }
+  const t = (typeof teTheme === 'function' && teTheme()) || themeById(lib && lib.themeFor && lib.themeFor.song);
+  if (!t) return [{ label: 'Экспорт темы…', title: 'Сначала откройте тему в редакторе тем', fn: () => { openThemeTab(); flashStatus('Выберите тему слева — и снова «＋» → «Экспорт темы»'); } }];
+  return [
+    ...(t.ext || t.std ? [{ label: `Сохранить в темы: «${t.name}»`, title: teSaveTitle(t), fn: () => teSaveTheme(t) }] : []),
+    { label: `Экспорт темы «${t.name}»…`, title: 'Тема, открытая в редакторе тем, — в файл', fn: () => teExport([t]) },
+  ];
 }
 $('addMenu').addEventListener('click', () => { if (!(menuClosed.tag === 'add' && Date.now() - menuClosed.t < 400)) openAddMenu(); });
 

@@ -1,4 +1,4 @@
-/* ---------- Редактор тем (Theme Editor, как в ProPresenter) — вкладка «Темы» окна оператора ----------
+/* ---------- Редактор тем (Theme Editor) — вкладка «Темы» окна оператора ----------
    Слева — темы и их шаблоны слайдов, под ними объекты шаблона (порядок наложения, скрыть, замок, перетаскивание);
    по центру — холст: мышью выбрать, двигать, менять размер, поворачивать (привязка к центру, краям, другим объектам,
    безопасной зоне, сетке и направляющим; Alt — без привязки), линейки — потянуть, будет направляющая;
@@ -39,7 +39,9 @@ function teSlideTheme() {
 }
 
 const teThemes = () => (lib ? lib.themes : []);
-const teTheme = () => (teSlide ? teSlideTheme() : Themes.find(teThemes(), teThemeId));
+// Темы из чужих презентаций (lib.extThemes, playlist.js): видны в редакторе, меняются после «Сохранить в темы»
+const teExtThemes = () => (typeof extThemes === 'function' ? extThemes() : []);
+const teTheme = () => (teSlide ? teSlideTheme() : Themes.find(teThemes(), teThemeId) || teExtThemes().find((t) => t.id === teThemeId) || null);
 const teTpl = () => {
   const t = teTheme();
   if (t && t.slide) return t.slide.look || null;
@@ -48,7 +50,7 @@ const teTpl = () => {
 const teObjs = () => (teTpl() ? teTpl().objs : []);
 const teObj = (id) => teObjs().find((o) => o.id === id) || null;
 const teSelObjs = () => teSel.map(teObj).filter(Boolean);
-const teRO = () => !!(teTheme() && teTheme().std);
+const teRO = () => !!(teTheme() && (teTheme().std || teTheme().ext));
 const r1 = (v) => Math.round(v * 10) / 10;
 const teEl = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
 const teIconBtn = (icon, title, fn, cls) => {
@@ -95,7 +97,7 @@ const teFitMinis = (root) => requestAnimationFrame(() => root.querySelectorAll('
 
 // Открыть вкладку «Темы» (с нужной темой, если указана) — вместо отдельного окна
 function openThemeTab(id) {
-  if (id && Themes.find(teThemes(), id)) {
+  if (id && (Themes.find(teThemes(), id) || teExtThemes().some((t) => t.id === id))) {
     if (teSlide) { teSlideLeave(); teSel = []; }
     if (id !== teThemeId) { teThemeId = id; teTplId = ''; teSel = []; }
   }
@@ -245,7 +247,7 @@ function teOpen() {
   }
   let t = teTheme();
   if (!t) { t = teThemes()[0] || Themes.BUILTIN[0]; teThemeId = t.id; }
-  if (!t.std) { Themes.ensure(t); teFreeze(t); } // старая тема → шаблон из её оформления (перенос); копия для экрана
+  if (!t.std && !t.ext) { Themes.ensure(t); teFreeze(t); } // старая тема → шаблон из её оформления (перенос); копия для экрана
   if (!teTpl()) teTplId = t.templates[0].id;
   teSel = teSel.filter(teObj);
   teRenderAll();
@@ -323,7 +325,7 @@ function teSave() {
 
 // Любая правка шаблона: нельзя у стандартной темы; потом — холст, список, сохранение
 function teEdit(fn, how = {}) {
-  if (teRO()) { flashStatus('Стандартную тему менять нельзя — сделайте свою копию'); return false; }
+  if (teRO()) { flashStatus(teTheme().ext ? 'Тема из презентации — чтобы менять, правая кнопка → «Сохранить в темы»' : 'Стандартную тему менять нельзя — сделайте свою копию'); return false; }
   fn();
   teRenderCanvas();
   if (how.list !== false) teRenderObjs();
@@ -350,7 +352,8 @@ function teRenderSlides(box) {
   back.title = 'Вернуться к редактору тем';
   back.addEventListener('click', teSlideBack);
   head.append(back, teEl('b', null, r.item.name));
-  head.title = 'Свой вид у каждого слайда: правки — только этому слайду, тема и другие слайды не меняются';
+  head.title = 'Свой вид у каждого слайда: правки — только этому слайду, тема и другие слайды не меняются. Правая кнопка — сохранить как тему';
+  head.addEventListener('contextmenu', (e) => { e.preventDefault(); teSlideMenu(e, r.item, null); });
   box.append(head);
   const list = teEl('div', 'te-tpls');
   r.item.slides.forEach((s, i) => {
@@ -361,10 +364,78 @@ function teRenderSlides(box) {
     row.append(ok || ['image', 'video'].includes(s.k) ? teMini(contentOf(r.item, s)) : teEl('div', 'te-mini'), n);
     row.title = ok ? 'Щелчок — править этот слайд' : 'Картинку, видео и источник в редакторе тем не правят: у них нет текста темы';
     if (ok) row.addEventListener('click', () => teSlideGo(s.id));
+    if (ok) row.addEventListener('contextmenu', (e) => { e.preventDefault(); teSlideMenu(e, r.item, s); });
     list.append(row);
   });
   box.append(list);
   teFitMinis(box);
+}
+
+/* ----- Вид слайда → тема: свой вид живёт только в презентации; «Сохранить как тему» делает из него обычную
+   свою тему (шаблон — копия вида со всеми объектами, фоном, шрифтами…), её можно выбрать где угодно ----- */
+const teSlideOk = (s) => s && TE_SLIDE_KINDS.includes(s.k);
+// Вид слайда: свой (slide.look) или «как сейчас по теме»
+const teLookOf = (item, s) => (s.look ? clone(s.look) : teMakeLook(item, s));
+const teSlideName = (item, s) => (s.label ? s.label : `${Slides.SLIDE_NAMES[s.k] || 'Слайд'} ${item.slides.indexOf(s) + 1}`);
+// slides — какие слайды становятся шаблонами (один — тема из одного шаблона)
+function teLookTheme(item, slides, name) {
+  const templates = slides.map((s) => {
+    const look = teLookOf(item, s);
+    return Themes.tpl({ ...look, id: '', name: slides.length > 1 ? teSlideName(item, s) : 'Основной', use: 'any', objs: (look.objs || []).map((o) => ({ ...clone(o), id: '' })) });
+  });
+  return Themes.ensure({ id: newId(), name, style: { ...THEME_DEFAULTS }, templates });
+}
+async function teSlideSaveTheme(item, slides) {
+  slides = (slides || item.slides).filter(teSlideOk);
+  if (!slides.length) return;
+  const name = await askName('Название новой темы', item.name + (slides.length === 1 && item.slides.length > 1 ? ' — ' + teSlideName(item, slides[0]) : ''));
+  if (!name) return;
+  const t = teLookTheme(item, slides, name);
+  lib.themes.push(t);
+  saveLib();
+  window.api.sendThemes(clone(appliedThemes()));
+  if (tab === 'themes') teRenderAll();
+  flashStatus(`Тема «${t.name}» сохранена в свои темы — её можно выбрать для любой презентации · Ctrl+Z — вернуть`);
+  return t;
+}
+function teSlideExportTheme(item, slides) {
+  slides = (slides || item.slides).filter(teSlideOk);
+  if (slides.length) teExport([teLookTheme(item, slides, item.name)]);
+}
+// Слайд — ссылка на него; null — вся презентация
+function teSlideMenu(e, item, s) {
+  const n = item.slides.filter(teSlideOk).length;
+  showMenu(e, [
+    ...(s ? [
+      { label: 'Сохранить как тему…', title: 'Вид этого слайда станет своей темой — её можно выбрать для любой презентации', fn: () => teSlideSaveTheme(item, [s]) },
+      { label: 'Экспортировать как тему…', fn: () => teSlideExportTheme(item, [s]) },
+      '-',
+    ] : []),
+    { label: `Сохранить презентацию как тему (шаблонов: ${n})…`, disabled: !n, title: 'Каждый слайд — отдельный шаблон новой темы', fn: () => teSlideSaveTheme(item) },
+    { label: 'Экспортировать презентацию как тему…', disabled: !n, fn: () => teSlideExportTheme(item) },
+  ]);
+}
+
+/* ----- Шаблон перетащить на другую тему: копия в неё (Shift — перенести из своей темы) ----- */
+let teDragTpl = null; // { t, tpl }
+function teDropTpl(target, move) {
+  const d = teDragTpl;
+  teDragTpl = null;
+  if (!d || !target || target === d.t || target.std || target.ext) return;
+  const c = Themes.tpl({ ...clone(d.tpl), id: move ? d.tpl.id : '', objs: d.tpl.objs.map((o) => ({ ...clone(o), id: '', group: '' })) });
+  const canMove = move && !d.t.std && !d.t.ext && d.t.templates.length > 1;
+  if (move && !canMove) c.id = Themes.newId();
+  Themes.ensure(target).templates.push(c);
+  if (canMove) {
+    d.t.templates = d.t.templates.filter((x) => x !== d.tpl);
+    if (teTplId === d.tpl.id) teTplId = '';
+  }
+  teThemeId = target.id;
+  teTplId = c.id;
+  teSel = [];
+  teSave();
+  teOpen();
+  flashStatus(`Шаблон «${c.name}» ${canMove ? 'перенесён' : 'скопирован'} в тему «${target.name}» · Ctrl+Z — вернуть`);
 }
 
 function teRenderList() {
@@ -375,30 +446,45 @@ function teRenderList() {
   const card = (t) => {
     const c = teEl('div', 'te-theme' + (t.id === teThemeId ? ' sel' : ''));
     const h = teEl('div', 'th-head');
-    h.title = t.std ? 'Стандартная тема: только чтение — правьте свою копию' : 'Двойной щелчок — переименовать, правая кнопка — меню';
+    const ro = !!(t.std || t.ext);
+    h.title = t.std ? 'Стандартная тема: только чтение — правьте свою копию'
+      : t.ext ? `Тема пришла с презентацией${t.ext.from ? ` «${t.ext.from}»` : ''} — её нет среди своих. Правая кнопка → «Сохранить в темы»` : 'Двойной щелчок — переименовать, правая кнопка — меню';
     const nm = teEl('span', 'nm', t.name);
     const tpl0 = Themes.templatesOf(t)[0];
     h.append(teMini(tpl0 ? teContent(t, tpl0, true) : { ...TE_SAMPLES.song, style: { ...THEME_DEFAULTS, ...t.style } }, t), nm);
     if (t.std) h.append(teEl('span', 'std', 'стандартная'));
+    else if (t.ext) h.append(teEl('span', 'std dirty', 'не сохранена'));
     else if (teDirty(t)) h.append(Object.assign(teEl('span', 'std dirty', 'не применена'), { title: 'Есть правки, которых ещё нет на экране — «Применить тему»' }));
     h.addEventListener('click', () => { if (teThemeId === t.id) return; teThemeId = t.id; teTplId = ''; teSel = []; teOpen(); });
-    h.addEventListener('dblclick', () => { if (!t.std) teRename(nm, t.name, (v) => { t.name = v; }); });
+    h.addEventListener('dblclick', () => { if (!ro) teRename(nm, t.name, (v) => { t.name = v; }); });
     h.addEventListener('contextmenu', (e) => { e.preventDefault(); teThemeMenu(e, t); });
+    // Сюда можно бросить шаблон, перетащенный из другой темы (только в свою тему)
+    h.addEventListener('dragover', (e) => {
+      if (!teDragTpl || ro || teDragTpl.t === t) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = e.shiftKey ? 'move' : 'copy';
+      h.classList.add('drop');
+    });
+    h.addEventListener('dragleave', () => h.classList.remove('drop'));
+    h.addEventListener('drop', (e) => { e.preventDefault(); h.classList.remove('drop'); teDropTpl(t, e.shiftKey); });
     c.append(h);
     if (t.id === teThemeId) {
       const list = teEl('div', 'te-tpls');
       for (const tpl of Themes.templatesOf(t)) {
         const r = teEl('div', 'te-tpl' + (tpl.id === teTplId ? ' sel' : ''));
-        r.title = 'Двойной щелчок — переименовать, правая кнопка — копия, порядок, удалить';
+        r.title = 'Двойной щелчок — переименовать, правая кнопка — копия, порядок, удалить. Перетащить на другую свою тему — копия туда (с Shift — перенести)';
+        r.draggable = true;
+        r.addEventListener('dragstart', (e) => { teDragTpl = { t, tpl }; e.dataTransfer.effectAllowed = 'copyMove'; e.dataTransfer.setData('text/plain', tpl.name); });
+        r.addEventListener('dragend', () => { teDragTpl = null; box.querySelectorAll('.th-head.drop').forEach((x) => x.classList.remove('drop')); });
         const n = teEl('span', 'nm', tpl.name);
         n.append(teEl('small', null, Themes.USES[tpl.use] || ''));
         r.append(teMini(teContent(t, tpl, true), t), n);
         r.addEventListener('click', () => { if (teTplId === tpl.id) return; teTplId = tpl.id; teSel = []; teRenderAll(); });
-        r.addEventListener('dblclick', () => { if (!t.std) teRename(n, tpl.name, (v) => { tpl.name = v; }); });
+        r.addEventListener('dblclick', () => { if (!ro) teRename(n, tpl.name, (v) => { tpl.name = v; }); });
         r.addEventListener('contextmenu', (e) => { e.preventDefault(); teTplMenu(e, t, tpl); });
         list.append(r);
       }
-      if (!t.std) {
+      if (!ro) {
         const add = teEl('div', 'te-tpl add', '+ Шаблон');
         add.title = 'Новый шаблон слайда в этой теме (правая кнопка — взять из другой темы)';
         add.addEventListener('click', teAddTpl);
@@ -411,6 +497,12 @@ function teRenderList() {
   };
   if (teThemes().length) box.append(teEl('div', 'te-group-title', 'Свои темы'));
   teThemes().forEach(card);
+  if (teExtThemes().length) {
+    const g = teEl('div', 'te-group-title', 'Из презентаций');
+    g.title = 'Темы из импортированных презентаций, которых нет среди своих. Правая кнопка по теме → «Сохранить в темы»';
+    box.append(g);
+    teExtThemes().forEach(card);
+  }
   box.append(teEl('div', 'te-group-title', 'Стандартные'));
   Themes.BUILTIN.forEach(card);
   teFitMinis(box);
@@ -511,21 +603,96 @@ function teTplFromMenu(e) {
 
 function teThemeMenu(e, t) {
   const useFor = (k, name) => ({ label: `Тема по умолчанию: ${name}${lib.themeFor[k] === t.id ? ' ✓' : ''}`, fn: () => { lib.themeFor[k] = t.id; teSave(); teRenderInsp(); flashStatus(`«${t.name}» — тема по умолчанию: ${name}`); } });
+  if (t.ext) { // тема из чужой презентации: сохранить в свои, экспорт, убрать
+    showMenu(e, [
+      { label: 'Сохранить в темы', title: 'Тема станет своей (со всеми настройками) — её можно менять и выбирать для других презентаций', fn: () => teSaveExt(t) },
+      { label: 'Экспортировать тему…', fn: () => teExport([t]) },
+      '-',
+      { label: 'Убрать из списка…', fn: () => teDropExt(t) },
+    ]);
+    return;
+  }
   showMenu(e, [
+    { label: 'Сохранить тему', title: teSaveTitle(t), fn: () => teSaveTheme(t) },
+    { label: 'Сохранить как новую тему…', fn: () => teSaveAs(t) },
+    { label: 'Экспортировать тему…', fn: () => teExport([t]) },
+    '-',
     { label: t.std ? 'Сделать свою копию' : 'Копия темы', fn: () => teCopyTheme(t) },
     ...(t.std ? [] : [{ label: 'Переименовать', fn: () => { const n = $('teThemes').querySelector('.te-theme.sel .th-head .nm'); if (n) teRename(n, t.name, (v) => { t.name = v; }); } }]),
     '-',
     useFor('song', 'песни'), useFor('bible', 'Библия'), useFor('media', 'картинки и видео'), useFor('custom', 'свои слайды'),
     '-',
-    { label: 'Экспорт темы в файл…', fn: () => teExport([t]) },
     { label: 'Импорт тем из файла…', fn: teImport },
     ...(teThemes().length ? [{ label: 'Экспорт всех своих тем…', fn: () => teExport(teThemes()) }] : []),
     ...(t.std ? [] : ['-', { label: 'Удалить тему', fn: () => teDelTheme(t) }]),
   ]);
 }
+
+/* ===== Сохранить тему ===== */
+
+// «Сохранить тему»: своя — правки сохраняются и идут на экран (как «Применить тему»); стандартная — своей копией;
+// из чужой презентации — в свои темы
+const teSaveTitle = (t) => (t.ext ? 'Сохранить тему из презентации в свои темы'
+  : t.std ? 'Стандартную тему менять нельзя — сохранится своя копия'
+    : 'Сохранить правки темы и показать их на экране');
+function teSaveTheme(t = teTheme()) {
+  if (!t || t.slide) return;
+  if (t.ext) { teSaveExt(t); return; }
+  if (t.std) { teCopyTheme(t); return; }
+  if (teSlide) teSlideLeave();
+  if (t.id !== teThemeId) { teThemeId = t.id; teTplId = ''; teSel = []; teOpen(); }
+  flushLib();
+  if (teDirty(t)) teApply();
+  else flashStatus(`Тема «${t.name}» сохранена в библиотеке тем`);
+}
+// Под новым именем — отдельный пресет (своя тема с новым id)
+async function teSaveAs(t = teTheme()) {
+  if (!t || t.slide) return;
+  const name = await askName('Название новой темы', t.name.replace(/ \(стандартная\)$/, '') + ' (копия)');
+  if (!name) return;
+  const c = Themes.ensure({ ...Themes.copy(t), name });
+  lib.themes.push(c);
+  teThemeId = c.id;
+  teTplId = '';
+  teSel = [];
+  teSave();
+  teOpen();
+  flashStatus(`Тема «${c.name}» сохранена — её можно менять`);
+}
+// Тема из чужой презентации → своя: всё оформление (шаблоны, объекты, фон, шрифты, размеры, отступы, прозрачность,
+// размытие…) копией как есть, id прежний — презентации, где она выбрана, так и показываются ею
+function teSaveExt(t) {
+  if (!t || !t.ext || !lib) return;
+  const c = Themes.ensure(clone(t));
+  delete c.ext;
+  delete c.std;
+  if (lib.themes.some((x) => x.name === c.name)) c.name += ' (из презентации)';
+  lib.extThemes = teExtThemes().filter((x) => x !== t);
+  lib.themes.push(c);
+  if (lib.themesLive) delete lib.themesLive[c.id];
+  teThemeId = c.id;
+  teTplId = '';
+  teSel = [];
+  saveLib();
+  window.api.sendThemes(clone(appliedThemes()));
+  teOpen();
+  flashStatus(`Тема «${c.name}» сохранена в темы — её можно менять и выбирать для других презентаций · Ctrl+Z — вернуть`);
+}
+async function teDropExt(t) {
+  const used = Object.values(lib.items).filter((it) => it.theme === t.id || (it.slides || []).some((s) => s.theme === t.id)).length;
+  if (!(await askYes(`Убрать тему «${t.name}» из списка?` + (used ? ` Презентаций с ней: ${used} — они покажутся темой по умолчанию.` : ''), 'Убрать', true))) return;
+  lib.extThemes = teExtThemes().filter((x) => x !== t);
+  if (teThemeId === t.id) { teThemeId = ''; teSel = []; }
+  saveLib();
+  window.api.sendThemes(clone(appliedThemes()));
+  renderService();
+  teOpen();
+}
+
 function teTplMenu(e, t, tpl) {
   const list = t.templates;
   const i = list.indexOf(tpl);
+  if (t.ext) { showMenu(e, [{ label: 'Сохранить в темы', fn: () => teSaveExt(t) }]); return; }
   if (t.std) { showMenu(e, [{ label: 'Сделать свою копию темы', fn: () => teCopyTheme(t) }]); return; }
   showMenu(e, [
     { label: 'Копия шаблона', fn: () => { teEdit(() => { const c = Themes.tpl({ ...clone(tpl), id: '', name: tpl.name + ' (копия)', objs: tpl.objs.map((o) => ({ ...clone(o), id: '', group: '' })) }); list.splice(i + 1, 0, c); teTplId = c.id; teSel = []; }, { insp: true }); teRenderAll(); } },
@@ -558,7 +725,13 @@ async function teImport() {
 
 $('teAddTheme').addEventListener('click', () => { teSlideLeave(); teNewTheme(); });
 $('teImport').addEventListener('click', () => { teSlideLeave(); teImport(); });
-$('teExport').addEventListener('click', () => { const t = teTheme(); if (t) teExport([t]); });
+$('teExport').addEventListener('click', () => {
+  const r = teSlideRef();
+  if (r) { teSlideExportTheme(r.item, [r.slide]); return; } // свой вид слайда — как тема
+  const t = teTheme();
+  if (t) teExport([t]);
+});
+$('teSaveTheme').addEventListener('click', () => { const r = teSlideRef(); if (r) teSlideSaveTheme(r.item, [r.slide]); else teSaveTheme(); });
 
 /* ===== По центру: холст ===== */
 
@@ -1372,8 +1545,17 @@ function teRenderInsp() {
     ro.append(document.createElement('br'), b);
     box.append(ro);
   }
+  if (t.ext) {
+    const ro = teEl('div', 'te-ro', `«${t.name}» — тема из импортированной презентации${t.ext.from ? ` «${t.ext.from}»` : ''}, её нет среди своих тем. Презентация показывается ею. Чтобы менять тему и выбирать её для других презентаций — сохраните её в темы.`);
+    const b = teEl('button', 'primary', 'Сохранить в темы');
+    b.addEventListener('click', () => teSaveExt(t));
+    const x = teEl('button', null, 'Экспортировать тему…');
+    x.addEventListener('click', () => teExport([t]));
+    ro.append(document.createElement('br'), b, ' ', x);
+    box.append(ro);
+  }
   const fs = document.createElement('fieldset');
-  fs.disabled = !!t.std;
+  fs.disabled = !!(t.std || t.ext);
   box.append(fs);
   const sel = teSelObjs();
   if (!sel.length) teInspTemplate(fs, t, tpl);
@@ -1485,7 +1667,8 @@ function teInspTemplate(fs, t, tpl) {
   asp.addEventListener('change', () => teReshape(t, asp.value));
   U.row(b, 'Формат', asp);
   U.hint(b, 'Под какой экран тема: 16:9, квадрат 1:1… Смена формата переделывает все шаблоны: места объектов сохраняются, круги и фигуры не сплющиваются. Ctrl+Z — вернуть.');
-  U.btns(b, [['Копия темы', () => teCopyTheme(t), '', 'copy'], ['Копия под формат…', (e) => showMenu(e, Object.entries(Themes.ASPECTS).filter(([k]) => k !== Themes.aspectOf(t)).map(([k, n]) => ({ label: n, fn: () => teCopyTheme(t, k) }))), 'Новая тема — копия этой, переделанная под другой экран', 'copy'], ['Экспорт', () => teExport([t]), 'Сохранить тему в файл', 'export']]);
+  U.btns(b, [['Сохранить тему', () => teSaveTheme(t), teSaveTitle(t), 'done'], ['Сохранить как новую…', () => teSaveAs(t), 'Отдельная своя тема — копия этой под новым именем', 'copy'], ['Экспортировать тему…', () => teExport([t]), 'Сохранить тему в файл', 'export']]);
+  U.btns(b, [['Копия темы', () => teCopyTheme(t), '', 'copy'], ['Копия под формат…', (e) => showMenu(e, Object.entries(Themes.ASPECTS).filter(([k]) => k !== Themes.aspectOf(t)).map(([k, n]) => ({ label: n, fn: () => teCopyTheme(t, k) }))), 'Новая тема — копия этой, переделанная под другой экран', 'copy']]);
 
   // Не правка самой темы: можно и у стандартной (поэтому вне fieldset)
   b = U.sec(outer, 'Тема по умолчанию', false);
@@ -1936,7 +2119,10 @@ function teSyncBar() {
   const none = !teSel.length;
   document.querySelectorAll('#teAdd button').forEach((b) => { b.disabled = ro; });
   document.querySelectorAll('#teAlign button, #teOrder button').forEach((b) => { b.disabled = ro || none; });
-  $('teExport').disabled = !teTheme() || !!teSlide;
+  $('teExport').disabled = !teTheme();
+  $('teSaveTheme').disabled = !teTheme();
+  $('teSaveTheme').title = teSlide ? 'Сохранить вид слайда как тему' : teTheme() ? teSaveTitle(teTheme()) : '';
+  $('teExport').title = teSlide ? 'Экспортировать вид слайда как тему' : 'Экспорт открытой темы в файл';
   $('teSample').disabled = !!teSlide; // в режиме слайда на холсте — его настоящий текст
   if (teSlide) { // свой вид слайда: сохраняется сразу; «Обновить на экране» — если слайд сейчас показан
     const on = !!teSlideOnAir();

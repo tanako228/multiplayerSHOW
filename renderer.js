@@ -17,7 +17,7 @@ const DEFAULTS = {
   textFont: 'segoe', textScale: 100, textColor: '#ffffff', textBg: '#000000', showTr: true,
   trShort: false, // переводы сокращённо: «RST» вместо «Russian Synodal Translation»
   bibleId: null,
-  // Переводы на экране (как в ProPresenter), до 4 строк { id, text, ref }; первая — открытый перевод (id не нужен).
+  // Переводы на экране, до 4 строк { id, text, ref }; первая — открытый перевод (id не нужен).
   // text / ref — куда идут текст стиха и ссылка: 'auto' — обычное место, '' — нет, иначе — имя текстового окна шаблона темы Библии
   bSlots: null,
   // Длинный стих: 'fit' — уменьшать текст, 'split' — делить на слайды 7A, 7B…; пределы — мин. размер текста (% высоты экрана),
@@ -136,7 +136,7 @@ $('trShort').addEventListener('change', () => {
   flashStatus(settings.trShort ? 'Переводы — сокращённо' : 'Переводы — полным названием');
 });
 
-/* Окно «Библия»: какие переводы на экране и в какие окна темы (как в ProPresenter), деление длинных стихов */
+/* Окно «Библия»: какие переводы на экране и в какие окна темы, деление длинных стихов */
 const MAX_SLOTS = 4;
 function setBibleLook(key, value) {
   settings[key] = value;
@@ -485,7 +485,7 @@ prevWrap.addEventListener('contextmenu', (e) => { if (e.target.closest('#peek'))
 
 /* ---------- Блоки под «Предпросмотром» (aside > .as-blk): свой порядок — settings.asideOrder ----------
    Тянуть за ⠿ слева от блока выше/ниже или правой кнопкой по ⠿ / шапке блока → «Выше», «Ниже». Порядок — CSS order. */
-const BLK_NAMES = { layers: 'Слои', music: 'Проигрыватель', macros: 'Макросы', timers: 'Таймеры' };
+const BLK_NAMES = { layers: 'Слои', music: 'Проигрыватель', macros: 'Макросы', timers: 'Таймеры', voice: 'Библия по голосу' };
 const asideBlocks = () => [...document.querySelectorAll('aside > .as-blk')];
 function blkOrder() {
   const all = asideBlocks().map((b) => b.dataset.blk);
@@ -869,7 +869,7 @@ const textStyle = () => ({
 // Как рисовать стихи (scene.js, style.bible): куда идут текст и ссылка каждого перевода (строки окна «Библия»)
 const bibleLook = () => ({ slots: settings.bSlots.map((s) => ({ text: s.text, ref: s.ref })) });
 
-/* ---------- Слои вывода (Media Layers, как в ProPresenter) ----------
+/* ---------- Слои вывода (Media Layers) ----------
    Экран — стопка независимых слоёв снизу вверх. Вид слоя (LAYER_KINDS) решает, что в него идёт само;
    набор слоёв и их порядок — settings.layers (можно добавить ещё слой того же вида или новый вид — строкой в LAYER_KINDS).
    Показ в один слой не трогает остальные; очистка — по слою или всех сразу (clearScreen). */
@@ -3136,6 +3136,7 @@ function showSettingsSection(sec) {
   if (sec === 'output') fillAudioSinks();   // звук — в «Экран и вывод»
   if (sec === 'look') { renderUiColors(); renderPresets(); } // tools.js (пресеты настроек — в «Оформлении»)
   if (sec === 'data') renderRepo();         // tools.js
+  if (sec === 'profiles') renderProfiles(); // profpanel.js
   if (sec === 'update') renderUpdate();     // tools.js
 }
 

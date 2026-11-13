@@ -251,6 +251,12 @@ const Pen = (() => {
   /* ----- Слои пометок ----- */
 
   function overlays() {
+    // Песню перерисовали (пришло обновление) посреди линии: старый слой уходит вместе с захватом пальца —
+    // линию сохранить, иначе drawing «зависает» и дальше не рисуется ничего
+    if (drawing) finishStroke();
+    if (erasing) endErase();
+    pan = null;
+    ptrs.clear();
     under = S('svg', { class: 'mk mk-under', 'aria-hidden': 'true' });
     over = S('svg', { class: 'mk mk-over', 'aria-hidden': 'true' });
     ug = S('g');
@@ -270,7 +276,17 @@ const Pen = (() => {
     over.addEventListener('pointermove', onMove);
     over.addEventListener('pointerup', onUp);
     over.addEventListener('pointercancel', onUp);
-    over.addEventListener('lostpointercapture', (e) => { if (drawing && e.pointerId === drawing.id) finishStroke(); });
+    over.addEventListener('lostpointercapture', (e) => {
+      ptrs.delete(e.pointerId);
+      if (drawing && e.pointerId === drawing.id) finishStroke();
+      if (erasing && e.pointerId === erasing.id) endErase();
+    });
+    // Safari на iPad не всегда слушается touch-action у <svg>: вертикаль и диагональ уводили страницу в прокрутку,
+    // а прокрутка обрывала линию (pointercancel). Пока в руке предмет — касания листа целиком наши
+    // (листать — двумя пальцами, это делает panMove)
+    const own = (e) => { if (isOpen && over.classList.contains('on') && e.cancelable) e.preventDefault(); };
+    over.addEventListener('touchstart', own, { passive: false });
+    over.addEventListener('touchmove', own, { passive: false });
     setInput();
   }
   let raf = 0;
@@ -460,26 +476,33 @@ const Pen = (() => {
     const t = hand();
     over.classList.toggle('on', isOpen && (DRAW(t) || t === 'eraser'));
     over.classList.toggle('erase', isOpen && t === 'eraser');
+    document.body.classList.toggle('pen-ink', over.classList.contains('on'));
   }
   function local(e) {
     const br = body.getBoundingClientRect();
     return [e.clientX - br.left, e.clientY - br.top];
   }
-  // Стилус: касание кончиком (1) или обратным концом-ластиком (32). Кнопка в воздухе — не касание
-  const touching = (e) => e.pointerType !== 'pen' || (e.buttons & 33) !== 0;
+  // Стилус: касание кончиком (1) или обратным концом-ластиком (32). Кнопка в воздухе — не касание (touch.js)
+  const touching = TouchKit.touching;
+  const skipEdge = new Set(); // перо, которое только что двигало предмет: его «касание» из pointermove — не начало линии
   function onDown(e) {
+    if (e.type === 'pointerdown') skipEdge.delete(e.pointerId);
     if (!isOpen || !touching(e)) return;
+    // Палец или перо легли рядом с тонким предметом (мимо его рамки) — это «взять предмет», не линия по листу
+    if (e.type === 'pointerdown' && !drawing && !erasing && !pan && deskGrab(e)) return;
     if (e.pointerType === 'pen' && !penSeen) { penSeen = true; if (!penOnly) setPenOnly(true, true); }
     ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY, type: e.pointerType });
     const fingers = [...ptrs.values()].filter((p) => p.type === 'touch').length;
     if (e.pointerType === 'touch' && (penOnly || fingers >= 2)) {
       if (drawing && drawing.type === 'touch') cancelStroke();
       if (erasing && erasing.type === 'touch') endErase();
+      if (e.cancelable) e.preventDefault();
+      try { over.setPointerCapture(e.pointerId); } catch { /* уже */ } // отпустят вне листа — всё равно узнаем
       startPan(e);
       return;
     }
     if (drawing || erasing) return;
-    e.preventDefault();
+    if (e.cancelable) e.preventDefault();
     try { over.setPointerCapture(e.pointerId); } catch { /* уже */ }
     const [x, y] = local(e);
     if (eyedrop) { eyedrop = false; measure(); takeColor(x, y); return; }
@@ -511,11 +534,12 @@ const Pen = (() => {
   function onMove(e) {
     // Кнопку стилуса зажали в воздухе, потом коснулись (или подняли кончик, не отпуская кнопку) — это не down/up,
     // а move со сменой кнопки: e.button 0 — кончик, 5 — обратный конец
-    if (e.pointerType === 'pen' && (e.button === 0 || e.button === 5)) {
-      const mine = (drawing && drawing.id === e.pointerId) || (erasing && erasing.id === e.pointerId);
-      if (touching(e) && !mine) { onDown(e); return; }
-      if (!touching(e) && mine) { onUp(e); return; }
-    }
+    // (Safari на iPad ставит e.button = 0 и обычным движениям — касание без нажима и подъём без отрыва не считаем:
+    // иначе линия рвалась на куски, а перо, только что отпустившее предмет, оставляло след)
+    const mine = (drawing && drawing.id === e.pointerId) || (erasing && erasing.id === e.pointerId);
+    const edge = TouchKit.penEdge(e, mine);
+    if (edge === 'down' && !hold && !skipEdge.has(e.pointerId)) { onDown(e); return; }
+    if (edge === 'up') { onUp(e); return; }
     const q = ptrs.get(e.pointerId);
     if (q) { q.x = e.clientX; q.y = e.clientY; }
     if (pan && pan.ids.has(e.pointerId)) { panMove(); return; }
@@ -540,7 +564,8 @@ const Pen = (() => {
     ptrs.delete(e.pointerId);
     if (pan && pan.ids.has(e.pointerId)) { pan.ids.delete(e.pointerId); if (pan.ids.size) panReset(); else endPan(); return; }
     if (erasing && e.pointerId === erasing.id) { endErase(); return; }
-    if (drawing && e.pointerId === drawing.id) { if (e.type === 'pointercancel') cancelStroke(); else finishStroke(); }
+    // pointercancel (система забрала касание: жест iPadOS, ладонь) — нарисованное до этого оставить
+    if (drawing && e.pointerId === drawing.id) finishStroke();
   }
   function addPt(ev) {
     const [x, y] = local(ev);
@@ -996,7 +1021,7 @@ const Pen = (() => {
     if (!hold || hold.b || e.pointerId === hold.a.id) return;
     e.preventDefault();
     e.stopPropagation();
-    hold.b = { id: e.pointerId, x: e.clientX, y: e.clientY };
+    hold.b = { id: e.pointerId, type: e.pointerType, x: e.clientX, y: e.clientY };
     holdBase();
     hold.moved = true;
     hold.d.classList.add('drag');
@@ -1031,27 +1056,51 @@ const Pen = (() => {
     window.removeEventListener('pointerup', holdUp, holdOpt);
     window.removeEventListener('pointercancel', holdUp, holdOpt);
     h.d.classList.remove('drag');
+    if (h.a.type === 'pen') skipEdge.add(h.a.id); // до следующего настоящего касания пера (onDown)
     if (h.moved) saveLayout();
     else if (e.type === 'pointerup') pick(h.id);
   }
   let wheelT = 0;
+  // Взять предмет d (его картинка r) этим касанием
+  function grab(d, r, e) {
+    if (e.cancelable) e.preventDefault();
+    e.stopPropagation();
+    try { r.setPointerCapture(e.pointerId); } catch { /* уже */ }
+    const id = d.dataset.id;
+    const L = layout();
+    L[id][3] = zTop++;
+    d.style.zIndex = String(L[id][3]);
+    hold = { id, d, a: { id: e.pointerId, type: e.pointerType, x: e.clientX, y: e.clientY }, b: null, moved: false };
+    holdBase();
+    document.documentElement.classList.add('holding');
+    window.addEventListener('pointerdown', holdDown, holdOpt);
+    window.addEventListener('pointermove', holdPtr, holdOpt);
+    window.addEventListener('pointerup', holdUp, holdOpt);
+    window.addEventListener('pointercancel', holdUp, holdOpt);
+  }
+  // Касание листа рядом с предметом (тонкий стилус, край линейки): взять верхний из задетых. true — взяли
+  function deskGrab(e) {
+    if (!desk || desk.hidden || hold || e.button > 0) return false;
+    const pad = TouchKit.slop(e);
+    if (!pad) return false;
+    const s = scale();
+    let best = null;
+    for (const d of desk.children) {
+      const id = d.dataset.id;
+      const L = layout()[id];
+      const [w, h] = SIZE[id];
+      const k = d.classList.contains('on') ? 1.07 : 1;
+      if (!TouchKit.inRect(e.clientX, e.clientY, L[0] * innerWidth, L[1] * innerHeight, w * s * k, h * s * k, L[2], pad)) continue;
+      if (!best || (L[3] || 0) > (layout()[best.dataset.id][3] || 0)) best = d;
+    }
+    if (!best) return false;
+    grab(best, best.firstElementChild, e);
+    return true;
+  }
   function dragWire(d, r) {
     r.addEventListener('pointerdown', (e) => {
       if (e.button > 0 || hold) return;
-      e.preventDefault();
-      e.stopPropagation();
-      try { r.setPointerCapture(e.pointerId); } catch { /* уже */ }
-      const id = d.dataset.id;
-      const L = layout();
-      L[id][3] = zTop++;
-      d.style.zIndex = String(L[id][3]);
-      hold = { id, d, a: { id: e.pointerId, x: e.clientX, y: e.clientY }, b: null, moved: false };
-      holdBase();
-      document.documentElement.classList.add('holding');
-      window.addEventListener('pointerdown', holdDown, holdOpt);
-      window.addEventListener('pointermove', holdPtr, holdOpt);
-      window.addEventListener('pointerup', holdUp, holdOpt);
-      window.addEventListener('pointercancel', holdUp, holdOpt);
+      grab(d, r, e);
     });
     r.addEventListener('wheel', (e) => {
       e.preventDefault();
@@ -1418,6 +1467,11 @@ const Pen = (() => {
     // Песня поменяла размер (шрифт A−/A+, поворот, аккорды, заметка) — пометки на свои слова
     if ('ResizeObserver' in window) new ResizeObserver(() => { if (rec) sched(); }).observe($('songBody'));
     window.addEventListener('resize', () => { if (isOpen) { lay = null; placeAll(); } });
+    // Касание отпустили где угодно (не над листом, захват не удался) — забыть его, иначе следующий палец
+    // считался «вторым» и вместо линии лист листался
+    const forget = (e) => ptrs.delete(e.pointerId);
+    window.addEventListener('pointerup', forget, true);
+    window.addEventListener('pointercancel', forget, true);
     document.addEventListener('visibilitychange', () => { if (document.hidden) flush(); });
     window.addEventListener('pagehide', flush);
   }

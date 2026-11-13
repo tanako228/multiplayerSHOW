@@ -81,7 +81,7 @@
     aside .hint { color: var(--muted); font-size: 12px; line-height: 1.4; margin: 4px 0 0; }
     aside .group { border-top: 1px solid var(--line); padding-top: 14px; }
     #previewWrap { position: relative; width: 100%; background: #000; border-radius: calc(6px * var(--rk, 1)); overflow: hidden; }
-    /* Поле своей высоты: вокруг экрана серые поля, как в ProPresenter */
+    /* Поле своей высоты: вокруг экрана серые поля */
     #previewWrap.free { background: var(--field); }
     #previewWrap.free #peek, #previewWrap.free #prevScreen { background: transparent; }
     #prevGrip { height: 9px; margin: 0 0 -3px; cursor: ns-resize; position: relative; touch-action: none; }
@@ -300,7 +300,7 @@
     ::-webkit-scrollbar-thumb:hover { background-color: color-mix(in srgb, var(--muted) 75%, transparent); }
     .svc-files { flex: 1; min-width: 0; overflow-y: auto; position: relative; }
     .svc-files[hidden], .svc-main[hidden] { display: none; }
-    /* Левая колонка: сверху списки, снизу отдельно — содержание открытого плейлиста (как в ProPresenter) */
+    /* Левая колонка: сверху списки, снизу отдельно — содержание открытого плейлиста */
     .svc-col { width: var(--w, 240px); flex: none; display: flex; flex-direction: column; gap: 8px; min-height: 0; position: relative; }
     /* Списки — по своей высоте (до 45%), «Содержание» — остаток: длинная библиотека не выдавливает списки */
     .svc-col > .svc-side { width: auto; flex: 0 0 auto; max-height: 45%; }
@@ -414,7 +414,7 @@
     #svcFeed { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 0; padding-right: 4px; }
     .svc-empty { color: var(--muted); border: 2px dashed var(--line); border-radius: calc(10px * var(--rk, 1)); padding: 30px; text-align: center; line-height: 1.5; }
 
-    /* Пункт ленты как в ProPresenter: полоса-заголовок и под ней слайды, без подложки */
+    /* Пункт ленты: полоса-заголовок и под ней слайды, без подложки */
     .svc-item { padding-bottom: 16px; flex: none; }
     .svc-item.drop-item .svc-ihead { box-shadow: 0 -3px 0 0 var(--live); }
     .svc-ihead { display: flex; align-items: center; gap: 8px; padding: 5px 8px 5px 10px; margin-bottom: 8px; cursor: pointer; user-select: none;
@@ -887,6 +887,26 @@
     .ui-color { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 6px; }
     .ui-color code { color: var(--muted); font-size: 12px; min-width: 70px; text-align: right; }
     .parts { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 16px; margin: 6px 0 10px; }
+    /* Профили (profpanel.js) */
+    .prof-list { display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px; }
+    .prof-row { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border: 1px solid var(--line); border-radius: calc(6px * var(--rk, 1)); }
+    .prof-row.cur { border-color: var(--live); background: var(--live-soft); }
+    .prof-row .pr-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+    .prof-row .pr-tag { color: var(--muted); font-size: 12px; }
+    .prof-row button:disabled, .prof-own button:disabled { opacity: .4; cursor: default; }
+    .prof-table { overflow-x: auto; margin: 6px 0 10px; }
+    .prof-table table { border-collapse: collapse; min-width: 100%; }
+    .prof-table th, .prof-table td { padding: 5px 8px; border-bottom: 1px solid var(--line); text-align: center; white-space: nowrap; }
+    .prof-table th:first-child, .prof-table td:first-child { text-align: left; white-space: normal; }
+    .prof-table td small { color: var(--muted); }
+    .prof-table tr.grp td { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; border-bottom: 0; padding-top: 10px; }
+    .prof-pick { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 16px; margin: 6px 0 10px; }
+    .prof-pick b { grid-column: 1 / -1; margin-top: 6px; font-weight: 600; }
+    .prof-own .po-prof { font-weight: 600; margin: 8px 0 4px; }
+    .prof-own .po-row { display: flex; align-items: center; gap: 8px; padding: 3px 0 3px 12px; }
+    .prof-own .po-row span { flex: 1; }
+    .prof-own .po-row small { color: var(--muted); }
+    .svc-row .shared-mark { margin-left: 4px; color: var(--muted); font-size: 11px; }
     .parts label { color: var(--text); display: block; line-height: 1.35; }
     .parts small { color: var(--muted); display: block; margin-left: 22px; font-size: 11px; }
     .preset-row { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border: 1px solid var(--line); border-radius: calc(6px * var(--rk, 1)); margin-bottom: 6px; }
@@ -1510,6 +1530,7 @@
     .te-theme > .th-head { display: flex; align-items: center; gap: 8px; padding: 5px 6px; border-radius: calc(8px * var(--rk, 1)); cursor: pointer; }
     .te-theme > .th-head:hover { background: var(--field); }
     .te-theme.sel > .th-head { background: var(--field); }
+    .te-theme > .th-head.drop { outline: 2px dashed var(--live); outline-offset: -2px; }
     .te-theme.sel > .th-head .nm { color: var(--text); font-weight: 600; }
     .te-theme .nm { flex: 1; min-width: 0; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
     .te-theme .std { font-size: 10px; color: var(--muted); border: 1px solid var(--line); border-radius: calc(4px * var(--rk, 1)); padding: 0 5px; flex: none; }
@@ -2135,6 +2156,7 @@
             <button id="teAddTheme" class="icon-only" data-icon="add" title="Новая своя тема"></button>
             <button id="teImport" class="icon-only" data-icon="import" title="Импорт тем из файла (.json)"></button>
             <button id="teExport" class="icon-only" data-icon="export" title="Экспорт открытой темы в файл"></button>
+            <button id="teSaveTheme" class="icon-only" data-icon="done" title="Сохранить тему (из презентации — в свои темы, стандартную — своей копией)"></button>
           </div>
           <div class="te-themes" id="teThemes"></div>
           <div class="te-head te-objs-head">
@@ -2539,6 +2561,8 @@
         </div>
         <div id="tmRows"></div>
       </div>
+      <!-- Библия по голосу, перенесённая из плавающего окна (voice.js: settings.vcDock, рисует vcPaint в #vcDockIn) -->
+      <div id="vcBox" class="ly-box as-blk" data-blk="voice" hidden><div id="vcDockIn" class="vc-ui"></div></div>
     </aside>
   </div>
 
@@ -2616,6 +2640,7 @@
         <button data-sec="output" data-icon="show" aria-current="true">Показ и звук</button>
         <button data-sec="keys" data-icon="keys">Горячие клавиши</button>
         <button data-sec="look" data-icon="theme">Оформление</button>
+        <button data-sec="profiles" data-icon="profile">Профили</button>
         <button data-sec="data" data-icon="database">Репозиторий</button>
         <button data-sec="update" data-icon="update">Обновление</button>
       </nav>
@@ -2781,6 +2806,36 @@
             <p class="hint">Всё, что вы добавили (переводы, песни, плейлисты, темы, настройки), хранится в отдельной папке и не пропадает при обновлении программы.</p>
             <p class="hint" id="dataPath" style="margin:6px 0;word-break:break-all"></p>
             <div class="btns-row"><button id="dataOpen">Открыть папку с данными</button></div>
+          </div>
+        </section>
+        <section class="set-sec" data-sec="profiles" hidden>
+          <div class="set-group">
+            <h2>Профили</h2>
+            <p class="hint" style="margin-bottom:10px">Как пользователи Windows: у каждого профиля свои библиотеки, плейлисты, презентации, темы, макросы, экраны и настройки окна. Переключение — в этом же окне, без перезапуска: экраны показа продолжают работать.</p>
+            <div id="profList" class="prof-list"></div>
+            <div class="btns-row"><button id="profNew" class="primary" data-icon="add">Новый профиль…</button></div>
+          </div>
+          <div class="set-group" id="profNewBox" hidden>
+            <h2>Новый профиль</h2>
+            <div class="field"><span>Название</span><input id="profNewName" type="text" maxlength="60" placeholder="Например: Молодёжное служение"></div>
+            <p class="hint">Новый профиль пустой. Отметьте, что сделать общим с другими профилями: правка в одном профиле сразу видна во всех, где это подключено, — без импорта и экспорта.</p>
+            <div id="profNewPick" class="prof-pick"></div>
+            <div class="btns-row">
+              <button id="profNewOpen" class="primary">Создать и открыть</button>
+              <button id="profNewGo">Создать</button>
+              <button id="profNewCancel">Отмена</button>
+            </div>
+          </div>
+          <div class="set-group">
+            <h2>Общие данные</h2>
+            <p class="hint">Галочка — профиль видит это и может править; правки сразу видны всем отмеченным. Снять галочку — отключить профиль (ему можно оставить свою копию). Общие данные хранятся один раз, отдельно от профилей, и не удаляются вместе с профилем.</p>
+            <div id="profShared" class="prof-table"></div>
+          </div>
+          <div class="set-group">
+            <h2>Свои библиотеки</h2>
+            <p class="hint">Библиотеки, которые есть только у одного профиля. «Общая с…» — подключить её другому профилю.</p>
+            <div id="profOwn" class="prof-own"></div>
+            <p class="hint">Переводы Библии, шрифты, медиафайлы и ноты — общие для всей программы: лежат на диске один раз, их видят все профили.</p>
           </div>
         </section>
         <section class="set-sec" data-sec="update" hidden>
@@ -3295,7 +3350,7 @@
         <label class="check"><input type="checkbox" id="trShort"> Названия переводов сокращённо <span class="hint">(RST вместо Russian Synodal Translation — в кнопках переводов и на экране)</span></label>
       </div>
       <div class="tr-show col" id="parBox">
-        <div class="line"><span>Переводы на экране</span> <span class="hint">(до 4, как в ProPresenter: в какое текстовое окно темы идёт стих и в какое — ссылка)</span></div>
+        <div class="line"><span>Переводы на экране</span> <span class="hint">(до 4: в какое текстовое окно темы идёт стих и в какое — ссылка)</span></div>
         <div class="line">
           <label>Тема <select id="bThemeSel" title="Тема для Библии (та же, что «Тема по умолчанию: Библия» во «Темах»)"></select></label>
           <label>Шаблон <select id="bTplSel" title="Шаблон темы для Библии — из его текстовых окон выбираются «Стих» и «Ссылка»"></select></label>
@@ -3360,6 +3415,7 @@
   <script src="songs.js"></script>
   <script src="songimport.js"></script>
   <script src="tools.js"></script>
+  <script src="profpanel.js"></script>
   <script src="music.js"></script>
   <script src="sources.js"></script>
   <script src="layers.js"></script>

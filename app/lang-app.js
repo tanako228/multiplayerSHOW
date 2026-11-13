@@ -388,6 +388,8 @@ I18n.add({
 "По ширине":["Fit width","Laiuse järgi"],
 "Вся страница":["Whole page","Terve lehekülg"],
 "Весь экран":["Full screen","Täisekraan"],
+"Обычный экран":["Exit full screen","Välju täisekraanilt"],
+"Этот телефон не пускает во весь экран":["This device does not allow full screen","See seade ei luba täisekraani"],
 "Вокалист":["Vocalist","Vokalist"],
 "Лидер":["Leader","Juht"],
 "Звук":["Sound","Heli"],

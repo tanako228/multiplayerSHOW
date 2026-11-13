@@ -151,7 +151,7 @@ const Sheets = (() => {
   function setFs(on) {
     fsOn = !!on && !!cv && list(cv).length > 0;
     $('shDlg').classList.toggle('fs', fsOn);
-    if (!fsOn && document.fullscreenElement) document.exitFullscreen().catch(() => {});
+    if (!fsOn) TouchKit.fsExit();
     paint();
     if (fsOn) showBar(2800);
   }
@@ -162,7 +162,7 @@ const Sheets = (() => {
     const st = $('shStage');
     st.className = 'sh-stage ' + fit();
     $('shFit').textContent = fit() === 'width' ? 'Вся страница' : 'По ширине';
-    $('shFull').hidden = !document.fullscreenEnabled;
+    paintFull();
     $('shPg').textContent = `${pg + 1} / ${items.length}`;
     const img = $('shImg');
     const my = ++fsTok;
@@ -179,6 +179,21 @@ const Sheets = (() => {
     paintFs();
     showBar(1200);
   }
+  // Кнопка «Весь экран»: есть только там, где браузер умеет (iPhone — нет; iPad до 16.4 — с приставкой webkit, touch.js).
+  // Во весь экран — блок нот внутри окна (.sh-fs), а не <html>: окно <dialog> в верхнем слое, и <html> под ним
+  // в Safari / Chrome то не разворачивался, то закрывал ноты — нажимали второй раз
+  const fsBox = () => document.querySelector('#shDlg .sh-fs');
+  function paintFull() {
+    const b = $('shFull');
+    b.hidden = !TouchKit.fsCan(fsBox());
+    b.textContent = TouchKit.fsElement() ? 'Обычный экран' : 'Весь экран';
+  }
+  function toggleFull() {
+    // Сразу, в самом обработчике нажатия: после await/таймера Safari уже не считает это нажатием
+    if (TouchKit.fsElement()) TouchKit.fsExit();
+    else TouchKit.fsEnter(fsBox()).catch(() => toast('Этот телефон не пускает во весь экран'));
+    showBar(2800);
+  }
   // Свайп/касание. Решает направление движения, а не точность линии: уверенный горизонтальный жест листает, даже кривой.
   let tp = null;
   function wireFs() {
@@ -187,6 +202,9 @@ const Sheets = (() => {
       if (e.target.closest('button')) return;
       if (tp) { tp.multi = true; return; }
       tp = { id: e.pointerId, x: e.clientX, y: e.clientY, t: Date.now(), max: 0, multi: false };
+      // Отпустят над панелью или за краем — pointerup всё равно придёт сюда. Раньше tp оставался «висеть»,
+      // и все следующие касания считались вторым пальцем: панель с кнопками больше не появлялась
+      try { st.setPointerCapture(e.pointerId); } catch { /* уже */ }
     });
     st.addEventListener('pointermove', (e) => {
       if (tp && e.pointerId === tp.id) tp.max = Math.max(tp.max, Math.abs(e.clientX - tp.x), Math.abs(e.clientY - tp.y));
@@ -210,15 +228,16 @@ const Sheets = (() => {
     };
     st.addEventListener('pointerup', (e) => end(e, false));
     st.addEventListener('pointercancel', (e) => end(e, true));
+    // Подстраховка: касание кончилось, а сюда не дошло (захват не сработал) — забыть его
+    st.addEventListener('lostpointercapture', (e) => { if (tp && e.pointerId === tp.id) tp = null; });
     $('shFsExit').onclick = () => $('shDlg').close();
     $('shFit').onclick = () => { try { localStorage.setItem('mps.sheetFit', fit() === 'width' ? 'page' : 'width'); } catch { /* нет доступа */ } paintFs(); showBar(2800); };
-    $('shFull').onclick = () => {
-      if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
-      else document.documentElement.requestFullscreen().catch(() => toast('Этот телефон не пускает во весь экран'));
-      showBar(2800);
-    };
+    $('shFull').onclick = toggleFull;
+    // Отказ: у стандартного API о нём скажет обещание (toggleFull), у webkit-приставки обещания нет — только событие
+    const noPromise = !(fsBox() && typeof fsBox().requestFullscreen === 'function');
+    TouchKit.fsListen(() => { paintFull(); if (fsOn) showBar(2800); }, () => { paintFull(); if (noPromise) toast('Этот телефон не пускает во весь экран'); });
     $('shFsOn').onclick = () => setFs(true);
-    $('shDlg').addEventListener('close', () => { fsOn = false; $('shDlg').classList.remove('fs'); if (document.fullscreenElement) document.exitFullscreen().catch(() => {}); });
+    $('shDlg').addEventListener('close', () => { fsOn = false; tp = null; $('shDlg').classList.remove('fs'); TouchKit.fsExit(); });
     $('shDlg').addEventListener('keydown', (e) => {
       if (!fsOn || e.ctrlKey || e.metaKey || e.altKey) return;
       const k = e.code;

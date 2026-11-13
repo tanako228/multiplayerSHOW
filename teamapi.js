@@ -365,20 +365,22 @@ function apply(lib) {
 }
 
 // Библиотека поменялась (lib:save или файл заменили — восстановление из репозитория) — разобрать заново
+// Файл библиотеки открытого профиля (main.js передаёт функцию: профиль можно переключить на ходу)
+const libPath = () => (typeof o.libFile === 'function' ? o.libFile() : o.libFile);
 function refresh() {
   let m = 0;
-  try { m = fs.statSync(o.libFile).mtimeMs; } catch { m = 0; }
+  try { m = fs.statSync(libPath()).mtimeMs; } catch { m = 0; }
   if (m === libSeen) return;
   let data = null;
   if (fresh && fresh.mtime === m) data = fresh.data;
-  else if (m) { try { data = JSON.parse(fs.readFileSync(o.libFile, 'utf8')); } catch { return; } } // пишется — в другой раз
+  else if (m) { try { data = JSON.parse(fs.readFileSync(libPath(), 'utf8')); } catch { return; } } // пишется — в другой раз
   fresh = null;
   libSeen = m;
   apply(data || {});
 }
 function libSaved(data) {
   let m = 0;
-  try { m = fs.statSync(o.libFile).mtimeMs; } catch { /* нет файла */ }
+  try { m = fs.statSync(libPath()).mtimeMs; } catch { /* нет файла */ }
   fresh = data && typeof data === 'object' ? { data, mtime: m } : null;
   // Кто-то на связи — сказать сразу (через 1,5 с: правки идут пачкой, разбор ~35 мс)
   if (socks.size) { clearTimeout(pushT); pushT = setTimeout(pushLib, 1500); }

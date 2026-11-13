@@ -2,11 +2,13 @@
    Программа слушает проповедника (микрофон → скрытое окно voice.html → Vosk, без интернета; voicesrv.js)
    и, когда он называет место («Иоанна три шестнадцать», «Римлянам 8:28», «шестнадцатый стих третьей главы
    от Иоанна», «John three sixteen»), предлагает оператору этот стих одной кнопкой «Показать».
-   Сам на экран ничего не выводит. Панель #vcPanel — плавающая (тянуть за шапку), место — settings.vcPos.
+   Сам на экран ничего не выводит. Панель — плавающая #vcPanel (тянуть за шапку, место — settings.vcPos) или блок #vcBox
+   под предпросмотром (settings.vcDock, кнопка в шапке панели). Рисуется в vcHost() — одно и то же в обоих местах.
    Настройки — settings.voice = { lang: 'ru'|'en'|'de', mic: { id, label } }. Разбор речи — vcFind (числа словами → цифры). */
 
 let vcState = 'off'; // off | loading | on | error
 let vcHeard = '';    // последнее услышанное (частично)
+const VC_KEEP = 40;  // сколько мест держать в списке (видно одно целиком и половину следующего, остальные — прокруткой)
 let vcSugs = [];     // [{ bi, ci, v1, v2, ref, text, at }] — найденные места, новые сверху
 let vcModels = null; // из voicesrv: { models: [{ id, name, mb, have }] }
 let vcGetting = null; // { lang, got, total, unpack }
@@ -299,7 +301,7 @@ function vcResolve(r) {
 
 window.api.onVoiceText((m) => {
   if (!m) return;
-  if (m.level != null) { vcLevel = m.level; const l = document.querySelector('#vcPanel .vc-lvl > i'); if (l) { l.style.width = Math.min(100, m.level * 160) + '%'; l.parentNode.classList.toggle('clip', !!m.clip); l.parentNode.title = 'Уровень после автоусиления' + (m.gain ? ` (×${m.gain})` : '') + (m.clip ? ' — вход перегружен!' : ''); } return; }
+  if (m.level != null) { vcLevel = m.level; const l = document.querySelector('.vc-ui .vc-lvl > i'); if (l) { l.style.width = Math.min(100, m.level * 160) + '%'; l.parentNode.classList.toggle('clip', !!m.clip); l.parentNode.title = 'Уровень после автоусиления' + (m.gain ? ` (×${m.gain})` : '') + (m.clip ? ' — вход перегружен!' : ''); } return; }
   if (m.warn) { vcWarn = m.warn; flashStatus('Голос: ' + m.warn); vcPaint(); return; }
   if (m.state) {
     vcState = m.state === 'off' ? 'off' : m.state;
@@ -324,7 +326,7 @@ window.api.onVoiceText((m) => {
     vcSugs.unshift({ ...x, at: Date.now() });
     vcCtxSet(x.bi, x.ci, x.whole ? 0 : x.v2);
   }
-  vcSugs = vcSugs.slice(0, 6);
+  vcSugs = vcSugs.slice(0, VC_KEEP);
   vcPaint(true);
 });
 window.api.onVoiceProgress((p) => { vcGetting = p; vcPaint(); });
@@ -372,46 +374,75 @@ function vcPeek(s) { openChapter(s.bi, s.ci); if (!s.whole) { refSel = { v1: s.v
   const css = svEl('style');
   css.textContent = `
     #vcPanel { position: fixed; z-index: 60; width: 340px; background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: calc(10px * var(--rk, 1)); box-shadow: 0 10px 34px rgba(0,0,0,.45); font-size: 13px; }
-    #vcPanel .vc-head { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-bottom: 1px solid var(--line); cursor: move; user-select: none; }
-    #vcPanel .vc-head b { flex: 1; }
-    #vcPanel .vc-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); flex: none; }
-    #vcPanel .vc-tg.on { background: var(--live); border-color: var(--live); color: #fff; }
-    #vcPanel .vc-tg.loading { border-color: var(--warn); }
-    #vcPanel .vc-dot.on { background: var(--live); box-shadow: 0 0 8px var(--live); }
-    #vcPanel .vc-dot.loading { background: var(--warn); }
-    #vcPanel .vc-body { padding: 8px 10px; display: flex; flex-direction: column; gap: 8px; max-height: 56vh; overflow-y: auto; }
-    #vcPanel .vc-heard { color: var(--muted); font-style: italic; min-height: 18px; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
-    #vcPanel .vc-lvl { height: 4px; background: var(--field); border-radius: 2px; overflow: hidden; }
-    #vcPanel .vc-lvl > i { display: block; height: 100%; width: 0; background: var(--live); transition: width .2s; }
-    #vcPanel .vc-lvl.clip > i { background: #d6453d; }
-    #vcPanel .vc-sugs { display: flex; flex-direction: column; gap: 8px; }
-    #vcPanel .vc-sugs:empty { display: none; }
-    #vcPanel .vc-sug { border: 1px solid var(--line); border-radius: calc(8px * var(--rk, 1)); padding: 7px 8px; display: flex; flex-direction: column; gap: 5px; }
-    #vcPanel .vc-sug.new { border-color: var(--live); }
-    #vcPanel .vc-sug .rf { font-weight: 700; font-size: 14px; }
-    #vcPanel .vc-sug .tx { color: var(--muted); overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
-    #vcPanel .vc-sug .bt { display: flex; gap: 6px; }
-    #vcPanel .vc-sug .bt .primary { flex: 1; }
-    #vcPanel .vc-err { color: var(--warn); font-weight: 600; margin: 0; }
-    #vcPanel .vc-warn { color: var(--warn); font-size: 12px; }
-    #vcPanel .vc-bar { height: 6px; background: var(--field); border-radius: 3px; overflow: hidden; }
-    #vcPanel .vc-bar > i { display: block; height: 100%; background: var(--live); }
-    #vcPanel select { max-width: 100%; }
-    #vcPanel .vc-wd { padding: 3px 6px; display: inline-flex; align-items: center; }
-    #vcPanel .vc-wd.on { background: var(--live); border-color: var(--live); }
-    #vcPanel .vc-wdl { color: var(--muted); font-size: 12px; }
-    #vcPanel .vc-sug .top { display: flex; align-items: center; gap: 6px; }
-    #vcPanel .vc-by { font-size: 11px; padding: 1px 7px; border-radius: 9px; background: var(--field); color: var(--muted); white-space: nowrap; }
+    .vc-ui .vc-head { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-bottom: 1px solid var(--line); cursor: move; user-select: none; }
+    .vc-ui .vc-head b { flex: 1; }
+    .vc-ui .vc-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); flex: none; }
+    .vc-ui .vc-tg.on { background: var(--live); border-color: var(--live); color: #fff; }
+    .vc-ui .vc-tg.loading { border-color: var(--warn); }
+    .vc-ui .vc-dot.on { background: var(--live); box-shadow: 0 0 8px var(--live); }
+    .vc-ui .vc-dot.loading { background: var(--warn); }
+    .vc-ui .vc-body { padding: 8px 10px; display: flex; flex-direction: column; gap: 8px; max-height: 56vh; overflow-y: auto; }
+    .vc-ui .vc-heard { color: var(--muted); font-style: italic; min-height: 18px; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+    .vc-ui .vc-lvl { height: 4px; background: var(--field); border-radius: 2px; overflow: hidden; }
+    .vc-ui .vc-lvl > i { display: block; height: 100%; width: 0; background: var(--live); transition: width .2s; }
+    .vc-ui .vc-lvl.clip > i { background: #d6453d; }
+    .vc-ui .vc-sugs { display: flex; flex-direction: column; gap: 8px; }
+    .vc-ui .vc-sugs:empty { display: none; }
+    .vc-ui .vc-sug { border: 1px solid var(--line); border-radius: calc(8px * var(--rk, 1)); padding: 7px 8px; display: flex; flex-direction: column; gap: 5px; }
+    .vc-ui .vc-sug.new { border-color: var(--live); }
+    .vc-ui .vc-sug .rf { font-weight: 700; font-size: 14px; }
+    .vc-ui .vc-sug .tx { color: var(--muted); overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+    .vc-ui .vc-sug .bt { display: flex; gap: 6px; }
+    .vc-ui .vc-sug .bt .primary { flex: 1; }
+    .vc-ui .vc-err { color: var(--warn); font-weight: 600; margin: 0; }
+    .vc-ui .vc-warn { color: var(--warn); font-size: 12px; }
+    .vc-ui .vc-bar { height: 6px; background: var(--field); border-radius: 3px; overflow: hidden; }
+    .vc-ui .vc-bar > i { display: block; height: 100%; background: var(--live); }
+    .vc-ui select { max-width: 100%; }
+    .vc-ui .vc-wd { padding: 3px 6px; display: inline-flex; align-items: center; }
+    .vc-ui .vc-wd.on { background: var(--live); border-color: var(--live); }
+    .vc-ui .vc-wdl { color: var(--muted); font-size: 12px; }
+    .vc-ui .vc-sug .top { display: flex; align-items: center; gap: 6px; }
+    .vc-ui .vc-by { font-size: 11px; padding: 1px 7px; border-radius: 9px; background: var(--field); color: var(--muted); white-space: nowrap; }
+    .vc-ui .vc-lh { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; }
+    .vc-ui .vc-lh span { flex: 1; }
+    .vc-ui .vc-lh:empty { display: none; }
+    .vc-ui .vc-sugs { overflow-y: auto; overscroll-behavior: contain; padding-right: 2px; }
+    .vc-ui .vc-dk { padding: 3px 6px; display: inline-flex; align-items: center; }
+    #vcDockIn .vc-head { cursor: default; padding: 4px 6px 6px; }
+    #vcDockIn .vc-head b { font-size: 11px; font-weight: 400; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); } /* как «Макросы», «Таймеры» */
+    #vcDockIn .vc-body { max-height: none; overflow: visible; padding: 6px 4px 4px; }
   `;
   document.head.append(css);
 })();
 
+// Где панель: блок под предпросмотром (#vcBox → #vcDockIn) или плавающее окно #vcPanel
+const vcDocked = () => !!settings.vcDock && !!document.getElementById('vcDockIn');
+const vcHost = () => document.getElementById(vcDocked() ? 'vcDockIn' : 'vcPanel');
+function vcShown() {
+  if (vcDocked()) return !document.getElementById('vcBox').hidden;
+  const p = document.getElementById('vcPanel');
+  return !!p && !p.hidden;
+}
 function vcOpen() {
+  if (vcDocked()) {
+    const b = document.getElementById('vcBox');
+    b.hidden = false;
+    if (settings.vcDockOpen === false) { settings.vcDockOpen = true; saveSettings(); }
+    const fp = document.getElementById('vcPanel');
+    if (fp) fp.hidden = true;
+    window.api.voiceState().then((st) => { vcModels = st; vcState = st.on ? (vcState === 'off' ? 'on' : vcState) : vcState === 'loading' ? 'loading' : 'off'; vcPaint(); });
+    vcPaint();
+    b.scrollIntoView({ block: 'nearest' });
+    return;
+  }
+  const db = document.getElementById('vcBox');
+  if (db) db.hidden = true;
   let p = document.getElementById('vcPanel');
   if (!p) {
     p = svEl('div');
     p.id = 'vcPanel';
-    p.className = 'ui-pop'; // стекло и размытие — как у других всплывающих панелей (index.html)
+    p.className = 'ui-pop vc-ui'; // стекло и размытие — как у других всплывающих панелей (index.html)
     document.body.append(p);
     const pos = settings.vcPos || {};
     p.style.right = pos.r != null ? pos.r + 'px' : '24px';
@@ -422,8 +453,22 @@ function vcOpen() {
   vcPaint();
 }
 // Значок в верхней строке (рядом с «Медиапулом»): открыть панель или спрятать (распознавание не выключается)
-document.getElementById('voiceOpen')?.addEventListener('click', () => { const p = document.getElementById('vcPanel'); if (p && !p.hidden) vcClose(); else vcOpen(); });
-function vcClose() { const p = document.getElementById('vcPanel'); if (p) p.hidden = true; }
+document.getElementById('voiceOpen')?.addEventListener('click', () => { if (vcShown()) vcClose(); else vcOpen(); });
+function vcClose() {
+  const p = document.getElementById(vcDocked() ? 'vcBox' : 'vcPanel');
+  if (p) p.hidden = true;
+  if (vcDocked()) { settings.vcDockOpen = false; saveSettings(); } // блок спрятан — и после перезапуска
+}
+// Перенесённая под предпросмотр панель видна сразу после запуска (как другие блоки), если её не прятали
+if (settings.vcDock && settings.vcDockOpen !== false) setTimeout(vcOpen, 0);
+// Перенести: плавающее окно ↔ блок под предпросмотром (рядом со «Слоями», «Проигрывателем», «Макросами», «Таймерами»)
+function vcDockSet(on) {
+  settings.vcDock = !!on;
+  saveSettings();
+  const old = document.getElementById(on ? 'vcPanel' : 'vcDockIn');
+  if (old) old.replaceChildren();
+  vcOpen();
+}
 
 // Перетаскивание панели за шапку; место — от правого нижнего угла окна
 function vcDrag(e, p) {
@@ -475,9 +520,10 @@ async function vcFromFile(lang) {
 function vcPaint(fromText) {
   const vb = document.getElementById('voiceOpen');
   if (vb) vb.classList.toggle('listen', vcState === 'on');
-  const p = document.getElementById('vcPanel');
-  if (!p || p.hidden) return;
+  const p = vcHost();
+  if (!p || !vcShown()) return;
   const c = vcCfg();
+  const docked = vcDocked();
   // Частый случай — пришёл текст (до 10 раз в секунду): только текст и карточки. Раньше панель собиралась
   // заново целиком — закрывался открытый список, терялись нажатия, полоска звука падала в ноль
   if (fromText) {
@@ -490,18 +536,22 @@ function vcPaint(fromText) {
     }
   }
   const head = svEl('div', 'vc-head');
-  head.addEventListener('pointerdown', (e) => vcDrag(e, p));
+  if (!docked) head.addEventListener('pointerdown', (e) => vcDrag(e, p));
   head.append(svEl('span', 'vc-dot ' + (vcState === 'on' ? 'on' : vcState === 'loading' ? 'loading' : '')), svEl('b', '', 'Библия по голосу'));
   // Переключатель: надпись — состояние (владелец: «Вкл» — работает, «Выкл» — нет), нажатие — сменить
   const tg = svBtn(vcState === 'loading' ? 'Включаю…' : vcState === 'on' ? 'Вкл' : 'Выкл', () => { if (vcTap()) (vcOn() ? vcStop('кнопка в панели') : vcStart()); }, 'vc-tg' + (vcState === 'on' ? ' on' : vcState === 'loading' ? ' loading' : ''), 'mic');
   tg.title = vcState === 'loading' ? 'Распознавание включается — подождите несколько секунд' : vcState === 'on' ? 'Включено — нажмите, чтобы выключить' : 'Выключено — нажмите, чтобы включить';
   const x = svBtn('×', vcClose);
   x.title = 'Спрятать панель (распознавание продолжится)';
+  // Перенести панель: вниз — в блок под предпросмотром, вверх — снова плавающим окном
+  const dk = svBtn('', () => vcDockSet(!docked), 'vc-dk');
+  dk.prepend(Icons.el(docked ? 'up' : 'down'));
+  dk.title = docked ? 'Сделать плавающим окном' : 'Перенести в нижнюю панель под предпросмотром (рядом с «Макросами», «Таймерами», «Слоями»)';
   // Значок «по словам» (Шазам): ищет стих по тексту, который читают, — вместе с поиском названных мест
   const wd = svBtn('', vsToggle, 'vc-wd' + (c.words ? ' on' : ''));
   wd.prepend(Icons.el('vtext'));
   wd.title = c.words ? 'Поиск места по словам включён: стих, который читают, найдётся по тексту — нажмите, чтобы выключить' : 'Поиск места по словам выключен: нажмите — программа будет находить стих по тексту, который читают (если прослушали, какое место назвали)';
-  head.append(wd, tg, x);
+  head.append(wd, tg, dk, x);
   const body = svEl('div', 'vc-body');
   const ms = (vcModels && vcModels.models) || [];
   const m = ms.find((y) => y.id === c.lang);
@@ -535,13 +585,19 @@ function vcPaint(fromText) {
     body.append(svEl('p', 'vc-err', 'Не включилось: ' + vcErr), svEl('p', 'hint', 'Попробуйте «Микрофон ▾» → «Как в Windows» и включите снова кнопкой вверху. Подробности — в файле voice\\log.txt в папке данных программы.'));
   } else body.append(svEl('p', 'hint', 'Сейчас выключено. Нажмите «Выкл» вверху — станет «Вкл», и программа начнёт слушать проповедника; когда он называет место Писания, стих появится здесь. На экран — только по кнопке «Показать».'));
   if (!bible) body.append(svEl('p', 'hint', 'Перевод Библии не загружен — места искать негде.'));
+  // Найденные места: шапка «Найдено: N · Очистить всё» и список с прокруткой
+  const lh = svEl('div', 'vc-lh');
   const list = svEl('div', 'vc-sugs');
+  body.append(lh, list);
   vcCards(list);
-  body.append(list);
   const old = p.querySelector('.vc-body');
   const st = old ? old.scrollTop : 0;
+  const lst = old ? old.querySelector('.vc-sugs') : null;
+  const lsTop = lst ? lst.scrollTop : 0;
   p.replaceChildren(head, body);
   if (fromText) body.scrollTop = st;
+  list.scrollTop = lsTop;
+  vcFit(list);
   const h = p.querySelector('.vc-heard');
   if (h) h.dataset.noi18n = '';
 }
@@ -550,7 +606,18 @@ const vcHeardText = () => (vcHeard ? '«' + vcHeard + '»' : 'Слушаю… Н
 function vcCards(list) {
   const key = vcSugs.map((s, i) => s.ref + '@' + s.at + (i === 0 && Date.now() - s.at < 8000 ? '!' : '')).join('|');
   if (list.dataset.k === key) return;
+  const firstOld = list.dataset.first || '';
   list.dataset.k = key;
+  list.dataset.first = vcSugs[0] ? vcSugs[0].ref + '@' + vcSugs[0].at : '';
+  const lh = list.previousElementSibling;
+  if (lh && lh.classList.contains('vc-lh')) {
+    lh.replaceChildren();
+    if (vcSugs.length) {
+      const clr = svBtn('Очистить всё', () => { vcSugs = []; vcPaint(); flashStatus('Список мест очищен'); });
+      clr.title = 'Убрать из списка все найденные и предложенные места';
+      lh.append(svEl('span', '', `Найдено: ${vcSugs.length}`), clr);
+    }
+  }
   list.replaceChildren();
   vcSugs.forEach((s, i) => {
     const card = svEl('div', 'vc-sug' + (i === 0 && Date.now() - s.at < 8000 ? ' new' : ''));
@@ -571,6 +638,14 @@ function vcCards(list) {
     card.append(top, tx, bt);
     list.append(card);
   });
+  if (list.dataset.first !== firstOld) list.dataset.top = '1';
+  if (list.isConnected) vcFit(list); // при сборке панели — vcFit после вставки (vcPaint)
+}
+// Высота списка: первое место целиком, следующее — наполовину (видно, что дальше есть ещё); новое место — прокрутка вверх
+function vcFit(list) {
+  const [a, b] = list.children;
+  list.style.maxHeight = a && b ? Math.round(a.offsetHeight + 8 + b.offsetHeight / 2) + 'px' : '';
+  if (list.dataset.top) { list.scrollTop = 0; delete list.dataset.top; }
 }
 // Подсветка «нового» гаснет сама
 setInterval(() => { if (vcSugs[0] && Date.now() - vcSugs[0].at < 9000) vcPaint(true); }, 3000);
@@ -741,7 +816,7 @@ function vsAdd(r) {
   if (vcSugs.some((s) => recent(s) && r.v1 >= s.v1 && r.v1 <= s.v2)) return;
   vcSugs.unshift({ ...r, words: true, at: now });
   vcCtxSet(r.bi, r.ci, r.v2 || r.v1);
-  vcSugs = vcSugs.slice(0, 6);
+  vcSugs = vcSugs.slice(0, VC_KEEP);
   flashStatus('По словам: ' + r.ref);
   vcPaint(true);
 }

@@ -8,7 +8,9 @@
 svg.mk { position: absolute; left: 0; top: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; fill: none; }
 .mk-under { z-index: 0; }
 .mk-over { z-index: 2; }
-.mk-over.on { pointer-events: auto; touch-action: none; cursor: crosshair; -webkit-user-select: none; user-select: none; }
+.mk-over.on { pointer-events: auto; touch-action: none; cursor: crosshair; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+/* touch-action у <svg> Safari на iPad соблюдает не всегда — то же и у самого листа (HTML), пока в руке пишущий предмет */
+body.pen-ink .song { touch-action: none; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
 .mk-over.erase { cursor: cell; }
 .er-cur { fill: rgba(255, 255, 255, .25); stroke: rgba(0, 0, 0, .45); stroke-width: 1; stroke-dasharray: 3 2; }
 .k-hl { opacity: .3; }

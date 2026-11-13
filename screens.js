@@ -1,4 +1,4 @@
-/* ===== Редактор сцен («Редактор → Редактор сцен», Ctrl+6): экраны, сцены и макеты — как Screens / Screen Scenes в ProPresenter =====
+/* ===== Редактор сцен («Редактор → Редактор сцен», Ctrl+6): экраны, сцены и макеты =====
    Модель (library.json):
    lib.screens — [{ id, name, w, h, hz, enabled, outputs: [{ kind: 'display'|'window'|'ndi', display?, name?, off? }],
      mode: 'program', layers (null — все слои), fit, ink, sound, trans, fx, rotate, flipX, flipY, alpha }].
@@ -660,7 +660,7 @@ function scSceneFromTpl(kind) {
   scAddScene(scNewScene(l, { bg: t.bg || '#000000', follow: !!t.follow }));
   flashStatus(`Новая сцена «${l.name}» — её макет в «Пресетах сцен». Выход — справа в «Выходах»`);
 }
-// Готовые макеты для сцены (музыкантам, ведущим) — как Stage Layouts в ProPresenter
+// Готовые макеты для сцены (музыкантам, ведущим)
 const SC_STAGE_TPL = [
   ['st-curnext', 'Текущий и следующий слайд'],
   ['st-timer', 'Текущий + следующий слайд + таймер'],
@@ -2016,7 +2016,7 @@ function scScreenInsp(s) {
     scRow('Тема', scSelect([['', 'Как у слайдов (обычные темы)'], ...th.map((x) => [x.id, x.name || 'Тема'])], s.theme || '', (v) => set({ theme: v, themeTpl: '' }, true))),
     t && tpls.length > 1 ? scRow('Шаблон', scSelect([['', 'По виду: песня, Библия…'], ...tpls.map((x) => [x.id, x.name || 'Шаблон'])], s.themeTpl || '', (v) => set({ themeTpl: v }))) : null,
     scNote(t ? `Все тексты на этом экране — песни, Библия, текстовые слайды — в оформлении темы «${t.name}», в её текстовом окне. Фото, видео и PowerPoint — как есть.`
-      : 'Своя тема экрана: все тексты программы (песни, Библия) встанут в текстовое окно этой темы — как «Look» в ProPresenter. Другие экраны не меняются.'),
+      : 'Своя тема экрана: все тексты программы (песни, Библия) встанут в текстовое окно этой темы. Другие экраны не меняются.'),
     t ? scRow('', scBtn('Открыть тему', 'theme', () => { const d = document.querySelector('dialog[open]'); if (d) d.close(); openThemeTab(t.id); })) : null,
   ];
   if (!main) cont.push(scRow('Размер', scSelect([['native', 'Своё разрешение (текст подстроится)'], ['contain', 'Вписать «Основной»'], ['cover', 'Заполнить «Основным» (обрезать)'], ['stretch', 'Растянуть «Основной»']], s.fit || 'native', (v) => set({ fit: v }))));

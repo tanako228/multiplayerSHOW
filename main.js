@@ -64,6 +64,11 @@ app.setName(APP_NAME);
 if (process.platform === 'win32') app.setAppUserModelId(APP_ID);
 app.setPath('userData', path.join(app.getPath('appData'), 'church-presenter'));
 
+// Профили (profiles.js): у каждого свои библиотеки, плейлисты и настройки окна, часть данных может быть общей.
+// Переключение — окно оператора перезагружается с другим профилем, программа и окна показа работают дальше
+const profiles = require('./profiles.js').store(app.getPath('userData'));
+let profSwitching = false; // от команды переключения до загрузки окна с новым профилем: старое окно ничего не пишет
+
 // Окно, закрытое другим окном целиком (заставка, окно показа), Chromium считает спрятанным и перестаёт рисовать;
 // когда его открывают, программа секунду рисуется заново — был чёрный экран после заставки. Не отключать обратно
 app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion');
@@ -81,8 +86,9 @@ app.on('second-instance', () => {
 
 // Запасная копия настроек окна оператора (все записи localStorage «cp.*») — файл settings-backup.json.
 // Если хранилище настроек пропало, preload.js при запуске возвращает всё из этого файла.
-const lsBackupFile = () => path.join(app.getPath('userData'), 'settings-backup.json');
+const lsBackupFile = () => profiles.lsFile(); // своя у каждого профиля
 ipcMain.on('ls:backup', (e, data) => {
+  if (profSwitching) { e.returnValue = true; return; } // уходящее окно — это настройки старого профиля
   try {
     if (!data || typeof data !== 'object' || !data['cp.settings']) return; // пустое не пишем — не затереть копию
     const f = lsBackupFile();
@@ -93,6 +99,23 @@ ipcMain.on('ls:backup', (e, data) => {
 });
 ipcMain.on('ls:restore', (e) => {
   try { e.returnValue = JSON.parse(fs.readFileSync(lsBackupFile(), 'utf8')); } catch { e.returnValue = null; }
+});
+// Окно оператора загружается (preload.js): какой профиль открыт. С этого момента окно снова пишет
+ipcMain.on('profile:boot', (e) => {
+  profSwitching = false;
+  e.returnValue = { id: profiles.active() };
+});
+// Настройки окна, оставшиеся от другого профиля (переключили — а окно не успело записать) — в его файл
+ipcMain.on('ls:backupFor', (e, { id, data } = {}) => {
+  try {
+    if (data && typeof data === 'object' && data['cp.settings'] && profiles.state().list.some((p) => p.id === id)) {
+      const f = profiles.lsFile(id);
+      fs.mkdirSync(path.dirname(f), { recursive: true });
+      fs.writeFileSync(f + '.tmp', JSON.stringify(data));
+      fs.renameSync(f + '.tmp', f);
+    }
+  } catch { /* не страшно */ }
+  e.returnValue = true;
 });
 
 let control = null;      // окно оператора
@@ -1424,7 +1447,7 @@ app.whenReady().then(() => {
   const REPO_PARTS = [
     { id: 'library', lib: ['items', 'libraries', 'playlists', 'view', 'lastPl', 'version', 'partTypes'] },
     { id: 'files' },
-    { id: 'themes', lib: ['themes', 'themesLive', 'themeFor', 'tplFor'] },
+    { id: 'themes', lib: ['themes', 'themesLive', 'themeFor', 'tplFor', 'extThemes'] },
     { id: 'macros', lib: ['macros', 'fileMacros'] },
     { id: 'screens', lib: ['screens', 'scenes', 'scenePresets', 'timers'], ls: ['cp.sceneEditor'] },
     { id: 'bibles' },
@@ -1530,7 +1553,7 @@ app.whenReady().then(() => {
     if (mode === 'replace') repoClear(dir);
     const add = mode === 'add';
     const has = (p) => parts.includes(p);
-    const split = repoSplit(readJson(libFile(), {}) || {}, ls || {});
+    const split = repoSplit(libView(), ls || {});
     let changed = mode === 'replace' ? 1 : 0;
     for (const id of parts) {
       if (!split[id]) continue;
@@ -1585,6 +1608,7 @@ app.whenReady().then(() => {
   }
 
   ipcMain.handle('repo:sync', async (_e, { dir, parts, ls, mode }) => {
+    if (profSwitching) return { ok: false, skipped: true }; // настройки уходящего профиля с данными нового не смешиваем
     while (repoBusy) await repoBusy.catch(() => {});
     repoBusy = repoWrite(dir, parts || [], ls, mode);
     try { return await repoBusy; } catch (err) { return { ok: false, error: String(err && err.message || err) }; } finally { repoBusy = null; }
@@ -1696,7 +1720,7 @@ app.whenReady().then(() => {
 
     // Данные частей. Добавление — слить со своим (списки по id, объекты по ключам);
     // замена — у выбранных частей остаётся только то, что в папке (лишние ключи убираются)
-    const cur = readJson(libFile(), {}) || {};
+    const cur = libView();
     const curSet = setsOf(curLs);
     const set = {};
     const ls = {};
@@ -1720,8 +1744,7 @@ app.whenReady().then(() => {
       for (const [k, v] of Object.entries(ds)) set[k] = replace ? v : mergeVal(curSet[k], v);
       for (const [k, v] of Object.entries(dls)) ls[k] = lsText(replace || !(k in curLs) ? v : mergeVal(lsParse(curLs[k]), v));
     }
-    fs.writeFileSync(libFile() + '.tmp', JSON.stringify(cur));
-    fs.renameSync(libFile() + '.tmp', libFile());
+    profiles.save(cur); // общее — в общее хранилище, своё — в файл профиля
 
     // Переводы Библии добавляются (с тем же id — заменяются); при замене свои — в отложенные
     if (has('bibles') && fs.existsSync(path.join(dir, 'bibles'))) {
@@ -1763,7 +1786,7 @@ app.whenReady().then(() => {
     // Презентации и плейлисты заменяются, темы добавляются к своим
     const backLib = rewrite(readJson(path.join(dir, 'library.json'), null), map);
     if (backLib && (has('library') || has('themes'))) {
-      const cur = readJson(libFile(), {}) || {};
+      const cur = libView();
       if (has('library')) Object.assign(cur, { version: backLib.version, items: backLib.items, libraries: backLib.libraries, playlists: backLib.playlists, view: backLib.view, lastPl: backLib.lastPl });
       if (has('themes') && Array.isArray(backLib.themes)) {
         const themes = Array.isArray(cur.themes) ? cur.themes : [];
@@ -1772,7 +1795,7 @@ app.whenReady().then(() => {
         cur.themeFor = { ...(cur.themeFor || {}), ...(backLib.themeFor || {}) };
         if (backLib.tplFor) cur.tplFor = { ...(cur.tplFor || {}), ...backLib.tplFor };
       }
-      fs.writeFileSync(libFile(), JSON.stringify(cur));
+      profiles.save(cur);
     }
 
     // Переводы Библии добавляются (с тем же id — заменяются)
@@ -2075,7 +2098,7 @@ app.whenReady().then(() => {
   // Токен DNS-провайдера — зашифрован Windows (safeStorage), без шифрования — только если его нет в системе
   team.setup(ipcMain, {
     dir: app.getPath('userData'), appDir: path.join(__dirname, 'app'), ips: rmIps, handler: rmHandle,
-    libFile: path.join(app.getPath('userData'), 'library.json'), ver: app.getVersion(),
+    libFile: () => profiles.libFile(), ver: app.getVersion(), // файл открытого профиля (общие песни приходят через libSaved)
     want: () => rmWant(), http: () => ({ running: !!rmSrv && !!rmPort, port: rmPort, err: rmErr }),
     seal: (s) => (safeStorage.isEncryptionAvailable() ? 'dp:' + safeStorage.encryptString(s).toString('base64') : 'raw:' + Buffer.from(s).toString('base64')),
     unseal: (s) => (s.startsWith('dp:') ? safeStorage.decryptString(Buffer.from(s.slice(3), 'base64')) : s.startsWith('raw:') ? Buffer.from(s.slice(4), 'base64').toString() : ''),
@@ -2252,18 +2275,53 @@ app.whenReady().then(() => {
 
   /* ---------- Библиотеки и плейлисты ---------- */
 
-  const libFile = () => path.join(app.getPath('userData'), 'library.json');
+  // Файл открытого профиля (profiles.js). В нём только своё: общие библиотеки — заглушками
+  const libFile = () => profiles.libFile();
+  // Всё, что видит открытый профиль: своё и общее вместе (как в окне оператора)
+  const libView = () => { try { return profiles.load(undefined, { peek: true }) || {}; } catch { return {}; } };
 
   ipcMain.handle('lib:load', () => {
-    try { return JSON.parse(fs.readFileSync(libFile(), 'utf8')); } catch { return null; }
+    try {
+      const data = profiles.load();
+      if (data) team.libSaved(data); // телефонам группы — с общими песнями
+      return data;
+    } catch (e) { console.warn('Профиль не прочитан:', e.message); return null; }
   });
 
   ipcMain.handle('lib:save', (_e, data) => {
-    // Пишем во временный файл и переименовываем, чтобы при сбое не потерять плейлисты
-    const tmp = libFile() + '.tmp';
-    fs.writeFileSync(tmp, JSON.stringify(data));
-    fs.renameSync(tmp, libFile());
+    // Окно переключается на другой профиль — запоздалое сохранение старого не должно попасть в новый
+    if (profSwitching) return { ok: false, skipped: true };
+    // Пишется через временный файл и переименование (profiles.js), чтобы при сбое не потерять плейлисты
+    const res = profiles.save(data);
     team.libSaved(data); // песни для телефонов группы (teamapi.js) — разберёт, когда телефон спросит
+    return res;
+  });
+
+  /* ---------- Профили (profiles.js, окно «Настройки → Профили» — profpanel.js) ---------- */
+
+  ipcMain.handle('profile:state', () => profiles.catalog());
+  // a: { act, … }. a.reload — после команды окно перезагрузится (данные открытого профиля поменялись или открыт другой):
+  // до загрузки нового окна старое ничего не пишет (lib:save, ls:backup, repo:sync)
+  ipcMain.handle('profile:do', (_e, a = {}) => {
+    try {
+      let res = {};
+      switch (a.act) {
+        case 'create': res = { id: profiles.create(a.name, { libs: a.libs || [], cats: a.cats || [] }) }; break;
+        case 'rename': res = { ok: profiles.rename(a.id, a.name) }; break;
+        case 'remove': res = { ok: profiles.remove(a.id) }; break;
+        case 'connect': res = { ok: profiles.connect(a.lib, a.id) }; break;
+        case 'disconnect': res = { ok: profiles.disconnect(a.lib, a.id, !!a.keep) }; break;
+        case 'cat': res = { ok: profiles.setCat(a.cat, Array.isArray(a.ids) ? a.ids : []) }; break;
+        case 'switch': res = { ok: profiles.setActive(a.id) }; break;
+        default: return { ok: false, error: 'unknown' };
+      }
+      if (res.ok === false) return { ok: false, state: profiles.catalog() };
+      if (a.reload) profSwitching = true;
+      return { ok: true, ...res, state: profiles.catalog() };
+    } catch (e) {
+      console.warn('Профили:', e.message);
+      return { ok: false, error: e.message, state: profiles.catalog() };
+    }
   });
 
   /* ---------- Библия ---------- */

@@ -1,6 +1,7 @@
 const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
 const on = (channel, cb) => ipcRenderer.on(channel, (_e, data) => cb(data));
+let lsFlush = () => {}; // записать настройки окна в файл профиля сейчас (только окно оператора)
 
 // Запасная копия настроек (только окно оператора): localStorage «cp.*» ↔ settings-backup.json (main.js).
 // Хранилище пропало (нет cp.settings) — до запуска скриптов окна возвращаем всё из файла.
@@ -10,11 +11,20 @@ if (/\/index\.html$/i.test(location.pathname)) {
     for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); if (k && k.startsWith('cp.')) o[k] = localStorage.getItem(k); }
     return o;
   };
+  // Профили (profiles.js): localStorage окна один на всю программу, а настройки у каждого профиля свои.
+  // В записи cp.profile — чьи настройки сейчас в хранилище. Открыт другой профиль — свои отдаём в файл
+  // прежнего (вдруг уходящее окно что-то дописало), хранилище очищаем и берём настройки открытого из его файла
+  const fill = (old) => { if (old && old['cp.settings']) for (const [k, v] of Object.entries(old)) if (k.startsWith('cp.') && typeof v === 'string') localStorage.setItem(k, v); };
   try {
-    if (!localStorage.getItem('cp.settings')) {
-      const old = ipcRenderer.sendSync('ls:restore');
-      if (old && old['cp.settings']) for (const [k, v] of Object.entries(old)) if (k.startsWith('cp.') && typeof v === 'string') localStorage.setItem(k, v);
-    }
+    const boot = ipcRenderer.sendSync('profile:boot') || {};
+    const owner = localStorage.getItem('cp.profile') || 'main';
+    if (boot.id && boot.id !== owner) {
+      const mine = snap();
+      if (mine['cp.settings']) ipcRenderer.sendSync('ls:backupFor', { id: owner, data: mine });
+      for (const k of Object.keys(mine)) localStorage.removeItem(k);
+      fill(ipcRenderer.sendSync('ls:restore'));
+    } else if (!localStorage.getItem('cp.settings')) fill(ipcRenderer.sendSync('ls:restore'));
+    if (boot.id) localStorage.setItem('cp.profile', boot.id);
   } catch { /* нет копии — первый запуск */ }
   // Пишем копию, когда что-то поменялось (проверка раз в 5 секунд) и при закрытии окна
   let last = '';
@@ -28,6 +38,9 @@ if (/\/index\.html$/i.test(location.pathname)) {
     } catch { /* не страшно */ }
   };
   setInterval(() => backup(false), 5000);
+  // Профили: открыть другой профиль или перезагрузить окно после правки общих данных (profpanel.js).
+  // Перед этим — последняя копия настроек в файл текущего профиля
+  lsFlush = () => backup(true);
   window.addEventListener('beforeunload', () => backup(true));
 }
 
@@ -67,6 +80,10 @@ contextBridge.exposeInMainWorld('api', {
 
   libLoad: () => ipcRenderer.invoke('lib:load'),
   libSave: (data) => ipcRenderer.invoke('lib:save', data),
+  // Профили (profiles.js): список, свои и общие библиотеки; команды { act: create|rename|remove|connect|disconnect|cat|switch, … }
+  profState: () => ipcRenderer.invoke('profile:state'),
+  profDo: (a) => ipcRenderer.invoke('profile:do', a),
+  profFlushLs: () => lsFlush(),
 
   setInk: (shapes, opts) => ipcRenderer.invoke('output:ink', shapes, opts),
   setView: (view, ms) => ipcRenderer.invoke('output:view', view, ms),

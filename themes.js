@@ -1,4 +1,4 @@
-/* ---------- Темы с шаблонами слайдов (Theme Editor, как в ProPresenter) ----------
+/* ---------- Темы с шаблонами слайдов (Theme Editor) ----------
    Тема: { id, name, style, templates?: [шаблон], std?, aspect? — формат экрана '16:9' (нет — 16:9), '1:1'… (ASPECTS, reshape) }
      style — старое оформление (шрифт, цвет, фон…): им рисуются темы без шаблонов и миниатюры старых версий.
      std — стандартная тема из программы (BUILTIN): не хранится в library.json, править — только копию.
@@ -175,14 +175,15 @@ const Themes = (() => {
     const c = clone(t);
     c.id = newId();
     delete c.std;
+    delete c.ext;
     if (newTplIds) c.templates = (c.templates || []).map((x) => ({ ...x, id: newId(), objs: (x.objs || []).map((o) => ({ ...o, id: newId() })) }));
     return c;
   }
 
   // Файл темы (открытый формат JSON): { app, kind: 'theme', version, themes: [...] }
-  const exportData = (list) => ({ app: 'church-presenter', kind: 'theme', version: 1, themes: clone(list).map((t) => { delete t.std; return t; }) });
+  const exportData = (list) => ({ app: 'church-presenter', kind: 'theme', version: 1, themes: clone(list).map((t) => { delete t.std; delete t.ext; return t; }) });
   function importData(data) {
-    const list = data && data.kind === 'theme' && Array.isArray(data.themes) ? data.themes : data && Array.isArray(data.templates) ? [data] : null;
+    const list = data && (data.kind === 'theme' || data.kind === 'presentation') && Array.isArray(data.themes) ? data.themes : data && Array.isArray(data.templates) ? [data] : null;
     if (!list) return null;
     return list.filter((t) => t && typeof t === 'object').map((t) => ensure({ ...copy(t, true), name: String(t.name || 'Тема') }));
   }
