@@ -48,21 +48,63 @@
     let part = '';
     rec.on('result', (m) => { part = ''; const t = m && m.result && m.result.text; if (t) { log('услышал: ' + t); say({ text: t, final: true }); } });
     rec.on('partialresult', (m) => { const t = m && m.result && m.result.partial; if (t && t !== part) { part = t; say({ text: t, final: false }); } });
+    /* Автоуровень: микрофон → усиление (само подстраивается) → компрессор → лимитер → Vosk.
+       Громкий вход (пульт «в красном») распознаётся плохо: искажения. Усиление держит речь около −20 dBFS,
+       компрессор выравнивает громкие и тихие слова, лимитер не даёт дойти до 0 dBFS.
+       Уже перегруженный на входе звук (клиппинг до компьютера) исправить нельзя — тогда предупреждаем. */
     const src = ctx.createMediaStreamSource(stream);
+    const gain = ctx.createGain();
+    const comp = ctx.createDynamicsCompressor();
+    comp.threshold.value = -24; comp.knee.value = 12; comp.ratio.value = 4; comp.attack.value = 0.005; comp.release.value = 0.25;
+    const lim = ctx.createDynamicsCompressor();
+    lim.threshold.value = -4; lim.knee.value = 0; lim.ratio.value = 20; lim.attack.value = 0.001; lim.release.value = 0.1;
+    const raw = ctx.createAnalyser(); // вход до обработки — мерить уровень и клиппинг
+    raw.fftSize = 2048;
+    const rawBuf = new Float32Array(raw.fftSize);
+    src.connect(raw);
+    src.connect(gain).connect(comp).connect(lim);
     const node = ctx.createScriptProcessor(4096, 1, 1);
+    const TARGET = 0.1; // RMS речи после усиления (≈ −20 dBFS)
+    const GATE = 0.004; // тише — пауза/шум: усиление не трогаем, чтобы не раздувать шум
+    let g = 1;
     let level = 0;
     let lastLvl = 0;
     let chunks = 0;
+    let clipT = 0; // когда последний раз был клиппинг входа
+    let clipN = 0; // кусков с клиппингом подряд (за ~3 с)
+    let clipWarned = 0;
     node.onaudioprocess = (e) => {
       chunks++;
+      // Вход до обработки: RMS и пики у 0 dBFS
+      raw.getFloatTimeDomainData(rawBuf);
+      let sum = 0;
+      let peak = 0;
+      let clips = 0;
+      for (let i = 0; i < rawBuf.length; i++) { const v = Math.abs(rawBuf[i]); sum += v * v; if (v > peak) peak = v; if (v > 0.985) clips++; }
+      const rms = Math.sqrt(sum / rawBuf.length);
+      if (rms > GATE) {
+        // Громко — убавляем быстро, тихо — прибавляем медленно; пики не выше −3 dBFS до компрессора
+        let want = Math.min(8, Math.max(0.15, TARGET / rms));
+        if (peak * want > 0.7) want = Math.max(0.15, 0.7 / peak);
+        g += (want - g) * (want < g ? 0.5 : 0.06);
+        gain.gain.setTargetAtTime(g, ctx.currentTime, 0.05);
+      }
+      const now = performance.now();
+      if (clips > 3) { clipN = now - clipT < 3000 ? clipN + 1 : 1; clipT = now; }
+      if (clipN >= 6 && now - clipWarned > 60000) {
+        clipWarned = now;
+        clipN = 0;
+        say({ warn: 'Вход микрофона перегружен (звук «в красном») — уменьшите уровень на пульте или в Windows: искажённый звук распознаётся хуже' });
+      }
+      // Уровень для индикатора — после обработки (что слышит распознавание)
       const ch = e.inputBuffer.getChannelData(0);
       let s = 0;
       for (let i = 0; i < ch.length; i += 8) s = Math.max(s, Math.abs(ch[i]));
       level = Math.max(s, level * 0.8);
-      if (performance.now() - lastLvl > 250) { lastLvl = performance.now(); say({ level: Math.round(level * 100) / 100 }); }
+      if (now - lastLvl > 250) { lastLvl = now; say({ level: Math.round(level * 100) / 100, gain: Math.round(g * 100) / 100, clip: now - clipT < 1500 }); }
       try { rec.acceptWaveform(e.inputBuffer); } catch { /* пропускаем кусок */ }
     };
-    src.connect(node);
+    lim.connect(node);
     node.connect(ctx.destination); // без выхода ScriptProcessor не работает; звука нет — буфер выхода пустой
     say({ state: 'on' });
     // Звук не идёт совсем — сказать, а не молчать

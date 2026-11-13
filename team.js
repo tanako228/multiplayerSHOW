@@ -267,6 +267,8 @@ const GR_EV = {
   chdOff: (x) => `${x.name}: править аккорды и ноты с телефона больше нельзя`,
   chords: (x) => `${x.name} ${x.clear ? 'убрал(а) аккорды' : 'записал(а) аккорды'}: ${x.song}`,
   sheets: (x) => `${x.name} ${x.del ? 'убрал(а) лист нот' : `добавил(а) ноты (листов: ${x.n})`}: ${x.song}`,
+  edit: (x) => `Правка без связи от ${x.by}${x.by !== x.name ? ` (принёс(ла) ${x.name})` : ''}: ${x.sh ? 'аккорды и ноты' : 'аккорды'} — ${x.song}`,
+  editBad: (x) => `Телефон ${x.name} (${x.dev}) принёс повреждённую или изменённую правку — не принята`,
   pwOk: (x) => `${x.name} вошёл(ла) по паролю — ${x.dev}, ${x.ip}`,
   pwBad: (x) => `Неверный пароль: «${x.name}» — ${x.ip}`,
   locked: (x) => `Вход закрыт на ${x.min} мин. (много неверных паролей): «${x.name}», ${x.ip}`,
@@ -279,7 +281,7 @@ const GR_EV = {
   metroOff: (x) => `Метроном для группы остановил(а) ${x.name}`,
 };
 const GR_MODES = { qr: 'по QR-коду и «Пустить»', qrpass: 'с паролем сразу, без пароля — «Пустить»', pass: 'только имя и пароль' };
-const GR_KINDS = { in: ['join', 'approve', 'admit', 'reject', 'off', 'on', 'revoke', 'delPerson', 'bad', 'ctlOn', 'ctlOff', 'chdOn', 'chdOff', 'chords', 'sheets', 'pwOk'],
+const GR_KINDS = { in: ['join', 'approve', 'admit', 'reject', 'off', 'on', 'revoke', 'delPerson', 'bad', 'ctlOn', 'ctlOff', 'chdOn', 'chdOff', 'chords', 'sheets', 'edit', 'editBad', 'pwOk'],
   pw: ['pwOk', 'pwBad', 'locked', 'unlock', 'pwSet', 'pwDel', 'mode'], msg: ['msg', 'metroOn', 'metroOff'] };
 let grLogN = 200; // «Весь журнал» — до 20000 строк
 let grLogT = 0;
@@ -614,5 +616,23 @@ window.api.onTeamSheets((c) => {
   if (list.length) it.song.sheets = list; else delete it.song.sheets;
   saveLib();
   flashStatus(`Телефон (${c.who || '?'}): ${c.del ? 'лист нот убран' : 'ноты добавлены'} — «${it.name}». Ctrl+Z — вернуть`);
+  done();
+});
+
+// Правка, сделанная без связи (аккорды, тональность, ноты целиком), — подписана тем, кто может править (who),
+// принёс любой телефон группы (via); teamapi.js проверил подпись и что она новее. Через saveLib — Ctrl+Z вернёт
+window.api.onTeamEdit((c) => {
+  const done = (err) => window.api.teamChordsDone({ rid: c && c.rid, ...(err ? { err } : {}) });
+  if (!c || typeof lib === 'undefined' || !lib) { done('Библиотека ещё не загружена'); return; }
+  const it = lib.items[c.id];
+  if (!it || !it.song) { done('Такой песни в программе уже нет'); return; }
+  const text = String(c.chords || '').trimEnd();
+  if (text.trim()) it.song.chords = text; else delete it.song.chords;
+  const k = String(c.key || '').trim().slice(0, 8);
+  if (k) it.song.key = k; else delete it.song.key;
+  if (Array.isArray(c.sheets)) { if (c.sheets.length) it.song.sheets = c.sheets; else delete it.song.sheets; }
+  saveLib();
+  const by = c.via && c.via !== c.who ? `${c.who || '?'} (принёс телефон ${c.via})` : c.who || '?';
+  flashStatus(`Правка без связи от ${by}: ${Array.isArray(c.sheets) ? 'аккорды и ноты' : 'аккорды'} — «${it.name}». Ctrl+Z — вернуть`);
   done();
 });

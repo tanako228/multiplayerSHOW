@@ -56,13 +56,25 @@ const Sheets = (() => {
       const need = new Set();
       for (const s of Store.songs.values()) for (const x of s.sheets || []) need.add(x.f);
       const have = new Set(await Store.allKeys('sheets'));
-      for (const f of have) if (!need.has(f)) await Store.delRec('sheets', f).catch(() => {});
+      // листы, на которые ссылается правка без связи (пришли в файле), — не стирать, пока она не ушла
+      const keep = new Set(need);
+      for (const r of got.values()) for (const [k, a] of (r.ed && r.ed.sh) || []) if (k === 'f') keep.add(a);
+      for (const f of have) if (!keep.has(f)) await Store.delRec('sheets', f).catch(() => {});
       for (const f of need) if (!have.has(f)) { try { await fetchSheet(f); } catch { break; } } // нет связи — в другой раз
     } catch { /* хранилище недоступно */ } finally { pre = false; }
   }
 
   // Листы песни: из программы, из чужого файла (got), из файла «только посмотреть» (tmp)
   function list(v) {
+    // Правка без связи — список листов целиком (как у того, кто правил)
+    const g = v.got;
+    if (g && g.ed && g.ed.sh) {
+      return g.ed.sh.map(([k, a, name]) => {
+        if (k === 'f') return { key: a, f: a, name, own: 'prog' };
+        const x = (g.sheets || []).find((y) => y.h === a);
+        return x ? { key: x.f, name, own: 'got', rec: x } : null;
+      }).filter(Boolean);
+    }
     const out = [];
     for (const x of ((v.base || v.src || {}).sheets || [])) out.push({ key: x.f, f: x.f, name: x.name, own: 'prog' });
     for (const x of (v.got && v.got.sheets) || []) out.push({ key: x.f, name: x.name, own: 'got', rec: x });
@@ -74,25 +86,30 @@ const Sheets = (() => {
   function bar(v, body) {
     if (v.got) {
       const b = el('div', 'gotbar');
-      b.append(el('span', '', v.got.who ? `Аккорды и ноты из файла от ${v.got.who}` : 'Аккорды и ноты из файла'));
-      const x = el('button', '', 'Убрать');
+      const g = v.got;
+      b.append(el('span', '', g.ed && !g.mine ? `Правка от ${g.who || '?'} — уйдёт в программу, когда телефон подключится`
+        : g.pend ? 'Ваша правка без связи — уйдёт в программу, когда телефон подключится'
+          : g.who ? `Аккорды и ноты из файла от ${g.who}` : 'Аккорды и ноты из файла'));
+      const x = el('button', '', g.pend ? 'Отменить правку' : 'Убрать');
       x.onclick = () => dropGot(v.id);
       b.append(x);
       body.append(b);
     }
     const n = list(v).length;
-    if (!n && !(canEdit() && v.id && !v.tmp)) return;
+    if (!n && !(canEdit() && (online() || canSign()) && v.id && !v.tmp)) return;
     const b = el('button', 'shbtn' + (n ? '' : ' add'), n ? `Ноты · листов: ${n}` : '＋ Добавить ноты');
     b.type = 'button';
     b.onclick = () => open(v);
     body.append(b);
   }
   async function dropGot(id) {
-    if (!(await ask('Убрать аккорды и ноты из файла? Останется то, что пришло из программы.', 'Убрать'))) return;
     const g = got.get(id);
+    if (g && g.pend ? !(await ask('Отменить правку без связи? Останется версия из программы.', 'Отменить правку'))
+      : !(await ask('Убрать аккорды и ноты из файла? Останется то, что пришло из программы.', 'Убрать'))) return;
     await Store.delRec('got', id).catch(() => {});
     got.delete(id);
     for (const x of (g && g.sheets) || []) { const u = urls.get(x.f); if (u) { URL.revokeObjectURL(u); urls.delete(x.f); } }
+    window.renderExt && window.renderExt();
     if (cur && cur.id === id) reopen(id);
   }
   function reopen(id) {
@@ -215,7 +232,8 @@ const Sheets = (() => {
     if (!v) return;
     if (fsOn) { paintFs(); return; }
     const items = list(v);
-    const edit = canChords() && !!v.id && !v.tmp;
+    const off = !online();
+    const edit = canChords() && (!off || canSign()) && !!v.id && !v.tmp && Store.songs.has(v.id);
     $('shTitle').textContent = v.name;
     $('shAdd').hidden = !edit;
     $('shShare').hidden = !canShare(v);
@@ -225,7 +243,8 @@ const Sheets = (() => {
     box.style.setProperty('--shz', String(zoom));
     box.replaceChildren();
     if (!items.length) {
-      box.append(el('p', 'hint', edit ? 'У песни нет нот. Добавьте фото или PDF — их увидит вся группа, и без сети тоже.' : 'У этой песни нет нот.'));
+      box.append(el('p', 'hint', !edit ? 'У этой песни нет нот.' : off ? 'У песни нет нот. Без связи можно добавить фото нот — они уйдут в программу, когда телефон подключится.'
+        : 'У песни нет нот. Добавьте фото или PDF — их увидит вся группа, и без сети тоже.'));
       return;
     }
     for (const x of items) {
@@ -238,7 +257,7 @@ const Sheets = (() => {
       nm.dataset.noi18n = '';
       cap.append(nm);
       if (x.own === 'got') cap.append(el('i', '', 'из файла'));
-      if (x.own === 'prog' && edit) {
+      if (edit && (x.own === 'prog' || (off && x.own === 'got' && v.got && v.got.ed))) {
         const del = el('button', 'danger', 'Убрать');
         del.type = 'button';
         del.onclick = () => delSheet(x);
@@ -286,10 +305,12 @@ const Sheets = (() => {
   async function addFiles(files) {
     const v = cv;
     if (!v || !v.id || busy || !files.length) return;
-    if (!canChords()) { toast('Нет связи с программой или право снято — ноты не отправлены'); return; }
+    if (!canChords()) { toast('Право править ноты снято — ноты не добавлены'); return; }
+    if (!online()) { await addOffline(v, files); return; }
     busy = true;
     $('shAdd').disabled = true;
     let n = 0;
+    let lost = false;
     try {
       for (const f of files) {
         const pdf = f.type === 'application/pdf' || /\.pdf$/i.test(f.name);
@@ -300,17 +321,26 @@ const Sheets = (() => {
         n++;
       }
     } catch (e) {
-      toast(e.message || 'Ноты не отправлены');
+      lost = e.code === 'net';
+      if (!lost) toast(e.message || 'Ноты не отправлены');
     } finally {
       busy = false;
       $('shAdd').disabled = false;
     }
     if (n) { toast('Ноты сохранены в программе'); await afterSave(v.id); }
+    // связь пропала посреди отправки — остальное сохранить на телефоне, уйдёт при подключении
+    if (lost) await addOffline(v, files.slice(n));
   }
   async function delSheet(x) {
     const v = cv;
     if (!v || busy) return;
     if (!(await ask(`Убрать лист «${x.name}» из песни у всей группы? В программе Ctrl+Z вернёт.`, 'Убрать'))) return;
+    if (!online()) {
+      try { await myEdit(v.id, { del: x.key }); } catch (e) { toast(e.message || 'Не получилось'); return; }
+      toast('Лист убран у вас — у группы уберётся, когда телефон подключится к программе');
+      afterOffline(v.id);
+      return;
+    }
     busy = true;
     try {
       await Store.api('/songs/sheets', { method: 'POST', body: { id: v.id, del: x.f } });
@@ -320,9 +350,165 @@ const Sheets = (() => {
     await afterSave(v.id);
   }
 
+  /* ----- Правка без связи: подпись ключом из программы (Store.me.ek), отправка после синхронизации (flush) -----
+     got-запись { id, ed, edl, pend: true, mine, who, name, song, at, chords, key, sheets: [{ f, h, name, type, buf }] }:
+     ed — правка целиком (аккорды, тональность, все листы: ['f', файл программы, имя] / ['h', sha256, имя] — байты в sheets),
+     edl — то же без листов (sh: null) для ссылки. Донести до программы может любой телефон группы — подпись проверит она. */
+
+  const canSign = () => canEdit() && !!(Store.me.ek && Store.me.person && Store.me.person.id && Store.meta.lib);
+  const sign = (e) => ({ ...e, sig: Sig.hmac(Store.me.ek, Sig.editMsg(e)) });
+  const rank = (e) => e.at * 2 + (e.sh ? 1 : 0);
+  // Правка от себя: то, что сейчас видно у песни, плюс изменение ch: { chords } | { add: [{ name, type, buf }] } | { del: ключ листа }.
+  // at — время правки (часы программы); 0 — «как в программе» (поделиться без своих правок)
+  function makeEdit(v, ch, at) {
+    const src = v.src || {};
+    const t = Date.now().toString(36);
+    const sheets = [];
+    const sh = [];
+    for (const x of list(v)) {
+      if (ch.del && x.key === ch.del) continue;
+      if (x.own === 'prog') { sh.push(['f', x.f, x.name]); continue; }
+      const r = x.rec;
+      const h = r.h || Sig.hashBuf(r.buf);
+      sh.push(['h', h, x.name]);
+      sheets.push({ f: r.f, h, name: x.name, type: r.type || 'image/jpeg', buf: r.buf });
+    }
+    (ch.add || []).forEach((x, i) => {
+      const h = Sig.hashBuf(x.buf);
+      sh.push(['h', h, x.name]);
+      sheets.push({ f: `g${t}-${i}`, h, name: x.name, type: x.type, buf: x.buf });
+    });
+    const chords = ch.chords !== undefined ? ch.chords : String(src.chords || '');
+    const key = String(src.key || '');
+    const base = { v: 1, lib: Store.meta.lib, sid: v.id, at, by: Store.me.person.id, bn: Store.me.person.name, chords, key };
+    return { ed: sign({ ...base, sh }), edl: sign({ ...base, sh: null }), chords, key, sheets };
+  }
+  async function myEdit(id, ch) {
+    const s = Store.songs.get(id);
+    if (!s) throw new Error('Такой песни на телефоне нет');
+    if (!canSign()) throw new Error('Без связи править можно после того, как телефон хоть раз подключится к обновлённой программе');
+    const m = makeEdit(songView(s), ch, Math.max(1, Math.round(srvNow())));
+    const r = { id, ed: m.ed, edl: m.edl, pend: true, mine: true, who: Store.me.person.name, name: s.name, at: Date.now(), chords: m.chords, key: m.key, sheets: m.sheets };
+    try { await Store.putRec('got', r); } catch { throw new Error('Не хватило места на телефоне'); }
+    got.set(id, r);
+    window.renderExt && window.renderExt();
+    return r;
+  }
+  function afterOffline(id) {
+    if (cur && cur.id === id) reopen(id);
+    if ($('shDlg').open && cur && cur.id === id) { cv = cur; paint(); }
+  }
+  // Без связи: фото → JPEG здесь же; PDF разбирает только программа
+  async function addOffline(v, files) {
+    if (!canSign()) { toast('Без связи ноты добавить нельзя: телефон ещё ни разу не подключался к обновлённой программе'); return; }
+    busy = true;
+    $('shAdd').disabled = true;
+    const add = [];
+    try {
+      for (const f of files) {
+        if (f.type === 'application/pdf' || /\.pdf$/i.test(f.name)) { toast(`PDF без связи не разобрать — добавьте фото нот или PDF, когда телефон будет на связи («${f.name}»)`); continue; }
+        if (f.size > 30e6) { toast(`«${f.name}» больше 30 МБ — не добавлен`); continue; }
+        add.push({ name: f.name.replace(/\.[^.]+$/, '') || 'Ноты', type: 'image/jpeg', buf: fromB64(await toJpeg(f)) });
+      }
+      if (!add.length) return;
+      await myEdit(v.id, { add });
+      toast('Ноты добавлены у вас — группе уйдут, когда телефон подключится к программе');
+    } catch (e) {
+      toast(e.message || 'Ноты не добавлены');
+      return;
+    } finally {
+      busy = false;
+      $('shAdd').disabled = false;
+    }
+    afterOffline(v.id);
+  }
+  async function saveMyEdit(id, chords) { return myEdit(id, { chords }); }
+
+  // Пришла правка (файл или ссылка): в «Не синхронизированные»; песня есть — правка видна на ней
+  const editLike = (e) => !!e && typeof e.sid === 'string' && e.sid && typeof e.lib === 'string' && Number.isSafeInteger(e.at) && typeof e.by === 'string'
+    && typeof e.chords === 'string' && typeof e.key === 'string' && typeof e.sig === 'string' && (e.sh === null || Array.isArray(e.sh));
+  const sameProg = (e) => !Store.meta.lib || e.lib === Store.meta.lib;
+  async function takeEdit(d) {
+    const e = d.edit;
+    const id = e.sid;
+    const old = got.get(id);
+    if (e.at === 0 && Store.songs.has(id)) { toast('Это версия из программы — она уже у вас на телефоне'); openSong(id, true); return; }
+    if (old && old.ed && rank(old.ed) >= rank(e)) { toast('Эта правка уже есть на телефоне'); showRec(id); return; }
+    const t = Date.now().toString(36);
+    const sheets = [];
+    for (const [i, x] of d.sheets.entries()) {
+      const buf = fromB64(x.data);
+      if (x.f) await Store.putRec('sheets', { id: x.f, type: x.type || 'image/jpeg', buf }).catch(() => {}); // лист из программы — в кэш
+      else if (x.h) sheets.push({ f: `g${t}-${i}`, h: x.h, name: String(x.name || 'Ноты'), type: x.type || 'image/jpeg', buf });
+    }
+    const r = { id, ed: e, edl: d.edl || (e.sh === null ? e : null), pend: true, mine: false, who: String(e.bn || d.who || ''), name: d.song.name,
+      song: d.song, at: Date.now(), chords: e.chords, key: e.key, sheets };
+    try { await Store.putRec('got', r); } catch { toast('Не хватило места на телефоне'); return; }
+    got.set(id, r);
+    window.renderExt && window.renderExt();
+    showRec(id);
+    // на связи — сразу в программу (flush сам скажет, что вышло); нет — ждёт в «Не синхронизированные»
+    if (online()) flush(true); else toast(`Правка от ${r.who || '?'} — в «Не синхронизированные». Уйдёт в программу, когда телефон подключится`);
+  }
+  function showRec(id) { if (Store.songs.has(id)) openSong(id, true); else openExt(id); }
+
+  // После синхронизации: правки — в программу. Принята, старая или уже есть — запись убираем (дальше всё придёт из программы)
+  let flushing = false;
+  // here — правку только что открыли на связи: сказать и тогда, когда она чужая и уже не нужна
+  async function flush(here) {
+    if (flushing) return;
+    const todo = [...got.values()].filter((r) => r.pend && (r.ed || (canEdit() && Store.songs.has(r.id))));
+    if (!todo.length) return;
+    flushing = true;
+    let n = 0;
+    let oldMine = 0;
+    let already = 0; // та же правка уже в программе (её донёс другой телефон)
+    let why = '';
+    const gone = [];
+    try {
+      for (const r of todo) {
+        if (r.ed) {
+          let e = r.ed;
+          const data = {};
+          for (const [k, h] of e.sh || []) {
+            if (k !== 'h') continue;
+            const x = (r.sheets || []).find((y) => y.h === h);
+            if (!x) { e = r.edl; break; }
+            data[h] = await b64(new Blob([x.buf]));
+          }
+          if (!e) { gone.push(r.id); continue; }
+          const res = await Store.api('/songs/edit', { method: 'POST', body: { e, data: e.sh ? data : {} }, timeout: 240000 });
+          if (res.drop) why = why || res.text || '';
+          else if (res.applied) n++;
+          else if (res.same && (r.mine || here)) already++;
+          else if (res.old && (r.mine || here)) oldMine++;
+        } else {
+          // своя правка аккордов без подписи (телефон ещё не получил ключ) — как обычно
+          await Store.api('/songs/chords', { method: 'POST', body: { id: r.id, chords: r.chords, ...(r.key ? { key: r.key } : {}) } });
+          await dropPend(r.id);
+          n++;
+          gone.push(r.id);
+          continue;
+        }
+        await Store.delRec('got', r.id).catch(() => {});
+        got.delete(r.id);
+        gone.push(r.id);
+      }
+    } catch (e) {
+      if (e.code !== 'net') toast('Правка не ушла в программу: ' + (e.message || e));
+    } finally { flushing = false; }
+    window.renderExt && window.renderExt();
+    if (n) toast(`Правки без связи отправлены в программу: ${n}`);
+    else if (already && !oldMine) toast('Эта правка уже в программе');
+    else if (oldMine) toast(here ? 'В программе уже эта или более новая версия песни — она у вас на телефоне' : 'В программе уже более новая версия песни — ваша правка без связи не понадобилась');
+    if (why) setTimeout(() => toast(why), n || oldMine ? 2500 : 0);
+    if (n) await runSync();
+    if (cur && gone.includes(cur.id) && Store.songs.has(cur.id)) reopen(cur.id);
+  }
+
   /* ----- Поделиться: файл .txt, который понятен и человеку, и приложению ----- */
 
-  const canShare = (v) => !!v && !!v.song && !!v.id && !v.tmp && canEdit() && (!!(v.src && v.src.chords) || list(v).length > 0);
+  const canShare = (v) => !!v && !!v.song && !!v.id && !v.tmp && (canEdit() || !!(v.got && v.got.ed)) && (!!(v.src && v.src.chords) || list(v).length > 0);
   async function share(v) {
     if (!canShare(v) || busy) return;
     const s = v.src || {};
@@ -332,14 +518,19 @@ const Sheets = (() => {
       for (const x of list(v)) {
         let r;
         try { r = x.rec || await recOf(x.f); } catch { toast('Не все листы нот на телефоне — нужна связь с программой'); return; }
-        sheets.push({ name: x.name, type: r.type, data: await b64(new Blob([r.buf], { type: r.type })) });
+        const tag = x.own === 'prog' ? { f: x.f } : { h: (x.rec && x.rec.h) || Sig.hashBuf(r.buf) };
+        sheets.push({ name: x.name, type: r.type, ...tag, data: await b64(new Blob([r.buf], { type: r.type })) });
       }
+      // Подпись: правка без связи — как есть; иначе «как сейчас у песни» (at 0 — программа её уже знает)
+      const g = v.got;
+      const m = g && g.ed ? { ed: g.ed, edl: g.edl } : canSign() ? makeEdit(v, {}, 0) : null;
       const song = { name: v.name, text: plainOf(v) };
       for (const k of ['key', 'tempo', 'time', 'ccli', 'number']) if (s[k]) song[k] = s[k];
       if (s.chords) song.chords = s.chords;
-      const d = { app: 'church-presenter', kind: 'team-song', v: 1, at: Date.now(), who: Store.me ? Store.me.person.name : '', song, sheets };
+      const d = { app: 'church-presenter', kind: 'team-song', v: 1, at: Date.now(), who: g && g.ed ? g.who : Store.me ? Store.me.person.name : '', song, sheets,
+        ...(m ? { edit: m.ed, edl: m.edl } : {}) };
       const meta = [s.key && `Тональность ${s.key}`, s.tempo && `♩ = ${s.tempo}`, s.time, sheets.length && `листов нот: ${sheets.length}`].filter(Boolean).join(' · ');
-      const link = await makeLink(song, d.who);
+      const link = await makeLink(song, d.who, m && m.edl);
       const text = [v.name, meta, '', 'Аккорды и ноты для приложения «MP Группа».',
         'Ссылка (аккорды и текст — сразу в «Не синхронизированные»): ' + link,
         'Ноты — из этого файла: «…» → «Открыть файл с аккордами и нотами».', '',
@@ -371,6 +562,7 @@ const Sheets = (() => {
   function openText(t) {
     const d = parse(t);
     if (!d) return false;
+    if (editLike(d.edit) && sameProg(d.edit)) { takeEdit(d); return true; } // правка из своей программы — сразу в «Не синхронизированные»
     inc = d;
     const s = d.song;
     const what = [s.chords ? 'аккорды' + (s.key ? ` (${s.key})` : '') : '', d.sheets.length ? `листов нот: ${d.sheets.length}` : ''].filter(Boolean).join(', ') || 'только текст';
@@ -452,7 +644,7 @@ const Sheets = (() => {
   }
   async function saveProg() {
     if (!tgt || busy) return;
-    if (!canChords()) { toast('Нет связи с программой — сохраните пока «Только у меня»'); return; }
+    if (!canChords() || !online()) { toast('Нет связи с программой — сохраните пока «Только у меня»'); return; }
     busy = true;
     $('imProg').disabled = true;
     const id = tgt.id;
@@ -512,11 +704,34 @@ const Sheets = (() => {
     viewSong(inc.song, inc.sheets.map((x) => ({ name: x.name, type: x.type, buf: fromB64(x.data) })));
   }
 
+  /* ----- Аккорды, исправленные без связи: got с pend: true; уходят в программу после синхронизации (flush) ----- */
+
+  async function saveMyChords(id, chords) {
+    const old = got.get(id);
+    const s = Store.songs.get(id) || {};
+    const r = old ? { ...old, chords, pend: true, at: Date.now() } : { id, chords, key: '', who: '', name: s.name || '', at: Date.now(), sheets: [], pend: true };
+    await Store.putRec('got', r);
+    got.set(id, r);
+  }
+  // Отправлено в программу: чужие листы нот (если были) оставить, правку — убрать
+  async function dropPend(id) {
+    const r = got.get(id);
+    if (!r || !r.pend) return;
+    if (r.sheets && r.sheets.length) {
+      const k = { ...r, chords: '', key: '', pend: false };
+      await Store.putRec('got', k).catch(() => {});
+      got.set(id, k);
+    } else {
+      await Store.delRec('got', id).catch(() => {});
+      got.delete(id);
+    }
+  }
+
   /* ----- «Не синхронизированные»: песни из ссылки/файла, которых ещё нет в программе (got с ext: true) ----- */
 
   const hash = (s) => { let h = 5381; for (let i = 0; i < s.length; i++) h = ((h * 33) ^ s.charCodeAt(i)) >>> 0; return h.toString(36); };
   const extId = (song) => 'ext-' + hash(Chords.norm(String(song.name).replace(/^\s*\d+[.)\s]+/, '')) + '|' + Chords.norm(Chords.lyricLines(song.text || song.chords || '')[0] || ''));
-  const extList = () => [...got.values()].filter((r) => r.ext).sort((a, b) => b.at - a.at);
+  const extList = () => [...got.values()].filter((r) => r.ext || r.ed).sort((a, b) => b.at - a.at);
   // sheets — [{ name, type, buf }]; песня уже была (ссылка, потом файл) — дополняем, а не затираем
   async function addExt(song, sheets, who) {
     const id = extId(song);
@@ -531,12 +746,23 @@ const Sheets = (() => {
     got.set(id, r);
     return r;
   }
-  function openExt(id) {
+  async function openExt(id) {
     const r = got.get(id);
     if (!r) return;
+    if (r.ed) {
+      if (Store.songs.has(id)) { openSong(id, true); return; }
+      // песни на телефоне ещё нет: показать как в файле; листы программы — из кэша, если пришли в файле
+      const sheets = [];
+      for (const [k, a, name] of r.ed.sh || []) {
+        const x = k === 'h' ? (r.sheets || []).find((y) => y.h === a) : await Store.getRec('sheets', a).catch(() => null);
+        if (x) sheets.push({ name, type: x.type, buf: x.buf });
+      }
+      viewSong({ ...r.song, chords: r.chords, key: r.key || r.song.key || '' }, sheets, `Правка от ${r.who || '?'}: этой песни на телефоне ещё нет. Уйдёт в программу, когда телефон подключится.`);
+      return;
+    }
     viewSong(r.song, r.sheets, 'Ещё не синхронизирована с программой: сохранена только на этом телефоне.');
   }
-  async function delExt(id) { got.delete(id); await Store.delRec('got', id).catch(() => {}); }
+  async function delExt(id) { got.delete(id); await Store.delRec('got', id).catch(() => {}); if (cur && cur.id === id && Store.songs.has(id)) reopen(id); }
   async function addFromInc() {
     try { const r = await addExt(inc.song, inc.sheets.map((x) => ({ name: x.name, type: x.type, buf: fromB64(x.data) })), inc.who); $('imDlg').close(); toast('Добавлено в «Не синхронизированные»'); window.renderExt && window.renderExt(); openExt(r.id); } catch { toast('Не хватило места на телефоне'); }
   }
@@ -546,8 +772,10 @@ const Sheets = (() => {
   const toB64u = (u8) => { let s = ''; for (let i = 0; i < u8.length; i += 8192) s += String.fromCharCode.apply(null, u8.subarray(i, i + 8192)); return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''); };
   const fromB64u = (s) => { const t = atob(s.replace(/-/g, '+').replace(/_/g, '/')); const u = new Uint8Array(t.length); for (let i = 0; i < t.length; i++) u[i] = t.charCodeAt(i); return u; };
   async function pipe(u8, S) { return new Uint8Array(await new Response(new Blob([u8]).stream().pipeThrough(new S('deflate-raw'))).arrayBuffer()); }
-  async function makeLink(song, who) {
-    const o = { n: song.name, t: song.text || '', c: song.chords || '', k: song.key || '', p: song.tempo || '', m: song.time || '', w: who || '' };
+  // e — подписанная правка без листов (edl): аккорды в ней те же, что c
+  async function makeLink(song, who, e) {
+    const o = { n: song.name, t: song.text || '', c: e ? e.chords : song.chords || '', k: song.key || '', p: song.tempo || '', m: song.time || '', w: who || '',
+      ...(e ? { e: { l: e.lib, s: e.sid, a: e.at, b: e.by, n: e.bn, k: e.key, g: e.sig } } : {}) };
     const raw = new TextEncoder().encode(JSON.stringify(o));
     let p = 'r.' + toB64u(raw);
     try { if (window.CompressionStream) p = 'z.' + toB64u(await pipe(raw, CompressionStream)); } catch { /* без сжатия */ }
@@ -565,6 +793,9 @@ const Sheets = (() => {
       if (!o || typeof o.n !== 'string') throw new Error('x');
       const song = { name: o.n, text: String(o.t || '') };
       for (const [k, v] of [['chords', o.c], ['key', o.k], ['tempo', o.p], ['time', o.m]]) if (v) song[k] = String(v);
+      const x = o.e;
+      const e = x && { v: 1, lib: String(x.l || ''), sid: String(x.s || ''), at: Number(x.a), by: String(x.b || ''), bn: String(x.n || ''), chords: String(o.c || ''), key: String(x.k || ''), sh: null, sig: String(x.g || '') };
+      if (e && editLike(e) && sameProg(e)) { await takeEdit({ edit: e, song, sheets: [], who: o.w }); return true; }
       const r = await addExt(song, [], o.w);
       toast('Песня добавлена в «Не синхронизированные»');
       window.renderExt && window.renderExt();
@@ -604,5 +835,5 @@ const Sheets = (() => {
     $('imMine').onclick = saveMine;
   }
 
-  return { init, wire, prefetch, bar, open, auto, share, canShare, openFile, openText, fromShare, fromLink, extList, openExt, delExt, got: (id) => got.get(id) || null };
+  return { init, wire, prefetch, flush, saveMyChords, saveMyEdit, canSign, dropPend, bar, open, auto, share, canShare, openFile, openText, fromShare, fromLink, extList, openExt, delExt, got: (id) => got.get(id) || null };
 })();

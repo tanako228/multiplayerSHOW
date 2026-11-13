@@ -207,6 +207,7 @@ async function runSync(full) {
       if (follow && live.kind === 'song' && screen === 'Song' && cur && cur.note) followLive();
     }
     Sheets.prefetch(); // листы нот — на телефон, чтобы были без сети
+    Sheets.flush();    // аккорды, исправленные без связи, — в программу
     if (first || full) {
       toast(`Песни загружены: ${Store.songs.size}`);
       if (first) welcome();
@@ -273,6 +274,7 @@ async function lost(code) {
       conn = 'ok'; // http проходит, WebSocket — нет (прокси?): песни всё равно докачаем
       Store.saveMe(me).catch(() => {});
       syncIf(me);
+      Sheets.flush();
     } catch (e) {
       conn = BAD.includes(e.code) ? e.code : 'net';
       if (conn === 'auth') { await Store.dropAuth(); paintConn(); return; }
@@ -312,7 +314,8 @@ function onMsg(m) {
       setSets(m.sets);
       applyLive(m.live);
       syncIf(m.me);
-      if (m.time && tRtt === Infinity) tOff = m.time - Date.now();
+      Sheets.flush(); // правки без связи — в программу сразу при подключении (синхронизации может и не быть: в программе ничего не менялось)
+      if (m.time && tRtt === Infinity) { tOff = m.time - Date.now(); ls.set('mps.toff', String(Math.round(tOff))); }
       syncBurst();
       for (const x of m.msgs || []) gotMsg(x, false);
       if (m.metro && m.metro.on) gotMetro(m.metro); else if (mt && mt.shared) mtStop();
@@ -377,14 +380,14 @@ function sendMsg(text) {
 
 /* ----- Метроном: свой или общий (удары от t0 по часам программы) ----- */
 
-let tOff = 0;        // время программы = Date.now() + tOff
+let tOff = Number(ls.get('mps.toff', '0')) || 0; // время программы = Date.now() + tOff (помним — правки без связи метятся этим временем)
 let tRtt = Infinity; // задержка лучшего замера
 const srvNow = () => Date.now() + tOff;
 function clockSample(sent, srv) {
   const now = Date.now();
   const rtt = now - sent;
   tRtt = Math.min(tRtt + 4, 5000); // старый лучший замер понемногу «стареет»
-  if (rtt <= tRtt) { tRtt = rtt; tOff = srv - (sent + rtt / 2); }
+  if (rtt <= tRtt) { tRtt = rtt; tOff = srv - (sent + rtt / 2); ls.set('mps.toff', String(Math.round(tOff))); }
 }
 let mt = null;       // { on, bpm, beats, t0, shared, by }
 let mtNext = 0;
@@ -773,13 +776,13 @@ function renderExt() {
   box.hidden = !rs.length;
   box.replaceChildren();
   if (!rs.length) return;
-  box.append(el('div', 'ext-h', 'Не синхронизированные'), el('p', 'hint', 'Пришли от другого телефона, в программе пока не появились. Лежат только у вас.'));
+  box.append(el('div', 'ext-h', 'Не синхронизированные'));
   for (const r of rs) {
     const row = el('div', 'ext-row');
     const b = el('button', 'item');
     b.type = 'button';
     const t1 = el('span', 't', r.name);
-    const t2 = el('span', 's', [r.who && `от ${r.who}`, r.sheets.length && `нот: ${r.sheets.length}`].filter(Boolean).join(' · '));
+    const t2 = el('span', 's', [r.ed ? (r.mine ? 'ваша правка' : `правка от ${r.who || '?'}`) : r.who && `от ${r.who}`, r.sheets.length && `нот: ${r.sheets.length}`].filter(Boolean).join(' · '));
     t1.dataset.noi18n = '';
     t2.dataset.noi18n = '';
     b.append(t1, t2);
@@ -788,7 +791,7 @@ function renderExt() {
     x.type = 'button';
     x.setAttribute('aria-label', 'Убрать');
     x.dataset.noi18n = '';
-    x.onclick = async () => { if (await ask(`Убрать «${r.name}» из «Не синхронизированные»? Она лежит только на этом телефоне.`, 'Убрать')) { await Sheets.delExt(r.id); renderExt(); } };
+    x.onclick = async () => { if (await ask(r.ed ? `Убрать правку «${r.name}»? В программу она тогда не уйдёт с этого телефона.` : `Убрать «${r.name}» из «Не синхронизированные»? Она лежит только на этом телефоне.`, 'Убрать')) { await Sheets.delExt(r.id); renderExt(); } };
     row.append(b, x);
     box.append(row);
   }
@@ -849,7 +852,9 @@ function setTr(id, t, capo) {
   if (!t && !capo) delete trAll[id]; else trAll[id] = { t, capo };
   ls.set('mps.tr', JSON.stringify(trAll));
 }
-const canChords = () => !!(Store.me && Store.me.perms && Store.me.perms.chords) && conn === 'ok';
+// Право «Может править аккорды» — и без связи: тогда аккорды ждут на телефоне и уходят в программу при связи (Sheets.flush)
+const canChords = () => !!(Store.me && Store.me.perms && Store.me.perms.chords);
+const online = () => conn === 'ok';
 const keyNow = (v) => { const s = v.src || {}; const tr = v.tr || { t: 0 }; return s.key ? Chords.keyShift(s.key, tr.t) || s.key : v.key || ''; };
 // Строка аккордов «[Am]Сла[G]ва» → места в строке слайда (по счёту букв: пробелы и знаки могут отличаться)
 function chordMarks(line, raw, n, flat) {
@@ -947,11 +952,34 @@ async function saveChordsEd() {
   if (!v || !v.id || chBusy) return;
   const text = Chords.toInline($('chTa').value).replace(/\s+$/, '');
   if (text.trim() && !Chords.hasChords(text)) { toast('В тексте нет аккордов — впишите их строкой над словами'); return; }
-  if (!canChords()) { toast('Нет связи с программой или право снято — аккорды не отправлены'); return; }
+  if (!canChords()) { toast('Право править аккорды снято — аккорды не сохранены'); return; }
   chBusy = true;
   $('chSave').disabled = true;
+  // Без связи — сохранить на телефоне, отправится само
+  const keep = async () => {
+    // с ключом из программы — подписанная правка (её донесёт до программы любой телефон группы); без ключа — только свой телефон
+    try { await (Sheets.canSign() ? Sheets.saveMyEdit(v.id, text) : Sheets.saveMyChords(v.id, text)); } catch (e) { toast(e.message || 'Не хватило места на телефоне'); return; }
+    $('chDlg').close();
+    toast('Нет связи — аккорды сохранены на телефоне и уйдут в программу, когда он подключится');
+    if (cur && cur.id === v.id) { const y = window.scrollY; openSong(v.id, false, { pl: cur.pl, eid: cur.eid, key: cur.key }); window.scrollTo(0, y); markLive(false); }
+  };
   try {
-    await Store.api('/songs/chords', { method: 'POST', body: { id: v.id, chords: text } });
+    if (!online()) { await keep(); return; }
+    // у песни есть неотправленная правка (листы нот без связи) — дополнить её и отправить целиком
+    const g = Sheets.got(v.id);
+    if (g && g.ed && Sheets.canSign()) {
+      try { await Sheets.saveMyEdit(v.id, text); } catch (e) { toast(e.message || 'Не получилось'); return; }
+      $('chDlg').close();
+      await Sheets.flush();
+      return;
+    }
+    try {
+      await Store.api('/songs/chords', { method: 'POST', body: { id: v.id, chords: text } });
+    } catch (e) {
+      if (e.code === 'net') { await keep(); return; }
+      throw e;
+    }
+    await Sheets.dropPend(v.id);
     $('chDlg').close();
     toast(text.trim() ? 'Аккорды сохранены в программе' : 'Аккорды убраны');
     await runSync();
@@ -1107,7 +1135,7 @@ window.addEventListener('resize', () => { if (window.innerWidth !== spaceW) { sp
 // base — песня как пришла из программы; src — она же с аккордами из чужого файла (got, sheets.js), если человек их наложил у себя
 function songView(s, ctx) {
   const g = Sheets.got(s.id);
-  const src = g && g.chords ? { ...s, chords: g.chords, key: g.key || s.key } : s;
+  const src = g && (g.chords || g.pend) ? { ...s, chords: g.chords, key: g.key || s.key } : s;
   return { id: s.id, name: s.name, slides: s.slides, song: true, src, base: s, got: g, ...(ctx || {}) };
 }
 function openSong(id, push, ctx) {

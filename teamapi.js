@@ -66,6 +66,7 @@ function load() {
   const j = o.store.read();
   people = (Array.isArray(j.people) ? j.people : []).filter((p) => p && p.id && p.name)
     .map((p) => ({ id: String(p.id), name: clean(p.name, 40), role: roleOk(p.role) ? p.role : 'musician', at: Number(p.at) || 0, ctl: !!p.ctl, chd: !!p.chd,
+      ...(/^[0-9a-f]{64}$/.test(p.ek || '') ? { ek: p.ek } : {}),
       ...(p.pw && /^[0-9a-f]{32}$/.test(p.pw.s) && /^[0-9a-f]{64}$/.test(p.pw.h) ? { pw: { s: p.pw.s, h: p.pw.h } } : {}) }));
   auth = { mode: j.auth && MODES.includes(j.auth.mode) ? j.auth.mode : 'qr' };
   devices = (Array.isArray(j.devices) ? j.devices : []).filter((d) => d && d.id && /^[0-9a-f]{64}$/.test(d.hash) && people.some((p) => p.id === d.person))
@@ -329,7 +330,12 @@ function apply(lib) {
   for (const [id, p] of now) {
     const h = crypto.createHash('sha1').update(FMT + JSON.stringify(p)).digest('base64url').slice(0, 16);
     const old = sync.songs[id];
-    if (!old || old[0] !== h) { sync.songs[id] = [h, ++sync.seq]; ch = true; }
+    if (!old || old[0] !== h) {
+      const own = (expect.get(id) || 0) > Date.now();
+      if (own) expect.delete(id);
+      sync.songs[id] = [h, ++sync.seq, !old ? 0 : own ? Number(old[2]) || 0 : Date.now()];
+      ch = true;
+    }
     if (sync.gone[id] !== undefined) { delete sync.gone[id]; ch = true; }
   }
   for (const id of Object.keys(sync.songs)) if (!now.has(id)) { delete sync.songs[id]; sync.gone[id] = ++sync.seq; ch = true; }
@@ -400,9 +406,12 @@ function changes(req, res, u, d) {
 /* ----- Запросы телефонов: /api/v1/… ----- */
 
 function me(d, p) {
+  // Ключ подписи правок: телефон подписывает ими правку без связи, а донести до программы может любой телефон группы (putEdit)
+  if (can(p, 'chords') && !p.ek) { p.ek = crypto.randomBytes(32).toString('hex'); saveTeam(); }
   return {
     device: { id: d.id, name: d.name },
-    person: { name: p.name, role: p.role, roleName: roleName(p.role) },
+    person: { id: p.id, name: p.name, role: p.role, roleName: roleName(p.role) },
+    ...(can(p, 'chords') ? { ek: p.ek } : {}),
     perms: Object.fromEntries(Object.keys(PERMS).map((k) => [k, can(p, k)])),
     server: { app: 'church-presenter', name: 'multiplayerSHOW', ver: o.ver || '' },
     lib: sync.lib, seq: sync.seq, lh, songs: pay.size, time: Date.now(),
@@ -454,6 +463,8 @@ function handle(req, res, u) {
     return getSheet(req, res, p.slice(8));
   }
   if (p === '/songs/sheets' && req.method === 'POST') { putSheets(req, res, d, person); return; }
+  // Правка (аккорды, ноты), подписанная тем, кто может править; принести может любой телефон группы
+  if (p === '/songs/edit' && req.method === 'POST') { putEdit(req, res, d, person); return; }
   send(req, res, 404, { error: 'nf' });
 }
 function getSheet(req, res, f) {
@@ -512,6 +523,79 @@ async function putChords(req, res, d, person) {
     log('chords', { name: person.name, song: it.name, clear: !b.chords.trim() });
     send(req, res, 200, { ok: true, ...(r || {}) });
   } catch (e) { send(req, res, 503, { error: 'off', text: (e && e.message) || 'Окно программы не ответило' }); }
+}
+
+/* ----- Правка без связи: подписана ключом того, кто правил (ek), приносит любой телефон ----- */
+/* e = { v: 1, lib, sid, at, by, bn, chords, key, sh, sig }: sh — листы нот целиком ([['f', файл, имя] — уже есть в программе,
+   ['h', sha256, имя] — новый, байты в data[h]]) или null (листы не трогать: правка из ссылки). sig = HMAC-SHA256(ek, editMsg(e)).
+   Порядок: правка ставится, только если она новее последней принятой (ранг: at*2 + есть ли листы) и новее изменения песни
+   в программе (sync.songs[id][2]). Старая или уже принятая — ответ ok, телефон её просто убирает. */
+let edits = { songs: {} }; // id песни → { r: ранг, sig } — последняя принятая правка
+const expect = new Map();  // id песни → до какого времени изменение песни — наша правка (apply не двигает время программы)
+const edBusy = new Set();
+const HEX64 = /^[0-9a-f]{64}$/;
+const editsFile = () => path.join(o.dir, 'team-edits.json');
+function loadEdits() {
+  edits = { songs: {} };
+  try { const j = JSON.parse(fs.readFileSync(editsFile(), 'utf8')); if (j && j.songs && typeof j.songs === 'object') edits = { songs: j.songs }; } catch { /* нет файла */ }
+}
+function saveEdits() {
+  try { fs.writeFileSync(editsFile() + '.tmp', JSON.stringify(edits)); fs.renameSync(editsFile() + '.tmp', editsFile()); } catch { /* не записалось */ }
+}
+const editMsg = (e) => JSON.stringify(['mps-edit', 1, e.lib, e.sid, e.at, e.by, e.chords, e.key, e.sh]);
+function editShape(e) {
+  return !!e && typeof e.lib === 'string' && typeof e.sid === 'string' && Number.isSafeInteger(e.at) && e.at >= 0 && typeof e.by === 'string'
+    && typeof e.chords === 'string' && e.chords.length <= 30000 && typeof e.key === 'string' && e.key.length <= 12 && typeof e.sig === 'string' && HEX64.test(e.sig)
+    && (e.sh === null || (Array.isArray(e.sh) && e.sh.length <= 60 && e.sh.every((x) => Array.isArray(x) && x.length === 3 && typeof x[2] === 'string' && x[2].length <= 200
+      && ((x[0] === 'f' && SHEET_RE.test(String(x[1]))) || (x[0] === 'h' && HEX64.test(String(x[1])))))));
+}
+async function putEdit(req, res, d, person) {
+  if (!can(person, 'songs')) return send(req, res, 403, { error: 'perm', text: 'Нет права смотреть песни' });
+  let b;
+  try { b = await readBody(req, 60 * 1024 * 1024); } catch { return send(req, res, 400, { error: 'body', text: 'Правка слишком большая или не прочиталась' }); }
+  const e = b.e;
+  if (!editShape(e)) return send(req, res, 400, { error: 'body', text: 'Правка повреждена' });
+  refresh();
+  const drop = (why, text) => send(req, res, 200, { ok: false, drop: true, why, text });
+  if (e.lib !== sync.lib) return drop('other', 'Правка сделана для другой программы — сюда не подходит');
+  const signer = people.find((x) => x.id === e.by);
+  if (!signer || !signer.ek) return drop('who', 'Того, кто правил, в программе уже нет');
+  const want = crypto.createHmac('sha256', Buffer.from(signer.ek, 'hex')).update(editMsg(e)).digest();
+  if (!crypto.timingSafeEqual(want, Buffer.from(e.sig, 'hex'))) { log('editBad', { name: person.name, dev: d.name }); return drop('sig', 'Правка повреждена или изменена после подписи — не принята'); }
+  if (!can(signer, 'chords')) return drop('perm', `У «${signer.name}» больше нет права править аккорды и ноты — правка не принята`);
+  const it = pay.get(e.sid);
+  if (!it) return drop('nf', 'Такой песни в программе уже нет');
+  const rank = e.at * 2 + (e.sh ? 1 : 0);
+  const st = edits.songs[e.sid] || { r: 0, sig: '' };
+  if (st.sig === e.sig) return send(req, res, 200, { ok: true, same: true });
+  const progAt = Number((sync.songs[e.sid] || [])[2]) || 0;
+  if (rank <= st.r || e.at <= progAt) return send(req, res, 200, { ok: true, old: true });
+  // Листы: уже есть в программе — путь к файлу; новые — байты, сверка sha256
+  let sheets = null;
+  if (e.sh) {
+    sheets = [];
+    const data = b.data && typeof b.data === 'object' ? b.data : {};
+    for (const [k, v, name] of e.sh) {
+      if (k === 'f') { const file = sheetFiles.get(v); if (file) sheets.push({ file, name: clean(name, 120) }); continue; }
+      const buf = typeof data[v] === 'string' ? Buffer.from(data[v], 'base64') : null;
+      if (!buf || crypto.createHash('sha256').update(buf).digest('hex') !== v) return send(req, res, 400, { error: 'body', text: 'В правке не хватает листа нот — попросите прислать файл, а не ссылку' });
+      sheets.push({ buf, name: clean(name, 120) || 'Ноты' });
+    }
+  }
+  if (!o.edit) return send(req, res, 503, { error: 'off', text: 'Программа не готова принять правку — её нужно закрыть полностью и запустить заново (обновление не применилось)' });
+  if (edBusy.has(e.sid)) return send(req, res, 429, { error: 'rate', text: 'Подождите — эта песня ещё сохраняется' });
+  edBusy.add(e.sid);
+  expect.set(e.sid, Date.now() + 30e3);
+  try {
+    await o.edit({ id: e.sid, chords: e.chords.split(String.fromCharCode(13)).join('').trimEnd(), key: clean(e.key, 8), sheets, who: signer.name, via: person.name });
+    edits.songs[e.sid] = { r: rank, sig: e.sig };
+    saveEdits();
+    log('edit', { name: person.name, by: signer.name, song: it.name, sh: !!sheets });
+    send(req, res, 200, { ok: true, applied: true });
+  } catch (err) {
+    expect.delete(e.sid);
+    send(req, res, 503, { error: 'off', text: (err && err.message) || 'Окно программы не ответило' });
+  } finally { edBusy.delete(e.sid); }
 }
 
 /* ----- Окно «Группа»: состояние и действия оператора ----- */
@@ -782,6 +866,7 @@ function init(opt) {
   o = opt;
   load();
   loadSync();
+  loadEdits();
   // Библиотеку разбираем не при запуске программы (7 МБ — заметная пауза), а по первому запросу телефона
   for (const h of timers) clearInterval(h);
   timers = [];
@@ -811,4 +896,4 @@ function shutdown() {
 }
 
 module.exports = { init, shutdown, handle, state, act, libSaved, upgrade, setLive, closeAll, ROLES,
-  _test: { refresh, apply, pending, sync: () => sync, pay: () => pay, socks, sets: () => sets, live: () => live, fails } };
+  _test: { refresh, apply, editMsg, edits: () => edits, pending, sync: () => sync, pay: () => pay, socks, sets: () => sets, live: () => live, fails } };

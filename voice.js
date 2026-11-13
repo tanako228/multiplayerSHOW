@@ -3,7 +3,7 @@
    и, когда он называет место («Иоанна три шестнадцать», «Римлянам 8:28», «шестнадцатый стих третьей главы
    от Иоанна», «John three sixteen»), предлагает оператору этот стих одной кнопкой «Показать».
    Сам на экран ничего не выводит. Панель #vcPanel — плавающая (тянуть за шапку), место — settings.vcPos.
-   Настройки — settings.voice = { lang: 'ru'|'en', mic: { id, label } }. Разбор речи — vcFind (числа словами → цифры). */
+   Настройки — settings.voice = { lang: 'ru'|'en'|'de', mic: { id, label } }. Разбор речи — vcFind (числа словами → цифры). */
 
 let vcState = 'off'; // off | loading | on | error
 let vcHeard = '';    // последнее услышанное (частично)
@@ -18,17 +18,26 @@ const vcCfg = () => { if (!settings.voice || typeof settings.voice !== 'object')
 
 /* ---------- Разбор сказанного ---------- */
 
-const VC_FILL = /^(глава|главы|главе|главу|главой|глав|стих|стиха|стихи|стихе|стихов|стихам|стихах|chapter|chapters|verse|verses|и|and|с|со|from|в|во|in|of|номер|number)$/;
-const VC_RANGE = /^(по|до|through|to|till|thru|until)$/;
-const VC_CH = /^(глава|главы|главе|главу|главой|chapter)$/;
-const VC_VS = /^(стих|стиха|стихи|стихе|стихов|verse|verses)$/;
+// Слово подходит по встроенному правилу или есть в списке включённых пакетов языков (voicepack.js)
+const vcRe = (re, key) => ({ test: (t) => re.test(t) || (typeof vpHas === 'function' && vpHas(key, t)) });
+const VC_FILL = vcRe(/^(глава|главы|главе|главу|главой|глав|стих|стиха|стихи|стихе|стихов|стихам|стихах|chapter|chapters|verse|verses|и|and|с|со|from|в|во|in|of|номер|number|kapitel|vers|verse|versen|und|von|im|aus|nach|der|die|das|den|dem|des)$/, 'filler');
+const VC_RANGE = vcRe(/^(по|до|through|to|till|thru|until|bis)$/, 'range');
+const VC_CH = vcRe(/^(глава|главы|главе|главу|главой|chapter|kapitel)$/, 'chapter');
+const VC_VS = vcRe(/^(стих|стиха|стихи|стихе|стихов|verse|verses|vers|versen)$/, 'verse');
+// Слова между числами и книгой: «…восьмой стих КНИГИ ИИСУСА Навина», «1:8 из книги…», «Kapitel 3 im Evangelium nach Johannes»
+const VC_PRE = vcRe(/^(книги|книга|книге|книгу|из|в|во|от|евангелия|евангелие|евангелии|послания|послание|послании|к|ко|апостола|святого|пророка|иисуса|of|the|book|from|in|gospel|letter|epistle|to|according|aus|im|dem|der|des|buch|buche|evangelium|nach|brief|an|die)$/, 'prefix');
+
+// «В ЭТОЙ ЖЕ главе», «в той же книге» — подпись не номер, а ссылка на текущее место
+const VC_SAME = vcRe(/^(этой|этом|эта|эту|этого|той|том|та|ту|того|же|самой|самом|this|same|that|selben|derselben|demselben|diesem|dieser|gleichen)$/, 'same');
+// «Следующий стих» — стих после последнего
+const VC_NEXT = vcRe(/^(следующий|следующем|следующего|следующую|следующая|дальше|next|following|nächste|nächsten|nächster|folgende|folgenden)$/, 'next');
 
 // Числа словами: «двадцать пять», «сто девятнадцатый», «twenty five»
 const VC_UNITS = [
-  [/^(один|одна|одно|одного|одной|одному|одном)$|^перв(ый|ая|ое|ого|ой|ому|ом|ую|ые)$|^(one|first|1st)$/, 1],
-  [/^(два|две|двух|двум)$|^втор(ой|ая|ое|ого|ому|ом|ую)$|^(two|second|2nd)$/, 2],
-  [/^(три|трех|трем)$|^трет(ий|ья|ье|ьего|ьей|ьему|ьем|ью)$|^(three|third|3rd)$/, 3],
-  [/^(четыре|четырех)$|^четверт(ый|ая|ое|ого|ой|ом|ую)$|^(four|fourth)$/, 4],
+  [/^(один|одна|одно|одного|одной|одному|одном)$|^перв(ый|ая|ое|ого|ой|ому|ом|ую|ые)$|^(one|first|1st)$|^(eins|erste|ersten|erster|erstes)$/, 1],
+  [/^(два|две|двух|двум)$|^втор(ой|ая|ое|ого|ому|ом|ую)$|^(two|second|2nd)$|^(zwei|zweite|zweiten|zweiter|zweites)$/, 2],
+  [/^(три|трех|трем)$|^трет(ий|ья|ье|ьего|ьей|ьему|ьем|ью)$|^(three|third|3rd)$|^(drei|dritte|dritten|dritter|drittes)$/, 3],
+  [/^(четыре|четырех)$|^четверт(ый|ая|ое|ого|ой|ом|ую)$|^(four|fourth)$|^(vier|vierte|vierten|vierter)$/, 4],
   [/^(пять|пяти)$|^пят(ый|ая|ое|ого|ой|ом|ую)$|^(five|fifth)$/, 5],
   [/^(шесть|шести)$|^шест(ой|ая|ое|ого|ом|ую)$|^(six|sixth)$/, 6],
   [/^(семь|семи)$|^седьм(ой|ая|ое|ого|ом|ую)$|^(seven|seventh)$/, 7],
@@ -48,11 +57,45 @@ const VC_TENS = [
 ];
 const VC_HUND = [[/^(сто|ста|сотый|сотая|сотого|сотом|сотой|hundred|hundredth)$/, 100], [/^(двести|двухсот)/, 200]];
 const vcHit = (list, t) => { for (const [re, v] of list) if (re.test(t)) return v; return 0; };
+// Немецкие числа одним словом: «einundzwanzig», «hundertneunzehnten», «sechzehnte», «dritten»
+const DE_U = { ein: 1, eins: 1, zwei: 2, drei: 3, vier: 4, fünf: 5, sechs: 6, sieben: 7, acht: 8, neun: 9 };
+const DE_T = { zehn: 10, elf: 11, zwölf: 12, dreizehn: 13, vierzehn: 14, fünfzehn: 15, sechzehn: 16, siebzehn: 17, achtzehn: 18, neunzehn: 19,
+  zwanzig: 20, dreißig: 30, dreissig: 30, vierzig: 40, fünfzig: 50, sechzig: 60, siebzig: 70, achtzig: 80, neunzig: 90 };
+const DE_ORD = { erst: 1, zweit: 2, dritt: 3, viert: 4, fünft: 5, sechst: 6, siebt: 7, siebent: 7, acht: 8, neunt: 9 };
+function deBase(x) {
+  if (x in DE_T) return DE_T[x];
+  if (x in DE_U) return DE_U[x];
+  const y = x.replace(/(e|en|er|es)$/, ''); // окончание порядкового: «dritte», «sechzehnten», «zwanzigsten»
+  if (y in DE_ORD) return DE_ORD[y];
+  const z = y.replace(/s?t$/, '');
+  if (z in DE_T) return DE_T[z];
+  if (z in DE_U) return DE_U[z];
+  return 0;
+}
+function deNum(w) {
+  let t = String(w || '');
+  if (!/^(ein|zwei|drei|vier|fünf|sech|sieb|acht|neun|zehn|elf|zwölf|zwanzig|dreißig|dreissig|vierzig|fünfzig|sechzig|siebzig|achtzig|neunzig|hundert|erst|zweit|dritt)/.test(t)) return 0;
+  let v = 0;
+  let m = t.match(/^(ein|zwei)?hundert(und)?(.*)$/);
+  if (m) { v = m[1] === 'zwei' ? 200 : 100; t = m[3]; if (!t || /^(ste|sten|ster)$/.test(t)) return v; }
+  m = t.match(/^(ein|zwei|drei|vier|fünf|sechs|sieben|acht|neun)und(.+)$/);
+  if (m) { const te = deBase(m[2]); return te >= 20 ? v + DE_U[m[1]] + te : 0; }
+  const b = deBase(t);
+  return b ? v + b : 0;
+}
 // Число с позиции i: { v, n — сколько слов } или null
 function vcNum(tk, i) {
   const t = tk[i];
   if (t == null) return null;
   if (/^\d+$/.test(t)) return { v: Number(t), n: 1 };
+  const pk = typeof vpNum === 'function' && vpNum(tk, i);
+  if (pk) return pk;
+  const de = deNum(t);
+  if (de) {
+    // «ein und zwanzig» (раздельно)
+    if (de < 10 && tk[i + 1] === 'und' && DE_T[tk[i + 2]] >= 20) return { v: de + DE_T[tk[i + 2]], n: 3 };
+    return { v: de, n: 1 };
+  }
   let v = 0;
   let n = 0;
   if (/^(one|a)$/.test(t) && tk[i + 1] && /^hundred/.test(tk[i + 1])) { n = 1; }
@@ -67,7 +110,7 @@ function vcNum(tk, i) {
   }
   return v ? { v, n } : null;
 }
-const vcOrd = (t) => (/^[1-4]$/.test(t || '') ? Number(t) : vcHit(VC_UNITS.slice(0, 4), t || ''));
+const vcOrd = (t) => (/^[1-4]$/.test(t || '') ? Number(t) : vcHit(VC_UNITS.slice(0, 4), t || '') || (typeof vpOrd === 'function' ? vpOrd(t) : 0));
 
 // Книги: [проверка слова, канон или { порядковый номер: канон }, (по умолчанию для номерных)]
 const VC_BOOKS = [
@@ -90,13 +133,22 @@ const VC_BOOKS = [
   [/^john$/, { 0: 43, 1: 62, 2: 63, 3: 64 }], [/^acts$/, 44], [/^romans$/, 45], [/^corinthians$/, { 1: 46, 2: 47 }], [/^galatians$/, 48], [/^ephesians$/, 49],
   [/^philippians$/, 50], [/^colossians$/, 51], [/^thessalonians$/, { 1: 52, 2: 53 }], [/^timothy$/, { 1: 54, 2: 55 }], [/^titus$/, 56], [/^philemon$/, 57],
   [/^hebrews$/, 58], [/^james$/, 59], [/^peter$/, { 1: 60, 2: 61 }], [/^jude$/, 65], [/^revelations?$/, 66],
+  // Deutsch (Luther, Einheitsübersetzung)
+  [/^mose$/, { 1: 1, 2: 2, 3: 3, 4: 4, 5: 5 }], [/^josua$/, 6], [/^richtern?$/, 7], [/^ruth?$/, 8], [/^könige?n?$/, { 1: 11, 2: 12 }],
+  [/^chronik$/, { 1: 13, 2: 14 }], [/^esra$/, 15], [/^nehemia$/, 16], [/^esth?er$/, 17], [/^(hiob|ijob)$/, 18], [/^psalm(en|s)?$/, 19],
+  [/^sprüchen?$/, 20], [/^(prediger|kohelet)$/, 21], [/^hohe(s)?lied$/, 22], [/^jesaja$/, 23], [/^jeremia$/, 24], [/^klageliedern?$/, 25],
+  [/^(hesekiel|ezechiel)$/, 26], [/^obadja$/, 31], [/^jona$/, 32], [/^micha$/, 33], [/^habakuk$/, 35], [/^(zefanja|zephanja)$/, 36],
+  [/^sacharja$/, 38], [/^maleachi$/, 39], [/^matthäus$/, 40], [/^markus$/, 41], [/^lukas$/, 42], [/^johannes$/, { 0: 43, 1: 62, 2: 63, 3: 64 }],
+  [/^apostelgeschichte$/, 44], [/^römern?$/, 45], [/^korinthern?$/, { 1: 46, 2: 47 }], [/^galatern?$/, 48], [/^epheser?n?$/, 49],
+  [/^philippern?$/, 50], [/^kolossern?$/, 51], [/^thessalonichern?$/, { 1: 52, 2: 53 }], [/^timotheus$/, { 1: 54, 2: 55 }],
+  [/^hebräern?$/, 58], [/^jakobus$/, 59], [/^petrus$/, { 1: 60, 2: 61 }], [/^judas$/, 65], [/^offenbarung$/, 66],
 ];
 // Порядковый номер перед книгой: «первое послание к коринфянам», «2 Царств», «second Kings»
 function vcOrdBefore(tk, i) {
-  for (let j = i - 1, k = 0; j >= 0 && k < 4; j--, k++) {
-    const o = vcOrd(tk[j]);
+  for (let j = i - 1, k = 0; j >= 0 && k < 7; j--, k++) {
+    const o = vcOrd(tk[j]) || (deNum(tk[j]) <= 5 ? deNum(tk[j]) : 0);
     if (o) return o;
-    if (!/^(послание|послании|послания|книга|книги|книге|книгу|к|ко|апостола|святого|соборное|соборном|the|book|of|letter|epistle|to)$/.test(tk[j])) break;
+    if (!/^(послание|послании|послания|книга|книги|книге|книгу|к|ко|апостола|святого|соборное|соборном|the|book|of|letter|epistle|to|buch|brief|des|der|die|das|dem|den|paulus|an|von)$/.test(tk[j]) && !(typeof vpHas === 'function' && (vpHas('bookWords', tk[j]) || vpHas('prefix', tk[j])))) break;
   }
   return 0;
 }
@@ -104,34 +156,35 @@ function vcOrdBefore(tk, i) {
 // Текст → места Писания: [{ canon, ch, v1, v2 }]
 function vcFind(text) {
   const tk = String(text).toLowerCase().replace(/ё/g, 'е').replace(/(\d)\s*[:.]\s*(\d)/g, '$1 $2').replace(/(\d)\s*[-–—]\s*(\d)/g, '$1 по $2')
-    .split(/[^0-9a-zа-я]+/).filter(Boolean);
+    .split(/[^\p{L}\p{N}]+/u).filter(Boolean);
   const out = [];
   for (let i = 0; i < tk.length; i++) {
-    const b = VC_BOOKS.find(([re, , ok]) => re.test(tk[i]) && (!ok || ok(tk, i)));
+    const b = (typeof vpBook === 'function' && vpBook(tk, i)) || VC_BOOKS.find(([re, , ok]) => re.test(tk[i]) && (!ok || ok(tk, i)));
     if (!b) continue;
+    const bLen = b.len || 1; // название из нескольких слов (пакет): числа — после последнего
     let canon = b[1];
     if (typeof canon === 'object') { const o = vcOrdBefore(tk, i); canon = canon[o] || canon[0] || canon[1]; }
     // Числа после книги: глава, стих, «по» стих
     let ch = 0, v1 = 0, v2 = 0;
     let range = false;
-    let j = i + 1 + (b[1] === 22 ? (tk[i] === 'song' ? 2 : 1) : 0); // «Песнь песней», «Song of Songs»
+    let j = i + bLen + (!b.len && b[1] === 22 ? (tk[i] === 'song' ? 2 : 1) : 0); // «Песнь песней», «Song of Songs»
     let lastLabel = '';
     for (let guard = 0; j < tk.length && guard < 10; guard++) {
       const t = tk[j];
       if (VC_RANGE.test(t)) { range = true; j++; continue; }
       if (VC_CH.test(t)) { lastLabel = 'ch'; j++; continue; }
       if (VC_VS.test(t)) { lastLabel = 'v'; j++; continue; }
-      if (VC_FILL.test(t)) { j++; continue; }
+      if (VC_FILL.test(t) || (typeof vpHas === 'function' && vpHas('bookWords', t))) { j++; continue; } // «Johannese KIRI üks üheksa»
       const n = vcNum(tk, j);
       if (!n) break;
       j += n.n;
       // Подпись после числа: «три главы», «шестнадцатый стих»
       const after = tk[j] || '';
       // (только у порядковых: «третья глава», а «стих один» — подпись к следующему числу)
-      const isOrd = (w) => /(ый|ой|ий|ая|ое|ья|ье|ого|его|ей|ом|ем|ую|th|st|nd|rd)$/.test(w || '');
+      const isOrd = (w) => /(ый|ой|ий|ая|ое|ья|ье|ого|его|ей|ом|ем|ую|th|st|nd|rd|te|ten|ter|tes)$/.test(w || '') || (typeof vpIsOrd === 'function' && vpIsOrd(w));
       const nx = (VC_CH.test(after) || VC_VS.test(after)) && vcNum(tk, j + 1);
       const ord = isOrd(tk[j - 1]) && !(nx && !isOrd(tk[j + nx.n])); // «…второй стих один» — подпись к «один»
-      const lb = ord && VC_CH.test(after) ? 'ch' : ord && VC_VS.test(after) ? 'v' : lastLabel;
+      const lb = lastLabel || (ord && VC_CH.test(after) ? 'ch' : ord && VC_VS.test(after) ? 'v' : '');
       lastLabel = '';
       if (range && v1) { v2 = n.v; range = false; continue; }
       if (lb === 'ch' && !ch) ch = n.v;
@@ -141,26 +194,92 @@ function vcFind(text) {
       else break;
     }
     // Числа до книги: «шестнадцатый стих третьей главы евангелия от Иоанна»
+    // «1 глава 8 стих книги Иисуса Навина», «глава один стих восемь из книги…», «1:8 Иисуса Навина»
     if (!ch) {
-      for (let k = i - 1, g = 0; k >= 0 && g < 9; k--, g++) {
-        const t = tk[k];
-        if (VC_CH.test(t) || VC_VS.test(t)) {
-          let s = k - 1;
-          while (s > 0 && vcNum(tk, s - 1) && vcNum(tk, s - 1).n + s - 1 === k) s--; // составное число
-          const n = vcNum(tk, s);
-          if (n && s + n.n === k) { if (VC_CH.test(t)) ch = ch || n.v; else v1 = v1 || n.v; }
-        }
+      let e = i; // начало книги: «книги», «из», «Иисуса», порядковый номер книги («первое послание…»)
+      const pre = (t) => VC_PRE.test(t) || (typeof vpHas === 'function' && vpHas('bookWords', t));
+      while (e > 0 && pre(tk[e - 1])) e--;
+      if (typeof b[1] === 'object' && e > 0 && vcOrd(tk[e - 1])) { e--; while (e > 0 && pre(tk[e - 1])) e--; }
+      const s0 = Math.max(0, e - 10);
+      // Число, которое кончается ровно на позиции end (самое длинное: «двадцать пять»)
+      const numEnd = (end) => { for (let x = Math.max(s0, end - 4); x < end; x++) { const n = vcNum(tk, x); if (n && x + n.n === end) return { ...n, s: x }; } return null; };
+      let cc = 0, vv = 0;
+      // Число перед подписью («восьмой стих», «1 глава») или после неё («стих восемь»): как начата фраза
+      const isLb = (k) => VC_CH.test(tk[k]) || VC_VS.test(tk[k]);
+      let fl = s0;
+      while (fl < e && !isLb(fl)) fl++;
+      const before = fl < e && !!numEnd(fl);
+      for (let k = e - 1; k >= s0; k--) {
+        const isCh = VC_CH.test(tk[k]), isVs = VC_VS.test(tk[k]);
+        if (!isCh && !isVs) continue;
+        const a = vcNum(tk, k + 1);
+        const n = before ? numEnd(k) : a && k + 1 + a.n <= e ? a : null;
+        if (!n) continue;
+        if (isCh) cc = cc || n.v; else vv = vv || n.v;
+      }
+      if (cc) { ch = cc; v1 = v1 || vv; }
+      else if (!vv && e > 0) {
+        // Без подписей — два числа подряд прямо перед книгой: «один восемь Иисуса Навина», «1.8 Иисуса Навина»
+        const n2 = numEnd(e);
+        const n1 = n2 && numEnd(n2.s);
+        if (n1 && n2) { ch = n1.v; v1 = n2.v; }
       }
     }
     if (ch) out.push({ canon, ch, v1, v2: v2 && v2 >= v1 ? v2 : v1, at: i });
+    if (bLen > 1) i += bLen - 1;
   }
+  if (!out.length) { const c = vcFindCtx(tk); if (c) out.push(c); }
   return out;
+}
+
+/* ----- Контекст: проповедник назвал место, потом говорит только стих или главу ----- */
+// Последнее место: названное голосом, найденное по словам или показанное оператором (bShown). Живёт 40 минут.
+let vcCtx = null;  // { bi, ci, v, at }
+let vcCtxB = null; // bShown, с которого взят контекст (показали новое — новый объект)
+const VC_CTX_MS = 40 * 60000;
+function vcCtxSet(bi, ci, v) { vcCtx = { bi, ci, v: v || 0, at: Date.now() }; vcCtxB = typeof bShown !== 'undefined' ? bShown : null; }
+function vcContext() {
+  const b = typeof bShown !== 'undefined' ? bShown : null;
+  if (b && b !== vcCtxB && typeof bible !== 'undefined' && bible && b.bid === bible.id) { vcCtxB = b; vcCtx = { bi: b.bi, ci: b.ci, v: b.v2 || b.v1 || 0, at: Date.now() }; }
+  return vcCtx && Date.now() - vcCtx.at < VC_CTX_MS ? vcCtx : null;
+}
+// «в этой же главе 17 стих», «стих семнадцатый», «стихи 17 по 20», «пятая глава третий стих», «следующий стих»
+function vcFindCtx(tk) {
+  const ctx = vcContext();
+  if (!ctx) return null;
+  const isLb = (k) => (VC_CH.test(tk[k]) || VC_VS.test(tk[k])) && !(k > 0 && VC_SAME.test(tk[k - 1])); // «этой же главе» — не номер главы
+  // «следующий стих»
+  for (let k = 0; k + 1 < tk.length; k++) {
+    if (VC_NEXT.test(tk[k]) && VC_VS.test(tk[k + 1]) && ctx.v) return { bi: ctx.bi, ch: ctx.ci + 1, v1: ctx.v + 1, v2: ctx.v + 1, ctx: true };
+  }
+  // Число кончается ровно на позиции end
+  const numEnd = (end) => { for (let x = Math.max(0, end - 4); x < end; x++) { const n = vcNum(tk, x); if (n && x + n.n === end) return n; } return null; };
+  let fl = 0;
+  while (fl < tk.length && !isLb(fl)) fl++;
+  if (fl >= tk.length) return null;
+  const before = !!numEnd(fl); // «17 стих», «пятая глава» — числа перед подписями; иначе — после
+  let cc = 0, vv = 0, v2 = 0;
+  for (let k = fl; k < tk.length; k++) {
+    if (!isLb(k)) continue;
+    let n = null;
+    let after = k + 1;
+    if (before) n = numEnd(k);
+    else { n = vcNum(tk, k + 1); if (n) after = k + 1 + n.n; }
+    if (!n) continue;
+    if (VC_CH.test(tk[k])) { cc = cc || n.v; continue; }
+    if (vv) continue;
+    vv = n.v;
+    // «стихи 17 по 20»
+    if (!before && VC_RANGE.test(tk[after] || '')) { const m = vcNum(tk, after + 1); if (m && m.v > vv) v2 = m.v; }
+  }
+  if (!vv && !cc) return null;
+  return { bi: ctx.bi, ch: cc || ctx.ci + 1, v1: vv, v2: v2 || vv, ctx: true };
 }
 
 // Место → стих текущего перевода; null — такого нет
 function vcResolve(r) {
   if (!bible || !bible.books) return null;
-  let bi = bible.books.findIndex((b) => b.canon === r.canon);
+  let bi = r.bi != null ? r.bi : bible.books.findIndex((b) => b.canon === r.canon);
   if (bi < 0) bi = Bible.findBook(bible, Bible.canonName(r.canon));
   if (bi < 0) return null;
   const book = bible.books[bi];
@@ -180,7 +299,7 @@ function vcResolve(r) {
 
 window.api.onVoiceText((m) => {
   if (!m) return;
-  if (m.level != null) { vcLevel = m.level; const l = document.querySelector('#vcPanel .vc-lvl > i'); if (l) l.style.width = Math.min(100, m.level * 160) + '%'; return; }
+  if (m.level != null) { vcLevel = m.level; const l = document.querySelector('#vcPanel .vc-lvl > i'); if (l) { l.style.width = Math.min(100, m.level * 160) + '%'; l.parentNode.classList.toggle('clip', !!m.clip); l.parentNode.title = 'Уровень после автоусиления' + (m.gain ? ` (×${m.gain})` : '') + (m.clip ? ' — вход перегружен!' : ''); } return; }
   if (m.warn) { vcWarn = m.warn; flashStatus('Голос: ' + m.warn); vcPaint(); return; }
   if (m.state) {
     vcState = m.state === 'off' ? 'off' : m.state;
@@ -198,10 +317,12 @@ window.api.onVoiceText((m) => {
     if (!x) continue;
     const old = vcSugs.findIndex((s) => s.ref === x.ref);
     if (old >= 0) { const [s] = vcSugs.splice(old, 1); if (Date.now() - s.at < 40000 && !m.final) { vcSugs.unshift(s); continue; } }
-    else if (m.final) flashStatus('Голос: ' + x.ref);
+    else if (m.final) flashStatus((r.ctx ? 'Голос (та же глава): ' : 'Голос: ') + x.ref);
     // Сначала прозвучала только глава («Иоанна три…»), потом стих — главу из списка убираем
     if (!x.whole) vcSugs = vcSugs.filter((y) => !(y.whole && y.bi === x.bi && y.ci === x.ci && Date.now() - y.at < 20000));
+    if (r.ctx) x.ctx = true; // карточка «та же глава»
     vcSugs.unshift({ ...x, at: Date.now() });
+    vcCtxSet(x.bi, x.ci, x.whole ? 0 : x.v2);
   }
   vcSugs = vcSugs.slice(0, 6);
   vcPaint(true);
@@ -235,6 +356,7 @@ function vcToggle(why) { if (!vcTap()) return; if (vcOn()) vcStop(why || 'кла
 // Показать место: глава во вкладке «Библия» и стихи на экран
 function vcShow(s) {
   if (!s || !bible) return;
+  vcCtxSet(s.bi, s.ci, s.whole ? 0 : s.v2);
   openChapter(s.bi, s.ci);
   if (s.whole) { flashStatus(`Открыта глава: ${s.ref}`); return; }
   showVerses(s.bi, s.ci, s.v1, s.v2);
@@ -261,6 +383,7 @@ function vcPeek(s) { openChapter(s.bi, s.ci); if (!s.whole) { refSel = { v1: s.v
     #vcPanel .vc-heard { color: var(--muted); font-style: italic; min-height: 18px; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
     #vcPanel .vc-lvl { height: 4px; background: var(--field); border-radius: 2px; overflow: hidden; }
     #vcPanel .vc-lvl > i { display: block; height: 100%; width: 0; background: var(--live); transition: width .2s; }
+    #vcPanel .vc-lvl.clip > i { background: #d6453d; }
     #vcPanel .vc-sugs { display: flex; flex-direction: column; gap: 8px; }
     #vcPanel .vc-sugs:empty { display: none; }
     #vcPanel .vc-sug { border: 1px solid var(--line); border-radius: calc(8px * var(--rk, 1)); padding: 7px 8px; display: flex; flex-direction: column; gap: 5px; }
@@ -384,7 +507,7 @@ function vcPaint(fromText) {
   const m = ms.find((y) => y.id === c.lang);
   const line = svEl('div', 'sv-line');
   line.append(svSelect(ms.map((y) => [y.id, y.name + (y.have ? '' : ` — скачать ${y.mb} МБ`)]), c.lang, (v) => { c.lang = v; saveSettings(); if (vcOn()) vcStart(); vcPaint(); }),
-    svBtn('Микрофон ▾', vcMicMenu));
+    svBtn('Микрофон ▾', vcMicMenu), svBtn('Языки…', () => vpOpen()));
   body.append(line);
   if (vcGetting) {
     const pct = vcGetting.total ? Math.round((vcGetting.got / vcGetting.total) * 100) : 0;
@@ -606,6 +729,7 @@ function vsAdd(r) {
     if (r.v1 === prev.v2 + 1) {
       prev.v2 = r.v1;
       prev.ref = `${bible.books[r.bi].name} ${r.ci + 1}:${prev.v1}–${prev.v2}`;
+      vcCtxSet(r.bi, r.ci, prev.v2);
       flashStatus('По словам: ' + prev.ref);
     }
     prev.at = now;
@@ -616,6 +740,7 @@ function vsAdd(r) {
   // Это место только что назвали голосом — второй карточки не нужно
   if (vcSugs.some((s) => recent(s) && r.v1 >= s.v1 && r.v1 <= s.v2)) return;
   vcSugs.unshift({ ...r, words: true, at: now });
+  vcCtxSet(r.bi, r.ci, r.v2 || r.v1);
   vcSugs = vcSugs.slice(0, 6);
   flashStatus('По словам: ' + r.ref);
   vcPaint(true);

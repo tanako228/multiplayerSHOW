@@ -572,7 +572,7 @@ function init(o) {
   fs.mkdirSync(dir, { recursive: true });
   load();
   loadCert();
-  api.init({ dir, libFile: o.libFile || path.join(dir, 'library.json'), ver: o.ver || '', on: () => cfg.on, notify, cmd: o.cmd, chords: o.chords, sheets: o.sheets,
+  api.init({ dir, libFile: o.libFile || path.join(dir, 'library.json'), ver: o.ver || '', on: () => cfg.on, notify, cmd: o.cmd, chords: o.chords, sheets: o.sheets, edit: o.edit,
     store: { read: readFile, write: writeFile } });
   start();
   if (opt.want) opt.want();

@@ -175,12 +175,15 @@ contextBridge.exposeInMainWorld('api', {
   onTeamCmd: (cb) => on('team:cmd', cb), // телефон листает: { cmd: next|prev|show|clear, item, sid, pl, eid, who }
   onTeamChords: (cb) => on('team:chords', cb), // аккорды песни с телефона: { id, chords, key?, who, rid }
   onTeamSheets: (cb) => on('team:sheets', cb), // ноты песни с телефона: { id, add: [листы], del: имя файла, who, rid }
+  onTeamEdit: (cb) => on('team:edit', cb), // правка без связи: { id, chords, key, sheets: null | [листы], who, via, rid }
   teamChordsDone: (r) => ipcRenderer.invoke('team:chordsDone', r), // ответ: { rid, err? }
   onTeamInfo: (cb) => on('team:info', cb),
   // Библия по голосу (voice.js, voicesrv.js): модели Vosk, скрытое окно распознавания
   voiceState: () => ipcRenderer.invoke('voice:state'),
   voiceGet: (lang) => ipcRenderer.invoke('voice:get', lang), // скачать модель языка
   voiceFile: (lang) => ipcRenderer.invoke('voice:file', lang), // своя модель из .zip
+  voiceAdd: (x) => ipcRenderer.invoke('voice:add', x), // другой язык { lang, name, url, mb }
+  voiceRemove: (lang) => ipcRenderer.invoke('voice:remove', lang), // убрать свой язык / скачанную модель
   voiceStart: (cfg) => ipcRenderer.invoke('voice:start', cfg), // { lang, mic, label }
   voiceStop: (why) => ipcRenderer.invoke('voice:stop', why), // why — откуда выключили (в журнал)
   onVoiceText: (cb) => on('voice:text', cb), // { text, final } | { state, error } | { level }

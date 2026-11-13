@@ -11,10 +11,19 @@ const { pathToFileURL } = require('url');
 const MODELS = {
   ru: { name: 'Русский', file: 'vosk-model-small-ru-0.22.zip', mb: 45 },
   en: { name: 'English', file: 'vosk-model-small-en-us-0.15.zip', mb: 40 },
+  de: { name: 'Deutsch', file: 'vosk-model-small-de-0.15.zip', mb: 45 },
 };
 const BASE = 'https://alphacephei.com/vosk/models/';
 const dir = () => path.join(app.getPath('userData'), 'voice');
 const modelFile = (lang) => path.join(dir(), lang + '.tar.gz');
+// Свои языки (окно «Пакеты языков» в voice.js): userData\voice\models.json = { код: { name, url, mb } }
+const LANG_RE = /^[a-z]{2,3}(-[a-z0-9]{1,8})?$/;
+const customFile = () => path.join(dir(), 'models.json');
+function customs() {
+  try { const o = JSON.parse(fs.readFileSync(customFile(), 'utf8')); return o && typeof o === 'object' ? o : {}; } catch { return {}; }
+}
+function saveCustoms(o) { fs.mkdirSync(dir(), { recursive: true }); fs.writeFileSync(customFile(), JSON.stringify(o, null, 2)); }
+const allModels = () => ({ ...customs(), ...MODELS });
 
 // До app.ready: свой протокол с fetch и CORS (воркер Vosk — из blob:, его страница — file://)
 function early() {
@@ -96,14 +105,25 @@ function setup({ ipcMain, getControl, webPreferences, unzip, dialog }) {
   const send = (ch, x) => { const c = getControl(); if (c && !c.isDestroyed()) c.webContents.send(ch, x); };
 
   protocol.handle('mpsvoice', async (req) => {
-    const m = new URL(req.url).pathname.match(/^\/([a-z]{2})\.tar\.gz$/);
+    const m = new URL(req.url).pathname.match(/^\/([a-z0-9-]{2,12})\.tar\.gz$/);
     const f = m && modelFile(m[1]);
     if (!f || !fs.existsSync(f)) return new Response('нет модели', { status: 404, headers: { 'Access-Control-Allow-Origin': '*' } });
     const r = await net.fetch(pathToFileURL(f).href);
     return new Response(r.body, { status: 200, headers: { 'Content-Type': 'application/gzip', 'Access-Control-Allow-Origin': '*' } });
   });
 
-  const state = () => ({ models: Object.entries(MODELS).map(([id, m]) => ({ id, name: m.name, mb: m.mb, have: fs.existsSync(modelFile(id)) })), on: !!(win && !win.isDestroyed()), lang: cur.lang });
+  // Журнал распознавания — userDataoicelog.txt (что пошло не так у владельца; не больше ~200 КБ)
+  const logFile = () => path.join(dir(), 'log.txt');
+  const log = (t) => {
+    try {
+      fs.mkdirSync(dir(), { recursive: true });
+      const f = logFile();
+      if (fs.existsSync(f) && fs.statSync(f).size > 200000) fs.renameSync(f, f + '.old');
+      fs.appendFileSync(f, new Date().toLocaleString('ru-RU') + '  ' + t + '\n');
+    } catch { /* журнал не важнее распознавания */ }
+  };
+
+  const state = () => ({ models: Object.entries(allModels()).map(([id, m]) => ({ id, name: m.name, mb: m.mb || 0, url: m.url || BASE + m.file, own: !MODELS[id], have: fs.existsSync(modelFile(id)) })), on: !!(win && !win.isDestroyed()), lang: cur.lang });
 
   const save = (lang, files) => {
     fs.mkdirSync(dir(), { recursive: true });
@@ -115,14 +135,17 @@ function setup({ ipcMain, getControl, webPreferences, unzip, dialog }) {
   // Скачать модель языка (один раз), прогресс — voice:progress { lang, got, total }
   let busy = null;
   ipcMain.handle('voice:get', async (_e, lang) => {
-    const m = MODELS[lang];
+    const m = allModels()[lang];
     if (!m) return { ok: false, error: 'нет такого языка' };
     if (busy) return { ok: false, error: 'модель уже скачивается' };
+    const url = m.url || BASE + m.file;
+    if (!/^https:\/\//i.test(url)) return { ok: false, error: 'адрес модели должен начинаться с https://' };
     busy = lang;
     try {
-      const r = await net.fetch(BASE + m.file);
+      log('— Скачиваю модель ' + lang + ': ' + url);
+      const r = await net.fetch(url);
       if (!r.ok) throw new Error('сервер ответил ' + r.status);
-      const total = Number(r.headers.get('content-length')) || m.mb * 1048576;
+      const total = Number(r.headers.get('content-length')) || (m.mb || 50) * 1048576;
       const chunks = [];
       let got = 0;
       let last = 0;
@@ -142,9 +165,31 @@ function setup({ ipcMain, getControl, webPreferences, unzip, dialog }) {
     } finally { busy = null; send('voice:progress', null); }
   });
 
+  // Другой язык: { lang, name, url, mb } — запомнить (скачать — отдельно, voice:get или voice:file)
+  ipcMain.handle('voice:add', (_e, x) => {
+    const lang = String((x && x.lang) || '').trim().toLowerCase();
+    if (!LANG_RE.test(lang)) return { ok: false, error: 'код языка — 2–3 латинские буквы (et, de, uk, lv)' };
+    if (MODELS[lang]) return { ok: true, state: state() }; // встроенный — уже есть
+    const url = String((x && x.url) || '').trim();
+    if (url && !/^https:\/\/[^\s]+\.zip(\?.*)?$/i.test(url)) return { ok: false, error: 'ссылка на модель — https://….zip' };
+    const o = customs();
+    o[lang] = { name: String((x && x.name) || lang).slice(0, 40), url: url || (o[lang] && o[lang].url) || '', mb: Math.max(0, Math.round(Number(x && x.mb) || 0)) || (o[lang] && o[lang].mb) || 0 };
+    saveCustoms(o);
+    log('— Свой язык ' + lang + ' (' + o[lang].name + ') ' + (o[lang].url || 'без ссылки'));
+    return { ok: true, state: state() };
+  });
+  // Убрать свой язык (и его модель); у встроенных — только скачанную модель
+  ipcMain.handle('voice:remove', (_e, lang) => {
+    if (cur.lang === lang) stop();
+    try { fs.rmSync(modelFile(lang), { force: true }); } catch { /* занят — не страшно */ }
+    const o = customs();
+    if (o[lang]) { delete o[lang]; saveCustoms(o); }
+    return { ok: true, state: state() };
+  });
+
   // Своя модель из .zip (скачали на другом компьютере, другой язык Vosk)
   ipcMain.handle('voice:file', async (e, lang) => {
-    if (!MODELS[lang]) return { ok: false, error: 'нет такого языка' };
+    if (!allModels()[lang]) return { ok: false, error: 'нет такого языка' };
     const res = await dialog.showOpenDialog(BrowserWindow.fromWebContents(e.sender), { title: 'Модель Vosk (.zip)', properties: ['openFile'], filters: [{ name: 'Модель Vosk', extensions: ['zip'] }] });
     if (res.canceled || !res.filePaths[0]) return { ok: false };
     try { save(lang, modelFrom(fs.readFileSync(res.filePaths[0]), unzip)); return { ok: true, state: state() }; } catch (err) { return { ok: false, error: err.message }; }
@@ -152,23 +197,12 @@ function setup({ ipcMain, getControl, webPreferences, unzip, dialog }) {
 
   ipcMain.handle('voice:state', () => state());
 
-  // Журнал распознавания — userDataoicelog.txt (что пошло не так у владельца; не больше ~200 КБ)
-  const logFile = () => path.join(dir(), 'log.txt');
-  const log = (t) => {
-    try {
-      fs.mkdirSync(dir(), { recursive: true });
-      const f = logFile();
-      if (fs.existsSync(f) && fs.statSync(f).size > 200000) fs.renameSync(f, f + '.old');
-      fs.appendFileSync(f, new Date().toLocaleString('ru-RU') + '  ' + t + '\n');
-    } catch { /* журнал не важнее распознавания */ }
-  };
-
   // Скрытое окно распознавания: микрофон → Vosk → текст окну оператора (voice:text)
   let win = null;
   let cur = {};
   const stop = () => { const w = win; win = null; cur = {}; if (w && !w.isDestroyed()) w.destroy(); };
   ipcMain.handle('voice:start', (_e, cfg) => {
-    const lang = cfg && MODELS[cfg.lang] ? cfg.lang : 'ru';
+    const lang = cfg && allModels()[cfg.lang] ? cfg.lang : 'ru';
     log('— Вкл: язык ' + lang + ', микрофон ' + ((cfg && cfg.label) || 'как в Windows'));
     if (!fs.existsSync(modelFile(lang))) return { ok: false, error: 'нет модели языка' };
     if (!fixOld(modelFile(lang))) return { ok: false, error: 'файл модели повреждён — скачайте модель заново' };

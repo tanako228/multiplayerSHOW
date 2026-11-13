@@ -2102,6 +2102,25 @@ app.whenReady().then(() => {
         control.webContents.send('team:sheets', { id: c.id, add, del: c.del || '', who: c.who, rid });
       });
     },
+    // Правка без связи, подписанная тем, кто может править (teamapi.js: putEdit); принёс любой телефон (via).
+    // sheets: null — листы не трогать; иначе весь список: { file, name } — уже есть, { buf, name } — новый (фото → лист здесь)
+    edit: async (c) => {
+      let sheets = null;
+      if (c.sheets) {
+        sheets = [];
+        for (const x of c.sheets) {
+          if (x.file) { const { width: w, height: h } = nativeImage.createFromPath(x.file).getSize(); sheets.push({ file: x.file, name: x.name, w, h }); }
+          else sheets.push(...await sheetsFrom({ buf: x.buf, name: x.name }));
+        }
+      }
+      return new Promise((ok, no) => {
+        if (!control || control.isDestroyed()) return no(new Error('Окно программы закрыто'));
+        const rid = ++chordReq;
+        const t = setTimeout(() => { chordWait.delete(rid); no(new Error('Программа не ответила')); }, 8000);
+        chordWait.set(rid, { ok, no, t });
+        control.webContents.send('team:edit', { id: c.id, chords: c.chords, key: c.key, sheets, who: c.who, via: c.via, rid });
+      });
+    },
   });
   app.on('will-quit', team.shutdown);
   ipcMain.handle('team:chordsDone', (_e, r) => {

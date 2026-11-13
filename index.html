@@ -408,6 +408,7 @@
     .view-title { grid-row: 1; grid-column: 2; min-width: 0; max-width: 30vw; margin: 0 12px; display: flex; justify-content: center; align-items: baseline; gap: 8px; font-size: 15px; white-space: nowrap; pointer-events: none; }
     .view-title b { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
     .view-title span { flex: none; color: var(--muted); font-size: 12px; }
+    .view-title span:empty { display: none; }
     .view-title[hidden] { display: none; }
     @media (max-width: 1180px) { .view-title { display: none; } } /* узкое окно — вкладки важнее названия */
     #svcFeed { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 0; padding-right: 4px; }
@@ -1967,7 +1968,7 @@
     <button id="svcTheme" class="tab-btn icon-only" data-icon="theme" title="Тема: для выделенных пунктов «Содержания» (Ctrl/Shift+щелчок, Ctrl+A), а если ничего не выделено — для того, что на экране"></button>
     <button id="poolToggle" class="tab-btn" data-icon="pool" title="Медиапул: файлы из закреплённых папок (F8)">Медиапул</button>
     <button id="voiceOpen" class="tab-btn icon-only" data-icon="bvoice" title="Библия по голосу: программа слушает проповедника и предлагает место, которое он назвал или читает"></button>
-    <button id="svcOpen" class="tab-btn" data-icon="service" aria-haspopup="menu" title="Служение: проверка перед началом, плашки и бегущая строка">Служение ▾</button>
+    <button id="ltOpenBtn" class="tab-btn icon-only" data-icon="lowerthird" title="Плашки и бегущая строка: имя проповедника, объявления, бегущая строка и презентации, отправленные в слой «Плашки»"></button>
     <button id="teamOpen" class="tab-btn" data-icon="team" title="Группа: приложение для телефонов музыкантов и певцов — адрес, сертификат, доступ">Группа</button>
     <button id="openSettings" class="tab-btn" data-icon="settings" title="Настройки: монитор и вывод, показ, звук, горячие клавиши">Настройки</button>
     </div>
@@ -2620,6 +2621,11 @@
       </nav>
       <div class="set-body">
         <section class="set-sec sec-out" data-sec="output">
+          <div class="set-group">
+            <h2>Проверка перед служением</h2>
+            <div class="field"><button id="svcCheckBtn" type="button" class="primary" data-icon="check">Проверить сейчас</button></div>
+            <p class="hint">Видео, картинки и музыка на месте, мониторы подключены, шрифты есть, Библия загружена.</p>
+          </div>
           <p class="hint" style="margin-bottom:10px">Мониторы, разрешение, экраны и сцены — во вкладке «Редактор → Редактор сцен» (Ctrl+6). Включить вывод — галочки «Зал» и «Сцена» над «Предпросмотром».</p>
           <h2 class="set-part" data-icon="show">Показ</h2>
           <div class="out-top">
@@ -3368,6 +3374,7 @@
   <script src="team.js"></script>
   <script src="service.js"></script>
   <script src="voice.js"></script>
+  <script src="voicepack.js"></script>
   <script src="splash.js"></script>
 </body>
 </html>

@@ -1,4 +1,4 @@
-/* ===== Служение: кнопка «Служение ▾» в строке вкладок =====
+/* ===== Проверка перед служением (Настройки → «Показ и звук») и плашки (значок в строке вкладок) =====
    1) «Проверка перед служением» (svcCheck) — видео и картинки на месте, мониторы подключены, шрифты есть, Библия загружена.
    2) «Плашки и бегущая строка» (ltOpen) — шаблоны lib.lowerThirds (в HIST_KEYS — Ctrl+Z работает),
       показ — слой «Плашки» (LAYER_KINDS.lower, как Overlay: слайд на экране не сбивается), content.type 'lower'.
@@ -40,6 +40,7 @@ const svBtn = (text, fn, cls, icon) => { const b = svEl('button', cls || '', tex
     .sv-chk li button { margin-left: 6px; font-size: 12px; padding: 1px 8px; }
     .sv-sum { font-size: 15px; font-weight: 600; }
     .sv-files { color: var(--muted); font-size: 12px; }
+    .lt-slides { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; max-height: 46vh; overflow-y: auto; }
   `;
   document.head.append(css);
 })();
@@ -93,16 +94,9 @@ function svPathOf(x) {
   try { return decodeURIComponent(u.replace(/^file:\/\/\/?/i, '')).replace(/\//g, '\\'); } catch { return ''; }
 }
 
-/* ---------- Меню «Служение ▾» ---------- */
-function svcMenu() {
-  const r = $('svcOpen').getBoundingClientRect();
-  showMenu({ clientX: r.left, clientY: r.bottom + 4 }, [
-    { label: 'Проверка перед служением', fn: svcCheck, icon: 'check' },
-    { label: 'Плашки и бегущая строка…', fn: ltOpen, icon: 'lowerthird' },
-  ]);
-  ctxMenu.dataset.tag = 'svc';
-}
-$('svcOpen').addEventListener('click', () => { if (!(menuClosed.tag === 'svc' && Date.now() - menuClosed.t < 400)) svcMenu(); });
+/* ---------- Кнопки: значок «Плашки» в строке вкладок, «Проверка» — в Настройках → «Показ и звук» ---------- */
+$('ltOpenBtn').addEventListener('click', () => ltOpen());
+$('svcCheckBtn').addEventListener('click', () => svcCheck());
 
 /* ===================== Проверка перед служением ===================== */
 
@@ -305,7 +299,7 @@ function ltRefresh(p) {
 
 function ltOpen() {
   const d = svDialog('ltDialog', 'Плашки и бегущая строка');
-  if (!ltSel || !ltList().some((p) => p.id === ltSel)) ltSel = (ltList()[0] || {}).id || '';
+  if (!ltSel || !(ltList().some((p) => p.id === ltSel) || ltPres().some((x) => x.sel === ltSel))) ltSel = (ltList()[0] || {}).id || '';
   ltPaint();
   if (!d.open) d.showModal();
 }
@@ -352,9 +346,26 @@ function ltPaint() {
   const add = svBtn('＋ Новая ▾', (e) => showMenu(e, LT_TPL.map((t) => ({ label: t.name, fn: () => ltAdd(t) }))), '', 'add');
   list.append(add);
   if (!L.length) list.append(svEl('p', 'hint', 'Плашек ещё нет — выберите шаблон: имя проповедника, объявление, Wi‑Fi, пожертвования, бегущая строка.'));
+  // Презентации, у которых выбран слой вида «Плашки» (кнопка слоя у пункта) — сами попадают сюда
+  const PR = ltPres();
+  list.append(svEl('div', 'sv-sub', 'Презентации в слое «Плашки»'));
+  for (const x of PR) {
+    const on = ltPresLive(x);
+    const it = svEl('div', 'sv-item' + (ltSel === x.sel ? ' sel' : '') + (on ? ' on' : ''));
+    it.append(svEl('span', 'nm', x.item.name), svEl('small', '', x.where));
+    const first = x.item.slides.find((s) => s.k !== 'audio');
+    const b = svBtn(on ? 'Убрать' : 'Показать', (e) => { e.stopPropagation(); if (on) ltPresHide(x); else if (first) ltPresShow(x, first.id); }, on ? '' : 'primary');
+    b.disabled = !on && !first;
+    it.append(b);
+    it.addEventListener('click', () => { ltSel = x.sel; ltPaint(); });
+    list.append(it);
+  }
+  if (!PR.length) list.append(svEl('p', 'hint', 'Нет. Выберите у презентации слой «Плашки» (кнопка слоя «Авто» в «Содержании» или правый щелчок → «Слой…») — она появится здесь.'));
   const form = svEl('div', 'sv-form');
-  const p = L.find((x) => x.id === ltSel);
-  if (p) {
+  const px = PR.find((x) => x.sel === ltSel);
+  const p = px ? null : L.find((x) => x.id === ltSel);
+  if (px) ltPresForm(form, px);
+  else if (p) {
     const ch = (k, repaint) => (v) => { p[k] = v; saveLib(); ltRefresh(p); if (repaint) ltPaint(); else { ltPrev(p); if (k === 'name') { const n = d.querySelector('.sv-item.sel .nm'); if (n) n.textContent = v; } } };
     form.append(svRow('Название', svInput('text', p.name, ch('name'))));
     form.append(svRow('Вид', svSelect([['lt', 'Плашка внизу'], ['ticker', 'Бегущая строка']], p.kind, ch('kind', true)), svSelect(LT_LOOKS, p.look, ch('look'))));
@@ -388,6 +399,48 @@ function ltPaint() {
   d.querySelector('.dlg-foot').replaceChildren(svEl('span', 'hint', 'Плашки хранятся в библиотеке программы; Ctrl+Z отменяет правки.'), svEl('span', 'spacer'), svBtn('Готово', () => d.close(), 'primary'));
   if (p) ltPrev(p);
 }
+/* ----- Презентации в слое «Плашки»: все плейлисты и библиотеки, у пункта выбран слой вида lower ----- */
+function ltPres() {
+  const out = [];
+  const seen = new Set();
+  const views = [...(lib.playlists || []).map((v) => ({ kind: 'pl', id: v.id, name: v.name })), ...(lib.libraries || []).map((v) => ({ kind: 'lib', id: v.id, name: v.name }))];
+  for (const v of views) {
+    for (const x of viewEntries(v)) {
+      const ly = layerById(pickedLayer(x));
+      if (!ly || ly.kind !== 'lower') continue;
+      const k = x.item.id + '|' + ly.id; // одна презентация в нескольких списках — одна строка
+      if (seen.has(k)) continue;
+      seen.add(k);
+      const vk = viewKey(v);
+      out.push({ ...x, vk, layer: ly.id, where: v.name, sel: 'pres:' + vk + '|' + x.key });
+    }
+  }
+  return out;
+}
+const ltPresLive = (x) => { const o = ovShown[x.layer]; return !!(layerOn[x.layer] && o && o.view === x.vk && o.key === x.key); };
+function ltPresShow(x, sid) { showSlide(x.key, sid, x.vk); ltPaint(); }
+function ltPresHide(x) { clearLayer(x.layer); ltPaint(); }
+function ltPresForm(form, x) {
+  const on = ltPresLive(x);
+  const cur = on ? ovShown[x.layer].sid : '';
+  const l = layerById(x.layer);
+  form.append(svEl('div', 'sv-sub', x.item.name), svEl('p', 'hint', `Из «${x.where}», слой «${l ? layerName(l) : 'Плашки'}». Щелчок по слайду — показать поверх, слайд на экране не меняется.`));
+  const grid = svEl('div', 'lt-slides');
+  for (const s of x.item.slides) {
+    if (s.k === 'audio') continue;
+    const el = slideThumb(x.item, s);
+    if (s.id === cur) el.classList.add('live');
+    el.addEventListener('click', () => ltPresShow(x, s.id));
+    grid.append(el);
+  }
+  form.append(grid);
+  requestAnimationFrame(() => grid.querySelectorAll('.sl .layer.text').forEach((t) => Scene.fitText(t)));
+  const row = svEl('div', 'sv-line');
+  row.append(svBtn('Убрать с экрана', () => ltPresHide(x), '', 'show'), svBtn('Открыть в списке', () => { document.getElementById('ltDialog').close(); setView(x.vk.split(':')[0], x.vk.slice(x.vk.indexOf(':') + 1)); openEntry(x.key); }));
+  row.firstChild.disabled = !on;
+  form.append(row);
+}
+
 function ltPrev(p) {
   const el = document.getElementById('ltPrev');
   if (!el) return;
@@ -395,4 +448,4 @@ function ltPrev(p) {
   Scene.show(el, ltContent(p));
 }
 // Плашку убрали с экрана другим путём (Esc, крестик слоя) — кнопки окна по правде
-setInterval(() => { const d = document.getElementById('ltDialog'); if (d && d.open) { const live = ltLiveId(); if (d.dataset.live !== live) { d.dataset.live = live; ltPaint(); } } }, 700);
+setInterval(() => { const d = document.getElementById('ltDialog'); if (d && d.open) { const live = ltLiveId() + '|' + ltPres().filter(ltPresLive).map((x) => x.sel + ':' + ovShown[x.layer].sid).join(','); if (d.dataset.live !== live) { d.dataset.live = live; ltPaint(); } } }, 700);

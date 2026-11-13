@@ -615,7 +615,8 @@ function renderFeed() {
   feed.replaceChildren();
   const v = findView(work);
   const isPl = !!v && work.kind === 'pl';
-  $('svcKind').textContent = !v ? '' : isPl ? 'Плейлист' : 'Библиотека';
+  $('svcKind').textContent = ''; // сверху — только название плейлиста/библиотеки, без «Плейлист»/«Библиотека»
+  $('svcName').title = !v ? '' : isPl ? 'Плейлист' : 'Библиотека';
   $('svcName').textContent = v ? v.name : 'Создайте плейлист или библиотеку';
   $('viewTitle').hidden = !listsTab();
   if (!entries.length) {
@@ -1334,7 +1335,8 @@ function layerPickMenu(e, list) {
     list.forEach((x) => setPickedLayer(x, id));
     saveLib();
     renderService();
-    flashStatus((id ? `Слой: «${layerName(layerById(id))}»` : 'Слой выбирается сам') + (list.length > 1 ? ` (пунктов: ${list.length})` : '') + ' · Ctrl+Z — вернуть');
+    flashStatus((id ? `Слой: «${layerName(layerById(id))}»` : 'Слой выбирается сам') + (list.length > 1 ? ` (пунктов: ${list.length})` : '')
+      + (id && layerById(id).kind === 'lower' ? ' — теперь и в окне «Плашки и бегущая строка»' : '') + ' · Ctrl+Z — вернуть');
   };
   showMenu(e, [
     { label: (cur ? '' : '✓ ') + `Сам — по виду${auto && list.length === 1 ? ` (${layerName(auto)})` : ''}`, fn: () => pick('') },
