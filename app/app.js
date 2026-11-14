@@ -327,7 +327,7 @@ function onMsg(m) {
     case 'live': applyLive(m.live); break;
     case 'lib': syncIf({ lib: m.lib, seq: m.seq, lh: m.lh }); break;
     case 'sets': setSets(m.sets); break;
-    case 'me': Store.saveMe(m.me).catch(() => {}); toast(m.me.perms.control ? 'Оператор разрешил листать слайды' : 'Права изменились'); paintBar(); if (screen === 'Song') paintPick(); break;
+    case 'me': Store.saveMe(m.me).catch(() => {}); toast(m.me.perms.control ? 'Оператор разрешил листать слайды' : 'Права изменились'); paintBar(); $('addSong').hidden = !canChords(); if (screen === 'Song') paintPick(); break;
     case 'err': toast(m.text || 'Ошибка'); break;
     case 'bye':
       conn = BAD.includes(m.code) ? m.code : 'net';
@@ -400,10 +400,7 @@ let mtSig = Number(ls.get('mps.mtSig', '4')) || 4;
 const mtSound = () => ls.get('mps.mtSnd', '0') === '1';
 const per = () => 60000 / mt.bpm;
 function audio() {
-  try {
-    if (!actx) actx = new (window.AudioContext || window.webkitAudioContext)();
-    if (actx.state === 'suspended') actx.resume();
-  } catch { actx = null; }
+  actx = TouchKit.audioCtx(); // общий с пеналом (touch.js): на iPad — и в беззвучном режиме, и после блокировки экрана
   return actx;
 }
 function click(when, one) {
@@ -419,6 +416,8 @@ function click(when, one) {
 }
 function mtStart(x) {
   mt = x;
+  // Общий метроном пришёл от группы — своего нажатия не было: звук готовим сейчас, проснётся на первом касании (touch.js)
+  if (mtSound()) audio();
   mtNext = Math.max(0, Math.ceil((srvNow() - mt.t0) / per()));
   mtLast = -1;
   cancelAnimationFrame(mtRaf);
@@ -429,7 +428,8 @@ function mtStart(x) {
     const now = srvNow();
     while (mt.t0 + mtNext * per() < now + 150) {
       const at = mt.t0 + mtNext * per();
-      if (mtSound() && actx && at >= now - 20) click(actx.currentTime + Math.max(0, at - now) / 1000, mtNext % mt.beats === 0);
+      // контекст спит (iPad ждёт касания) — удары не копим, иначе проснётся и выдаст их пачкой
+      if (mtSound() && actx && actx.state === 'running' && at >= now - 20) click(actx.currentTime + Math.max(0, at - now) / 1000, mtNext % mt.beats === 0);
       mtNext++;
     }
   }, 25);
@@ -755,13 +755,13 @@ function setTab(t) {
 function fillLibs() {
   const sel = $('libSel');
   const want = ls.get('mps.lib', '');
-  sel.replaceChildren(el('option', '', 'Все песни'), ...Store.libs.map((l) => {
+  sel.replaceChildren(el('option', '', 'Все песни'), ...Store.libs.filter((l) => l.songs.length).map((l) => {
     const o = el('option', '', l.name);
     o.value = l.id;
     return o;
   }));
   sel.firstChild.value = '';
-  sel.value = Store.libs.some((l) => l.id === want) ? want : '';
+  sel.value = Store.libs.some((l) => l.id === want && l.songs.length) ? want : '';
 }
 
 function firstLine(s) {
@@ -782,7 +782,9 @@ function renderExt() {
     const b = el('button', 'item');
     b.type = 'button';
     const t1 = el('span', 't', r.name);
-    const t2 = el('span', 's', [r.ed ? (r.mine ? 'ваша правка' : `правка от ${r.who || '?'}`) : r.who && `от ${r.who}`, r.sheets.length && `нот: ${r.sheets.length}`].filter(Boolean).join(' · '));
+    const lib = r.sg && !r.base && (Store.libs.find((l) => l.id === r.song.lib) || {}).name;
+    const t2 = el('span', 's', [r.sg ? (r.base ? 'изменённая песня' : 'новая песня') + (lib ? ` → «${lib}»` : '') : r.ed ? (r.mine ? 'ваша правка' : `правка от ${r.who || '?'}`) : r.who && `от ${r.who}`,
+      r.sg && r.chords && 'аккорды', (r.sheets || []).length && `нот: ${r.sheets.length}`].filter(Boolean).join(' · '));
     t1.dataset.noi18n = '';
     t2.dataset.noi18n = '';
     b.append(t1, t2);
@@ -791,14 +793,18 @@ function renderExt() {
     x.type = 'button';
     x.setAttribute('aria-label', 'Убрать');
     x.dataset.noi18n = '';
-    x.onclick = async () => { if (await ask(r.ed ? `Убрать правку «${r.name}»? В программу она тогда не уйдёт с этого телефона.` : `Убрать «${r.name}» из «Не синхронизированные»? Она лежит только на этом телефоне.`, 'Убрать')) { await Sheets.delExt(r.id); renderExt(); } };
-    row.append(b, x);
+    x.onclick = async () => { if (await ask(r.ed || r.sg ? `Убрать правку «${r.name}»? В программу она тогда не уйдёт с этого телефона.` : `Убрать «${r.name}» из «Не синхронизированные»? Она лежит только на этом телефоне.`, 'Убрать')) { await Sheets.delExt(r.id); renderExt(); } };
+    row.append(b);
+    // песня с планшета — дописать, поменять аккорды и ноты, пока не ушла в программу
+    if ((r.sg || r.ext) && canChords()) { const e = el('button', 'ext-x ext-ed', r.sg ? 'Изменить' : 'В программу'); e.type = 'button'; e.onclick = () => SongEd.openDraft(r.id); row.append(e); }
+    row.append(x);
     box.append(row);
   }
 }
 window.renderExt = renderExt;
 function renderList() {
   renderExt();
+  $('addSong').hidden = !canChords(); // новая песня с планшета (songed.js)
   rows = Store.search($('q').value, $('libSel').value);
   shown = 0;
   $('list').replaceChildren();
@@ -995,11 +1001,11 @@ async function saveChordsEd() {
 function paintKey() {
   const v = cur;
   const s = (v && v.src) || {};
-  const can = !!(v && v.song && (s.chords || s.key || v.key || canChords()));
+  const can = !!(v && v.song); // у всех: там «Перенести или поделиться»
   $('songKey').hidden = !can;
   if (!can) return;
   const tr = v.tr || { t: 0, capo: 0 };
-  $('songKey').textContent = (keyNow(v) || (s.chords || canChords() ? 'Аккорды' : '')) + (tr.capo ? ` · капо ${tr.capo}` : '');
+  $('songKey').textContent = (keyNow(v) || 'Аккорды') + (tr.capo ? ` · капо ${tr.capo}` : '');
   $('songKey').classList.toggle('moved', !!tr.t);
 }
 function paintKeyDlg() {
@@ -1019,6 +1025,7 @@ function paintKeyDlg() {
     : tr.capo ? `Капо на ${tr.capo}-м ладу: аккорды показаны аппликатурой${shape ? ' ' + shape : ''}, звучит ${keyNow(v) || 'как написано'}.`
       : s.key ? `Тональность в программе — ${s.key}.` + (v.key && Chords.interval(s.key, v.key) ? ` В сетлисте — ${v.key}.` : '') : '';
   $('kEdit').hidden = !canChords() || !v.id;
+  $('kSong').hidden = !canChords() || !v.id;
   $('kShare').hidden = !Sheets.canShare(v);
   $('kReset').disabled = !tr.t && !tr.capo;
 }
@@ -1152,6 +1159,7 @@ function openView(v, push) {
   const body = $('songBody');
   body.replaceChildren();
   if (v.note) body.append(el('p', 'note', v.note));
+  if (v.extId) Sheets.extBar(v, body); // «Не синхронизированные»: поделиться, изменить
   // Песня: тональность, темп, размер; аккорды — с транспонированием и капо
   const src = v.song ? v.src || {} : {};
   const sheet = v.song && src.chords && chordsShown() ? Chords.sheet(src.chords) : null;
@@ -1376,6 +1384,9 @@ function wire() {
   $('cUp').onclick = () => cur && cur.tr && retune(cur.tr.t, cur.tr.capo + 1);
   $('cDown').onclick = () => cur && cur.tr && retune(cur.tr.t, cur.tr.capo - 1);
   $('kEdit').onclick = () => { $('keyDlg').close(); openChordsEd(); };
+  $('kSong').onclick = () => { $('keyDlg').close(); if (cur) SongEd.open(cur.id); };
+  $('addSong').onclick = () => SongEd.open('');
+  SongEd.init();
   $('kShare').onclick = () => { $('keyDlg').close(); Sheets.share(cur); };
   $('chX').onclick = () => $('chDlg').close();
   $('chSave').onclick = saveChordsEd;
@@ -1434,6 +1445,19 @@ function wire() {
   $('iExport').onclick = () => exportMine().catch(() => toast('Не получилось сохранить файл'));
   $('iImport').onclick = () => $('iImportFile').click();
   $('iSongOpen').onclick = () => $('iSongFile').click();
+  // Ссылка на песню, скопированная в Safari (iPad не открывает ссылки в приложении с экрана «Домой») или из чата
+  const lp = $('lpDlg');
+  const lpRead = async () => { try { $('lpIn').value = await navigator.clipboard.readText(); return true; } catch { return false; } };
+  const lpAdd = async () => { if (await Sheets.pasteLink($('lpIn').value)) { lp.close(); if ($('sheet').open) $('sheet').close(); renderExt(); } };
+  $('iLinkPaste').onclick = () => { $('lpIn').value = ''; lp.showModal(); };
+  $('lpClip').onclick = async () => {
+    if (!(await lpRead())) { toast('Телефон не дал прочитать буфер — нажмите в поле и выберите «Вставить»'); $('lpIn').focus(); return; }
+    if (/#mps=/.test($('lpIn').value)) lpAdd();
+  };
+  $('lpOk').onclick = lpAdd;
+  $('lpIn').onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); lpAdd(); } };
+  lp.addEventListener('click', (e) => { if (e.target === lp) lp.close(); });
+  $('linkDlg').addEventListener('click', (e) => { if (e.target === $('linkDlg')) $('linkDlg').close(); });
   $('iSongFile').onchange = () => { const f = $('iSongFile').files[0]; $('iSongFile').value = ''; if (f) { $('sheet').close(); Sheets.openFile(f); } };
   Sheets.wire();
   $('iImportFile').onchange = () => { const f = $('iImportFile').files[0]; $('iImportFile').value = ''; if (f) { $('sheet').close(); importMine(f); } };

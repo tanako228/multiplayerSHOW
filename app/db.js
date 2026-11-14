@@ -16,6 +16,7 @@ const Store = (() => {
   let me = null;
   let meta = { lib: '', since: 0, lh: '', at: 0 };
   let libs = [];
+  let types = []; // типы частей песни из программы: [{ name, color, num }] — кнопки разметки (songed.js)
   const songs = new Map();
   let sorted = null; // все песни по названию (кэш)
   let ms = null;
@@ -69,6 +70,7 @@ const Store = (() => {
     me = auth.me || null;
     meta = { lib: '', since: 0, lh: '', at: 0, ...((await getMeta('sync')) || {}) };
     libs = (await getMeta('libs')) || [];
+    types = (await getMeta('types')) || [];
     const all = (await tx(['songs'], 'readonly', (t) => t.objectStore('songs').getAll())) || [];
     songs.clear();
     for (const s of all) songs.set(s.id, s);
@@ -164,12 +166,14 @@ const Store = (() => {
           for (const id of j.gone) s.delete(id);
           const m = t.objectStore('meta');
           if (j.libs) m.put(j.libs, 'libs');
+          if (j.types) m.put(j.types, 'types');
           m.put(next, 'sync');
         });
         meta = next;
         for (const x of j.songs) { songs.set(x.id, x); changed.push(x); }
         for (const id of j.gone) { songs.delete(id); gone.push(id); }
         if (j.libs) libs = j.libs;
+        if (j.types) types = j.types;
         if (j.songs.length || j.gone.length) sorted = null;
         got += j.songs.length + j.gone.length;
         if (onProgress) onProgress(got, total);
@@ -254,6 +258,7 @@ const Store = (() => {
     get me() { return me; },
     get meta() { return meta; },
     get libs() { return libs; },
+    get types() { return types; },
     get indexReady() { return msReady; },
     get busy() { return !!syncing; },
     set onIndex(f) { onIndex = f; },

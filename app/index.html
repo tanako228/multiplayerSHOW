@@ -76,6 +76,7 @@
       <input id="q" type="search" placeholder="Слова или номер" enterkeyhint="search" autocomplete="off" autocapitalize="off" spellcheck="false" aria-label="Поиск песни">
     </div>
     <select id="libSel" aria-label="Библиотека"></select>
+    <button class="addsong" id="addSong" hidden aria-label="Новая песня" title="Новая песня">＋</button>
   </div>
   <div class="ext" id="extBox" hidden></div>
   <div class="list" id="list" role="list"></div>
@@ -206,6 +207,65 @@
   <input type="file" id="chFileIn" accept=".txt,.cho,.chopro,.chordpro,.crd,.pro,text/plain" hidden>
 </dialog>
 
+<!-- Песня с планшета (songed.js): новая или текст, части и аранжировки; право «Может править песни, аккорды и ноты» -->
+<dialog class="full sg-dlg" id="sgDlg" data-tab="1">
+  <div class="sheet-head"><h2 id="sgTitle">Новая песня</h2><button class="icon" id="sgX" aria-label="Закрыть">
+    <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg></button></div>
+  <div class="sg-meta">
+    <input id="sgName" class="field" maxlength="200" placeholder="Название песни" autocomplete="off" enterkeyhint="next" aria-label="Название песни">
+    <div class="sg-fields">
+      <label><span>Тональность</span><input id="sgKey" class="field" maxlength="8" placeholder="G" autocomplete="off" autocapitalize="characters" spellcheck="false"></label>
+      <label><span>Темп</span><input id="sgTempo" class="field" type="number" inputmode="numeric" min="20" max="400" placeholder="72"></label>
+      <label><span>Размер</span><input id="sgTime" class="field" maxlength="5" placeholder="4/4" autocomplete="off" inputmode="decimal"></label>
+      <label class="sg-lib" id="sgLibBox"><span>Библиотека</span><select id="sgLib" class="field" data-noi18n></select></label>
+    </div>
+  </div>
+  <div class="ch-tabs sg-tabs"><div class="seg"><button id="sgT1" aria-pressed="true">1. Текст и части</button><button id="sgT2" aria-pressed="false">2. Аранжировки</button><button id="sgT12" aria-pressed="false">Текст и аранжировки</button><button id="sgT3" aria-pressed="false">3. Аккорды и ноты</button></div></div>
+  <div class="sg-main">
+    <section class="sg-pane sg-p1">
+      <div class="sg-bar" id="sgBar" aria-label="Обозначить часть"></div>
+      <textarea class="ch-ta sg-ta" id="sgText" spellcheck="true" autocomplete="off" placeholder="[Куплет 1]&#10;Первая строка&#10;Вторая строка&#10;&#10;[Припев]&#10;Строки припева"></textarea>
+      <p class="hint sg-tip">Поставьте курсор на первую строку части и нажмите её тип — сверху встанет [Куплет 1], [Припев]… Пустая строка внутри части — новый слайд. «Убрать» — снять обозначение у части с курсором.</p>
+      <p class="hint sg-warn" id="sgWarn" hidden></p>
+    </section>
+    <section class="sg-pane sg-p2">
+      <div class="sg-arrbar">
+        <select id="sgArr" class="field" aria-label="Аранжировка"></select>
+        <button id="sgArrNew">＋ Новая</button><button id="sgArrRen">Название</button><button id="sgArrCopy">Копия</button><button id="sgArrDel" class="danger">Удалить</button>
+      </div>
+      <div class="lbl">Части песни — нажмите, чтобы добавить в конец порядка</div>
+      <div class="sg-chips" id="sgChips"></div>
+      <div class="lbl">Порядок исполнения</div>
+      <div class="sg-order" id="sgOrder"></div>
+      <p class="hint" id="sgArrHint"></p>
+    </section>
+    <section class="sg-pane sg-p3">
+      <div class="lbl">Аккорды — строкой над словами (сдвигайте пробелами, чтобы аккорд стоял над нужным слогом)</div>
+      <div class="ch-keys sg-keys" id="sgKeys"></div>
+      <textarea class="ch-ta sg-cta" id="sgChords" spellcheck="false" autocapitalize="off" autocomplete="off" autocorrect="off"></textarea>
+      <div class="btns sg-chb"><button id="sgChText">Взять текст песни</button><button id="sgChPaste">Вставить с аккордами…</button><button class="danger" id="sgChClear">Без аккордов</button></div>
+      <div class="sg-paste" id="sgPasteBox" hidden>
+        <p class="hint">Вставьте текст песни <b>с аккордами</b> (с сайта, из файла): аккорды в [скобках] или строкой над словами. «Перенести» — аккорды лягут на текст этой песни.</p>
+        <textarea class="ch-ta" id="sgPaste" spellcheck="false" autocapitalize="off" autocomplete="off" autocorrect="off"></textarea>
+        <div class="btns"><button id="sgPasteNo">Отмена</button><button class="primary" id="sgFit">Перенести на текст песни</button></div>
+      </div>
+      <div class="lbl">Ноты</div>
+      <div class="sg-sheets" id="sgSheets"></div>
+      <div class="btns"><button id="sgShAdd">＋ Фото или PDF</button></div>
+      <input type="file" id="sgShFile" accept="image/*,application/pdf,.pdf" multiple hidden>
+    </section>
+  </div>
+  <div class="my-foot">
+    <p class="hint" id="sgCount"></p>
+    <div class="btns"><button class="primary" id="sgSave">Сохранить в программу</button></div>
+  </div>
+</dialog>
+<dialog class="ask" id="sgNameDlg">
+  <p id="sgNameH"></p>
+  <input id="sgNameIn" class="field" maxlength="80" autocomplete="off" enterkeyhint="done">
+  <div class="btns"><button id="sgNameNo">Отмена</button><button class="primary" id="sgNameOk">Готово</button></div>
+</dialog>
+
 <!-- Ноты песни (sheets.js): листы из программы и из файла; с правом — добавить и убрать -->
 <dialog class="full" id="shDlg">
   <div class="sheet-head"><h2 id="shTitle" data-noi18n>Ноты</h2>
@@ -303,8 +363,9 @@
     <div class="row-i step"><span>Тональность</span><div class="stepper"><button id="kDown" aria-label="На полтона ниже">−</button><b id="kKey"></b><button id="kUp" aria-label="На полтона выше">+</button></div></div>
     <div class="row-i step"><span>Капо</span><div class="stepper"><button id="cDown" aria-label="Капо ниже">−</button><b id="kCapo"></b><button id="cUp" aria-label="Капо выше">+</button></div></div>
     <p class="hint" id="kHint"></p>
+    <div class="btns"><button id="kSong" hidden>Текст и аранжировки</button></div>
     <div class="btns"><button id="kEdit" hidden>Править аккорды</button><button id="kReset">Как в оригинале</button></div>
-    <div class="btns"><button id="kShare" hidden>Поделиться аккордами и нотами</button></div>
+    <div class="btns"><button id="kShare" hidden>Перенести или поделиться</button></div>
   </div>
 </dialog>
 
@@ -337,6 +398,7 @@
     <div class="btns"><button id="iExport">Сохранить в файл</button><button id="iImport">Загрузить из файла</button></div>
     <input type="file" id="iImportFile" hidden>
     <div class="btns"><button id="iSongOpen">Открыть файл с аккордами и нотами</button></div>
+    <div class="btns"><button id="iLinkPaste">Вставить ссылку на песню</button></div>
     <input type="file" id="iSongFile" hidden>
     <div class="btns"><button id="iSync">Обновить песни</button><button id="iResync">Загрузить всё заново</button></div>
     <p class="hint" id="iStore"></p>
@@ -360,6 +422,20 @@
 </dialog>
 
 <!-- Вопрос «Да / Отмена» -->
+<!-- Ссылка на песню открылась в Safari на iPad (sheets.js: linkChoice) -->
+<dialog class="ask" id="linkDlg">
+  <p id="linkText"></p>
+  <input class="field" id="linkUrl" readonly aria-label="Ссылка на песню" data-noi18n>
+  <div class="btns"><button id="linkHere">Открыть здесь, в Safari</button><button class="primary" id="linkCopy">Скопировать для приложения</button></div>
+</dialog>
+
+<!-- Вставить ссылку на песню (приложение на iPad: ссылки из чатов открываются в Safari) -->
+<dialog class="ask" id="lpDlg">
+  <p>Вставьте ссылку на песню из чата (или скопированную в Safari).</p>
+  <input class="field" id="lpIn" type="url" placeholder="https://…#mps=…" autocomplete="off" autocapitalize="off" spellcheck="false" aria-label="Ссылка на песню">
+  <div class="btns"><button id="lpClip">Вставить из буфера</button><button class="primary" id="lpOk">Добавить</button></div>
+</dialog>
+
 <dialog class="ask" id="ask">
   <p id="askText"></p>
   <div class="btns"><button id="askNo">Отмена</button><button class="primary" id="askOk">Да</button></div>
@@ -385,6 +461,7 @@
 <script src="mine.js"></script>
 <script src="sig.js"></script>
 <script src="sheets.js"></script>
+<script src="songed.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

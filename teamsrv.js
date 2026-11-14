@@ -423,7 +423,8 @@ const check = () => runJob('check', async (say) => {
 /* ----- Приложение для телефона: /app/… (файлы из app/), данные: /api/v1/… (teamapi.js) ----- */
 
 const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json; charset=utf-8',
-  '.webmanifest': 'application/manifest+json', '.png': 'image/png', '.svg': 'image/svg+xml', '.ico': 'image/x-icon', '.woff2': 'font/woff2', '.txt': 'text/plain; charset=utf-8' };
+  '.webmanifest': 'application/manifest+json', '.png': 'image/png', '.svg': 'image/svg+xml', '.ico': 'image/x-icon', '.woff2': 'font/woff2', '.txt': 'text/plain; charset=utf-8',
+  '.wav': 'audio/wav' };
 // Только свой адрес: домен из настроек или IP. Чужой сайт, подменивший свой адрес на 192.168.x.x (DNS rebinding),
 // не дотянется до данных группы из браузера на компьютере в этой сети
 function hostOk(req) {
@@ -572,7 +573,7 @@ function init(o) {
   fs.mkdirSync(dir, { recursive: true });
   load();
   loadCert();
-  api.init({ dir, libFile: o.libFile || path.join(dir, 'library.json'), ver: o.ver || '', on: () => cfg.on, notify, cmd: o.cmd, chords: o.chords, sheets: o.sheets, edit: o.edit,
+  api.init({ dir, libFile: o.libFile || path.join(dir, 'library.json'), ver: o.ver || '', on: () => cfg.on, notify, cmd: o.cmd, chords: o.chords, sheets: o.sheets, edit: o.edit, song: o.song,
     store: { read: readFile, write: writeFile } });
   start();
   if (opt.want) opt.want();

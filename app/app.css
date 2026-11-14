@@ -297,3 +297,66 @@ dialog::backdrop { background: rgba(0, 0, 0, .6); }
 .im-list { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
 .im-row { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; text-align: left; padding: 10px 12px; }
 .im-row .hint { font-size: 12px; }
+
+/* Песня с планшета (songed.js): узко — две вкладки, широко (планшет) — текст слева, аранжировки справа */
+.addsong { flex: none; width: 46px; height: 46px; padding: 0; font-size: 24px; font-weight: 600; color: var(--live); }
+.addsong[hidden] { display: none; }
+dialog.sg-dlg { width: min(1180px, 100%); }
+.sg-meta { padding: 8px 12px 0; }
+.sg-fields { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.sg-fields label { flex: 1 1 90px; min-width: 0; display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: var(--muted); }
+.sg-fields .sg-lib { flex: 2 1 180px; }
+.sg-fields .sg-lib[hidden] { display: none; }
+.sg-fields .field { padding: 9px 10px; font-size: 16px; }
+.sg-main { flex: 1; min-height: 0; display: flex; gap: 12px; padding: 0 12px; }
+.sg-pane { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+.sg-p2 { overflow: auto; padding-bottom: 8px; }
+.sg-dlg[data-tab="1"] .sg-p2, .sg-dlg[data-tab="2"] .sg-p1, .sg-dlg:not([data-tab="3"]) .sg-p3, .sg-dlg[data-tab="3"] .sg-p1, .sg-dlg[data-tab="3"] .sg-p2 { display: none; }
+.sg-tabs #sgT12 { display: none; }
+.sg-bar { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 0 0; }
+.sg-pt { --part: var(--muted); min-height: 42px; padding: 6px 12px; font-size: 15px; font-weight: 600;
+  border-color: color-mix(in srgb, var(--part) 70%, var(--line)); background: color-mix(in srgb, var(--part) 18%, var(--field)); }
+.sg-pt.sg-un { --part: var(--line); font-weight: 400; color: var(--muted); }
+.sg-ta { margin: 8px 0 0; font-family: inherit; font-size: 17px; line-height: 1.5; white-space: pre-wrap; }
+.sg-tip { margin: 6px 2px 0; font-size: 12px; }
+.sg-warn { margin: 6px 2px 0; font-size: 13px; color: var(--warn); }
+.sg-arrbar { display: flex; flex-wrap: wrap; gap: 6px; padding-top: 8px; }
+.sg-arrbar select { flex: 1 1 160px; width: auto; min-width: 0; padding: 9px 10px; font-size: 16px; }
+.sg-arrbar button { flex: none; min-height: 44px; padding: 6px 12px; font-size: 14px; }
+.sg-p2 .lbl { margin: 14px 0 6px; }
+.sg-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.sg-chip { --part: var(--muted); display: inline-flex; align-items: center; min-height: 40px; padding: 4px 12px; border-radius: 10px; font-size: 15px; font-weight: 600;
+  border: 1px solid color-mix(in srgb, var(--part) 70%, var(--line)); background: color-mix(in srgb, var(--part) 22%, var(--field)); cursor: pointer; user-select: none; -webkit-user-select: none; }
+.sg-chips .sg-chip.off { opacity: .6; }
+.sg-chip.missing { text-decoration: line-through; opacity: .6; }
+.sg-order { display: flex; flex-direction: column; gap: 4px; }
+.sg-row { display: flex; align-items: center; gap: 6px; }
+.sg-row .sg-chip { flex: 1; min-width: 0; cursor: default; }
+.sg-n { flex: none; width: 22px; text-align: right; color: var(--muted); font-size: 13px; }
+.sg-mv { flex: none; width: 44px; min-height: 40px; padding: 0; font-size: 18px; }
+#sgNameDlg .field { margin: 6px 0 4px; }
+@media (min-width: 900px) {
+  .sg-tabs #sgT1, .sg-tabs #sgT2 { display: none; }
+  .sg-tabs #sgT12 { display: block; }
+  .sg-dlg[data-tab="1"] .sg-p2, .sg-dlg[data-tab="2"] .sg-p1 { display: flex; }
+  .sg-p1 { flex: 3; }
+  .sg-p2 { flex: 2; border-left: 1px solid var(--line); padding-left: 12px; }
+}
+/* Аккорды и ноты в окне песни */
+.sg-p3 { overflow: auto; padding-bottom: 8px; }
+.sg-p3 .lbl { margin: 12px 0 6px; }
+.sg-keys { padding: 0; }
+.sg-cta { flex: none; min-height: 260px; height: 42vh; margin: 8px 0 0; }
+.sg-chb { margin-top: 8px; }
+.sg-chb button { flex: 1 1 auto; min-height: 42px; font-size: 14px; }
+.sg-paste { margin-top: 8px; padding: 10px; border: 1px solid var(--line); border-radius: 10px; }
+.sg-paste .hint { margin: 0 0 6px; font-size: 13px; }
+.sg-paste textarea { width: 100%; min-height: 160px; margin: 0; }
+.sg-sheets { display: flex; flex-wrap: wrap; gap: 10px; }
+.sg-sheets > .hint { margin: 0; }
+.sg-sh { width: 132px; display: flex; flex-direction: column; gap: 4px; }
+.sg-shp { height: 170px; display: grid; place-items: center; border-radius: 8px; border: 1px solid var(--line); background: #fff center / contain no-repeat; color: #333; font-size: 20px; }
+.sg-shn { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sg-shb { display: flex; gap: 4px; }
+.sg-shb .sg-mv { flex: 1; width: auto; min-height: 36px; font-size: 16px; }
+.ext-ed { width: auto; padding: 0 12px; font-size: 14px; color: var(--live); }

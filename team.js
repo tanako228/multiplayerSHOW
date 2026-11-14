@@ -203,9 +203,9 @@ function grGrpPaint() {
     // Право править аккорды песен с телефона — тоже у человека, не у роли
     const chd = grEl('label', 'check');
     const cb2 = Object.assign(grEl('input'), { type: 'checkbox', checked: !!p.chd });
-    cb2.addEventListener('change', () => grDo({ act: 'person', id: p.id, chd: cb2.checked }, cb2.checked ? `«${p.name}» может править аккорды и ноты с телефона` : 'Править аккорды и ноты с телефона больше нельзя'));
-    chd.append(cb2, document.createTextNode(' Может править аккорды и ноты'));
-    chd.title = 'Вписывать и менять аккорды песен, добавлять и убирать листы нот с телефона или планшета, делиться ими файлом. Текст песни не меняется; Ctrl+Z в программе возвращает прежнее';
+    cb2.addEventListener('change', () => grDo({ act: 'person', id: p.id, chd: cb2.checked }, cb2.checked ? `«${p.name}» может добавлять и править песни, аккорды и ноты с телефона` : 'Править песни, аккорды и ноты с телефона больше нельзя'));
+    chd.append(cb2, document.createTextNode(' Может править песни, аккорды и ноты'));
+    chd.title = 'С телефона или планшета: добавлять новые песни, менять текст, разметку частей и аранжировки, вписывать аккорды, добавлять и убирать листы нот, делиться ими файлом. Ctrl+Z в программе возвращает прежнее';
     head.append(grEl('b', '', p.name), role, ctl, chd, ...(p.pw ? [grEl('span', 'tm-pw', 'с паролем')] : []), grEl('span', 'spacer'),
       grBtn(p.pw ? 'Сменить пароль' : 'Пароль', async () => {
         const pw = await askName(`Пароль для «${p.name}» (не короче 4 знаков) — скажите его человеку`, '');
@@ -263,11 +263,12 @@ const GR_EV = {
   bad: (x) => `Попытка войти с чужим или отозванным ключом — ${x.ip}`,
   ctlOn: (x) => `${x.name}: можно листать слайды с телефона`,
   ctlOff: (x) => `${x.name}: листать с телефона больше нельзя`,
-  chdOn: (x) => `${x.name}: можно править аккорды и ноты с телефона`,
-  chdOff: (x) => `${x.name}: править аккорды и ноты с телефона больше нельзя`,
+  chdOn: (x) => `${x.name}: можно править песни, аккорды и ноты с телефона`,
+  chdOff: (x) => `${x.name}: править песни, аккорды и ноты с телефона больше нельзя`,
   chords: (x) => `${x.name} ${x.clear ? 'убрал(а) аккорды' : 'записал(а) аккорды'}: ${x.song}`,
   sheets: (x) => `${x.name} ${x.del ? 'убрал(а) лист нот' : `добавил(а) ноты (листов: ${x.n})`}: ${x.song}`,
   edit: (x) => `Правка без связи от ${x.by}${x.by !== x.name ? ` (принёс(ла) ${x.name})` : ''}: ${x.sh ? 'аккорды и ноты' : 'аккорды'} — ${x.song}`,
+  song: (x) => `${x.name} ${x.add ? 'добавил(а) песню' : 'изменил(а) текст и аранжировки'}: ${x.song}`,
   editBad: (x) => `Телефон ${x.name} (${x.dev}) принёс повреждённую или изменённую правку — не принята`,
   pwOk: (x) => `${x.name} вошёл(ла) по паролю — ${x.dev}, ${x.ip}`,
   pwBad: (x) => `Неверный пароль: «${x.name}» — ${x.ip}`,
@@ -281,7 +282,7 @@ const GR_EV = {
   metroOff: (x) => `Метроном для группы остановил(а) ${x.name}`,
 };
 const GR_MODES = { qr: 'по QR-коду и «Пустить»', qrpass: 'с паролем сразу, без пароля — «Пустить»', pass: 'только имя и пароль' };
-const GR_KINDS = { in: ['join', 'approve', 'admit', 'reject', 'off', 'on', 'revoke', 'delPerson', 'bad', 'ctlOn', 'ctlOff', 'chdOn', 'chdOff', 'chords', 'sheets', 'edit', 'editBad', 'pwOk'],
+const GR_KINDS = { in: ['join', 'approve', 'admit', 'reject', 'off', 'on', 'revoke', 'delPerson', 'bad', 'ctlOn', 'ctlOff', 'chdOn', 'chdOff', 'chords', 'sheets', 'song', 'edit', 'editBad', 'pwOk'],
   pw: ['pwOk', 'pwBad', 'locked', 'unlock', 'pwSet', 'pwDel', 'mode'], msg: ['msg', 'metroOn', 'metroOff'] };
 let grLogN = 200; // «Весь журнал» — до 20000 строк
 let grLogT = 0;
@@ -617,6 +618,53 @@ window.api.onTeamSheets((c) => {
   saveLib();
   flashStatus(`Телефон (${c.who || '?'}): ${c.del ? 'лист нот убран' : 'ноты добавлены'} — «${it.name}». Ctrl+Z — вернуть`);
   done();
+});
+
+// Песня с планшета (то же право, teamapi.js: putSong): новая — в выбранную библиотеку (или первую), у старой — текст,
+// разметка частей, аранжировки, название, тональность/темп/размер; аккорды и ноты — если прислали; номер, жанр не трогаем.
+// Слайды собирает Songs.build, как «Сохранить» в окне песни. Через saveLib — Ctrl+Z вернёт; ответ — id песни
+window.api.onTeamSong((c) => {
+  const done = (err, id) => window.api.teamChordsDone({ rid: c && c.rid, ...(err ? { err } : { id }) });
+  if (!c || typeof lib === 'undefined' || !lib) { done('Библиотека ещё не загружена'); return; }
+  const text = String(c.text || '').replace(/\s+$/, '');
+  if (!Songs.parse(text).groups.size) { done('В песне нет текста'); return; }
+  const arrangements = Array.isArray(c.arrangements) ? c.arrangements : [];
+  const name = String(c.name || '').trim() || 'Песня';
+  const meta = { key: c.key, tempo: c.tempo, time: c.time };
+  // Аккорды и ноты — если прислали (нет поля / null — не трогать)
+  const extra = (song) => {
+    if (typeof c.chords === 'string') { const ch = c.chords.trimEnd(); if (ch.trim()) song.chords = ch; else delete song.chords; }
+    if (Array.isArray(c.sheets)) { if (c.sheets.length) song.sheets = c.sheets; else delete song.sheets; }
+    return song;
+  };
+  if (c.id) {
+    const it = lib.items[c.id];
+    if (!it) { done('Такой песни в программе уже нет'); return; }
+    const first = !it.song;
+    const song = { ...(it.song || {}), text, arrangements, arr: arrangements.some((a) => a.id === c.arr) ? c.arr : '' };
+    delete song.loose;
+    if (!first) followRenames(it.song.text, text, song.arrangements);
+    Songs.songMeta(song, meta);
+    extra(song);
+    it.song = song;
+    it.name = name;
+    it.slides = Songs.build(song, it.slides, first);
+    touched(it);
+    renderService();
+    flashStatus(`Телефон (${c.who || '?'}): изменена песня «${name}». Ctrl+Z — вернуть`);
+    done('', it.id);
+    return;
+  }
+  const song = extra(Songs.songMeta({ text, arrangements, arr: arrangements.some((a) => a.id === c.arr) ? c.arr : '' }, meta));
+  const item = { id: newId(), type: 'pres', kind: 'song', name, song, slides: Songs.build(song) };
+  let l = lib.libraries.find((x) => x.id === c.lib) || lib.libraries[0];
+  if (!l) { l = { id: newId(), name: freeName('lib', 'Библиотека'), items: [] }; lib.libraries.push(l); }
+  lib.items[item.id] = item;
+  l.items.push(item.id);
+  saveLib();
+  renderService();
+  flashStatus(`Телефон (${c.who || '?'}): добавлена песня «${name}» в библиотеку «${l.name}». Ctrl+Z — вернуть`);
+  done('', item.id);
 });
 
 // Правка, сделанная без связи (аккорды, тональность, ноты целиком), — подписана тем, кто может править (who),

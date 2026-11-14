@@ -475,8 +475,9 @@ const Sheets = (() => {
   let flushing = false;
   // here — правку только что открыли на связи: сказать и тогда, когда она чужая и уже не нужна
   async function flush(here) {
+    await cleanExt(); // песни из файлов, что уже есть в программе, — из «Не синхронизированные»
     if (flushing) return;
-    const todo = [...got.values()].filter((r) => r.pend && (r.ed || (canEdit() && Store.songs.has(r.id))));
+    const todo = [...got.values()].filter((r) => r.pend && (r.ed || r.sg || (canEdit() && Store.songs.has(r.id))));
     if (!todo.length) return;
     flushing = true;
     let n = 0;
@@ -486,6 +487,15 @@ const Sheets = (() => {
     const gone = [];
     try {
       for (const r of todo) {
+        // песня с планшета без связи (songed.js): новая — в свою библиотеку, или текст, аранжировки, аккорды, ноты
+        if (r.sg) {
+          await SongEd.send(r);
+          n++;
+          await Store.delRec('got', r.id).catch(() => {});
+          got.delete(r.id);
+          gone.push(r.id);
+          continue;
+        }
         if (r.ed) {
           let e = r.ed;
           const data = {};
@@ -527,9 +537,58 @@ const Sheets = (() => {
 
   /* ----- Поделиться: файл .txt, который понятен и человеку, и приложению ----- */
 
-  const canShare = (v) => !!v && !!v.song && !!v.id && !v.tmp && (canEdit() || !!(v.got && v.got.ed)) && (!!(v.src && v.src.chords) || list(v).length > 0);
+  // «Перенести или поделиться» — у всех. Личная версия (своя правка без связи, своя песня с планшета) — только у Лидера;
+  // у остальных из песни уходит версия из программы, а свою песню из «Не синхронизированные» они не отправляют
+  const isLeader = () => !!(Store.me && Store.me.person && Store.me.person.role === 'leader');
+  const ownRec = (r) => !!r && (!!r.sg || (!!r.mine && (!!r.ed || !!r.pend)));
+  const personal = (v) => !!v && !!v.got && ownRec(v.got);
+  const canShare = (v) => !!v && !!v.song && (v.extId ? got.has(v.extId) && (!ownRec(got.get(v.extId)) || isLeader()) : !!v.id && !v.tmp);
+  // Песня из «Не синхронизированные» (сделана на планшете без связи или пришла файлом/ссылкой) — тем же файлом .txt.
+  // Без подписи: у получателя она ляжет в «Не синхронизированные», а с правом — «Изменить» → в его программу.
+  // Аранжировки (arrs, arr) едут в song — получатель увидит их в окне песни
+  async function shareRec(r) {
+    if (!r || busy) return;
+    busy = true;
+    try {
+      const src = r.song || {};
+      const song = { name: src.name || r.name, text: src.text || '' };
+      for (const k of ['key', 'tempo', 'time', 'ccli', 'number']) if (src[k]) song[k] = String(src[k]);
+      const ch = r.sg ? r.chords : r.ed ? r.chords : src.chords;
+      if (ch) song.chords = ch;
+      if (Array.isArray(src.arrs) && src.arrs.length) { song.arrs = src.arrs; if (src.arr) song.arr = src.arr; }
+      const sheets = [];
+      for (const x of r.sheets || []) {
+        let rec = x.buf ? x : null;
+        // лист из программы (черновик изменённой песни) — из кэша телефона
+        if (!rec && x.f) { try { rec = await recOf(x.f); } catch { toast('Не все листы нот на телефоне — нужна связь с программой'); return; } }
+        if (rec) sheets.push({ name: x.name || 'Ноты', type: rec.type || 'image/jpeg', data: await b64(new Blob([rec.buf], { type: rec.type })) });
+      }
+      const who = Store.me ? Store.me.person.name : '';
+      const d = { app: 'church-presenter', kind: 'team-song', v: 1, at: Date.now(), who, song, sheets };
+      const meta = [song.key && `Тональность ${song.key}`, song.tempo && `♩ = ${song.tempo}`, song.time, sheets.length && `листов нот: ${sheets.length}`].filter(Boolean).join(' · ');
+      const link = await makeLink(song, who, null);
+      const text = [song.name, meta, '', 'Аккорды и ноты для приложения «MP Группа».',
+        'Ссылка (аккорды и текст — сразу в «Не синхронизированные»): ' + link,
+        'Ноты — из этого файла: «…» → «Открыть файл с аккордами и нотами».', '',
+        song.chords ? Chords.toRows(song.chords) : song.text, '', '', MARK, JSON.stringify(d), ''].join('\n');
+      const name = (String(song.name).replace(/[\\/:*?"<>|]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 80) || 'Песня') + ' — аккорды и ноты.txt';
+      await shareFile(new Blob([text], { type: 'text/plain' }), name, `${song.name} — аккорды и ноты для «MP Группа». Откройте ссылку: ${link}`);
+    } catch (e) {
+      toast(e.message || 'Не получилось сделать файл');
+    } finally { busy = false; }
+  }
   async function share(v) {
+    if (v && v.extId) {
+      if (!canShare(v)) { toast('Свою версию песни, которой ещё нет в программе, отправляет только Лидер'); return; }
+      shareRec(got.get(v.extId));
+      return;
+    }
     if (!canShare(v) || busy) return;
+    // Не Лидер: своя правка остаётся у себя — уходит песня как в программе
+    if (personal(v) && !isLeader()) {
+      v = { ...v, src: v.base || v.src, got: null };
+      toast('Отправляется версия из программы — свою личную версию отправляет только Лидер');
+    }
     const s = v.src || {};
     busy = true;
     try {
@@ -543,7 +602,10 @@ const Sheets = (() => {
       // Подпись: правка без связи — как есть; иначе «как сейчас у песни» (at 0 — программа её уже знает)
       const g = v.got;
       const m = g && g.ed ? { ed: g.ed, edl: g.edl } : canSign() ? makeEdit(v, {}, 0) : null;
-      const song = { name: v.name, text: plainOf(v) };
+      // текст с разметкой частей и аранжировки — как в программе (на другом планшете песню можно сразу добавить в его программу)
+      const b0 = v.base || {};
+      const song = { name: v.name, text: typeof b0.text === 'string' && b0.text.trim() ? b0.text : plainOf(v) };
+      if (Array.isArray(b0.arrs) && b0.arrs.length) { song.arrs = b0.arrs; if (b0.arr) song.arr = b0.arr; }
       for (const k of ['key', 'tempo', 'time', 'ccli', 'number']) if (s[k]) song[k] = s[k];
       if (s.chords) song.chords = s.chords;
       const d = { app: 'church-presenter', kind: 'team-song', v: 1, at: Date.now(), who: g && g.ed ? g.who : Store.me ? Store.me.person.name : '', song, sheets,
@@ -675,6 +737,7 @@ const Sheets = (() => {
         await Store.api('/songs/sheets', { method: 'POST', body: { id, add: { name: String(x.name || 'Ноты'), data: x.data } }, timeout: 240000 });
       }
       $('imDlg').close();
+      if (inc.ext) { await delExt(inc.ext); window.renderExt && window.renderExt(); } // песня из «Не синхронизированные» — теперь в программе
       toast('Сохранено в программе — группа увидит');
     } catch (e) {
       toast(e.message || 'Не получилось сохранить в программу');
@@ -697,11 +760,12 @@ const Sheets = (() => {
     try { await Store.putRec('got', r); } catch { toast('Не хватило места на телефоне'); return; }
     got.set(r.id, r);
     $('imDlg').close();
+    if (inc.ext) { await delExt(inc.ext); window.renderExt && window.renderExt(); }
     toast('Готово — видно только на этом телефоне');
     openSong(r.id, true);
   }
   // Песни нет — показать то, что в файле, как песню (без записи)
-  function viewSong(song, sheets, note) {
+  function viewSong(song, sheets, note, extId) {
     const slides = [];
     let part = '';
     let pi = 0;
@@ -715,7 +779,7 @@ const Sheets = (() => {
     const t = Date.now().toString(36);
     const src = {};
     for (const k of ['key', 'tempo', 'time', 'chords']) if (song[k]) src[k] = song[k];
-    openView({ id: '', name: song.name, slides, song: true, src, tmp: true, ...(note ? { note } : {}),
+    openView({ id: '', name: song.name, slides, song: true, src, tmp: true, ...(note ? { note } : {}), ...(extId ? { extId } : {}),
       tmpSheets: sheets.map((x, i) => ({ f: `t${t}-${i}`, name: String(x.name || 'Ноты'), type: x.type || 'image/jpeg', buf: x.buf })) }, true);
   }
   function viewOnly() {
@@ -750,7 +814,13 @@ const Sheets = (() => {
 
   const hash = (s) => { let h = 5381; for (let i = 0; i < s.length; i++) h = ((h * 33) ^ s.charCodeAt(i)) >>> 0; return h.toString(36); };
   const extId = (song) => 'ext-' + hash(Chords.norm(String(song.name).replace(/^\s*\d+[.)\s]+/, '')) + '|' + Chords.norm(Chords.lyricLines(song.text || song.chords || '')[0] || ''));
-  const extList = () => [...got.values()].filter((r) => r.ext || r.ed).sort((a, b) => b.at - a.at);
+  const extList = () => [...got.values()].filter((r) => r.ext || r.ed || r.sg).sort((a, b) => b.at - a.at);
+  // Черновик песни с планшета (songed.js) — в «Не синхронизированные»
+  async function keepRec(r) {
+    try { await Store.putRec('got', r); } catch { throw new Error('Не хватило места на телефоне'); }
+    got.set(r.id, r);
+    window.renderExt && window.renderExt();
+  }
   // sheets — [{ name, type, buf }]; песня уже была (ссылка, потом файл) — дополняем, а не затираем
   async function addExt(song, sheets, who) {
     const id = extId(song);
@@ -759,7 +829,7 @@ const Sheets = (() => {
     const r = {
       id, ext: true, name: song.name, who: String(who || (old && old.who) || ''), at: Date.now(), chords: '', key: '',
       song: { ...(old ? old.song : {}), ...song, ...(song.chords || !old ? {} : { chords: old.song.chords }) },
-      sheets: sheets.length ? sheets.map((x, i) => ({ f: `g${t}-${i}`, name: String(x.name || 'Ноты'), type: x.type || 'image/jpeg', buf: x.buf })) : old ? old.sheets : [],
+      sheets: sheets.length ? sheets.map((x, i) => ({ f: `g${t}-${i}`, name: String(x.name || 'Ноты'), type: x.type || 'image/jpeg', buf: x.buf, ...(x.pf ? { pf: String(x.pf) } : {}) })) : old ? old.sheets : [],
     };
     await Store.putRec('got', r);
     got.set(id, r);
@@ -768,6 +838,18 @@ const Sheets = (() => {
   async function openExt(id) {
     const r = got.get(id);
     if (!r) return;
+    if (r.sg) {
+      const s = r.song;
+      const sheets = [];
+      for (const x of r.sheets || []) {
+        if (x.buf && x.type !== 'application/pdf') sheets.push({ name: x.name, type: x.type, buf: x.buf });
+        else if (x.f) { const c = await Store.getRec('sheets', x.f).catch(() => null); if (c) sheets.push({ name: x.name, type: c.type, buf: c.buf }); }
+      }
+      const lib = (Store.libs.find((l) => l.id === s.lib) || {}).name;
+      viewSong({ name: s.name, text: s.text, key: s.key, tempo: s.tempo, time: s.time, chords: r.chords || '' }, sheets,
+        (r.base ? 'Изменённая песня' : 'Новая песня') + ' — ещё не в программе. Уйдёт ' + (lib ? `в библиотеку «${lib}»` : 'в программу') + ', когда телефон подключится.', id);
+      return;
+    }
     if (r.ed) {
       if (Store.songs.has(id)) { openSong(id, true); return; }
       // песни на телефоне ещё нет: показать как в файле; листы программы — из кэша, если пришли в файле
@@ -776,14 +858,84 @@ const Sheets = (() => {
         const x = k === 'h' ? (r.sheets || []).find((y) => y.h === a) : await Store.getRec('sheets', a).catch(() => null);
         if (x) sheets.push({ name, type: x.type, buf: x.buf });
       }
-      viewSong({ ...r.song, chords: r.chords, key: r.key || r.song.key || '' }, sheets, `Правка от ${r.who || '?'}: этой песни на телефоне ещё нет. Уйдёт в программу, когда телефон подключится.`);
+      viewSong({ ...r.song, chords: r.chords, key: r.key || r.song.key || '' }, sheets, `Правка от ${r.who || '?'}: этой песни на телефоне ещё нет. Уйдёт в программу, когда телефон подключится.`, id);
       return;
     }
-    viewSong(r.song, r.sheets, 'Ещё не синхронизирована с программой: сохранена только на этом телефоне.');
+    viewSong(r.song, r.sheets, 'Ещё не синхронизирована с программой: сохранена только на этом телефоне.', id);
   }
   async function delExt(id) { got.delete(id); await Store.delRec('got', id).catch(() => {}); if (cur && cur.id === id && Store.songs.has(id)) reopen(id); }
   async function addFromInc() {
-    try { const r = await addExt(inc.song, inc.sheets.map((x) => ({ name: x.name, type: x.type, buf: fromB64(x.data) })), inc.who); $('imDlg').close(); toast('Добавлено в «Не синхронизированные»'); window.renderExt && window.renderExt(); openExt(r.id); } catch { toast('Не хватило места на телефоне'); }
+    // Песня уже есть в программе и ничего нового не несёт — в «Не синхронизированные» не кладём, открываем её
+    const twin = twinOf(inc.song);
+    if (twin && nothingNew({ song: inc.song, sheets: inc.sheets.map((x) => ({ name: x.name, pf: x.f })) }, twin)) {
+      $('imDlg').close();
+      toast('Эта песня уже есть в программе — она у вас в библиотеке');
+      openSong(twin.id, true);
+      return;
+    }
+    try { const r = await addExt(inc.song, inc.sheets.map((x) => ({ name: x.name, type: x.type, buf: fromB64(x.data), pf: x.f })), inc.who); $('imDlg').close(); toast('Добавлено в «Не синхронизированные»'); window.renderExt && window.renderExt(); openExt(r.id); } catch { toast('Не хватило места на телефоне'); }
+  }
+
+  /* ----- Песня из файла, которая уже есть в программе ----- */
+
+  const normName = (s) => Chords.norm(String(s || '').replace(/^\s*\d+[.)\s]+/, ''));
+  const normCh = (s) => String(s || '').replace(/\s+/g, ' ').trim();
+  // Та же песня в программе: то же название и тот же текст (80% строк совпали)
+  function twinOf(song) {
+    if (!song || !song.name) return null;
+    const nm = normName(song.name);
+    const src = song.text || song.chords || '';
+    for (const s of Store.songs.values()) {
+      if (normName(s.name) !== nm) continue;
+      if (!src.trim()) return s;
+      const a = Chords.align(src, plainOf({ slides: s.slides }));
+      if (!a.total || (a.exact + a.fuzzy) / a.total >= 0.8) return s;
+    }
+    return null;
+  }
+  // Ничего нового против программы: аккордов нет или те же; листы — те, что уже у песни (по файлу программы или по названию)
+  function nothingNew(r, s) {
+    const ch = r.song && r.song.chords;
+    if (ch && Chords.hasChords(ch) && normCh(ch) !== normCh(s.chords)) return false;
+    const have = s.sheets || [];
+    return (r.sheets || []).every((x) => (x.pf ? have.some((y) => y.f === x.pf) : have.some((y) => normCh(y.name) === normCh(x.name))));
+  }
+  // После синхронизации: такие песни из «Не синхронизированные» убрать — они уже в библиотеке программы
+  async function cleanExt() {
+    if (!Store.songs.size) return;
+    let n = 0;
+    for (const r of [...got.values()]) {
+      if (!r.ext || r.sg || r.ed) continue;
+      const twin = twinOf(r.song);
+      if (!twin || !nothingNew(r, twin)) continue;
+      got.delete(r.id);
+      await Store.delRec('got', r.id).catch(() => {});
+      n++;
+    }
+    if (n) window.renderExt && window.renderExt();
+  }
+  // «В программу» у песни из файла, которая в программе уже есть: аккорды и ноты — на неё (окно «Аккорды и ноты из файла»),
+  // без второй такой же песни. Ничего нового — просто убрать запись и открыть песню из библиотеки. true — разобрались здесь
+  async function toTwin(id) {
+    const r = got.get(id);
+    const twin = r && r.ext && twinOf(r.song);
+    if (!twin) return false;
+    if (nothingNew(r, twin)) {
+      await delExt(id);
+      window.renderExt && window.renderExt();
+      toast('Эта песня уже есть в программе — она у вас в библиотеке');
+      openSong(twin.id, true);
+      return true;
+    }
+    const sheets = [];
+    for (const x of r.sheets || []) if (x.buf && !(x.pf && (twin.sheets || []).some((y) => y.f === x.pf))) sheets.push({ name: x.name, type: x.type, data: await b64(new Blob([x.buf])) });
+    inc = { who: r.who, song: r.song, sheets, ext: id };
+    const what = [r.song.chords ? 'аккорды' : '', sheets.length ? `листов нот: ${sheets.length}` : ''].filter(Boolean).join(', ');
+    $('imWhat').replaceChildren(el('b', '', r.song.name), document.createTextNode(` — ${what}. Эта песня уже есть в программе: аккорды и ноты лягут на неё.`));
+    $('imWhat').firstChild.dataset.noi18n = '';
+    choose(twin);
+    $('imDlg').showModal();
+    return true;
   }
 
   /* ----- Ссылка: песня без нот в адресе (#mps=…), чтобы открыть её в приложении одним нажатием ----- */
@@ -800,11 +952,52 @@ const Sheets = (() => {
     try { if (window.CompressionStream) p = 'z.' + toB64u(await pipe(raw, CompressionStream)); } catch { /* без сжатия */ }
     return new URL('./', location.href).href + '#mps=' + p;
   }
-  // Открыли ссылку из чата: песню — в «Не синхронизированные». true — добавили
+  // Открыли ссылку из чата: песню — в «Не синхронизированные». true — добавили.
+  // iPad / iPhone: ссылка из Telegram всегда открывается в Safari, не в приложении с экрана «Домой» (так устроен iOS),
+  // а у Safari и приложения раздельное хранилище — песня, добавленная в Safari, в приложении не появится.
+  // Поэтому в Safari спрашиваем: скопировать ссылку для приложения (там — «Вставить ссылку на песню») или открыть здесь
   async function fromLink() {
     const m = /^#mps=([rz])\.([\w-]+)$/.exec(location.hash);
     if (!m) return false;
+    const full = location.origin + location.pathname + location.hash;
     history.replaceState(history.state, '', location.pathname + location.search);
+    if (TouchKit.iosLike() && !TouchKit.standalone()) {
+      const here = await linkChoice(full);
+      if (!here) return false;
+    }
+    return takeLink(m);
+  }
+  // Safari на iPad: «Скопировать для приложения» (true не вернёт) или «Открыть здесь, в Safari» (true)
+  function linkChoice(full) {
+    return new Promise((resolve) => {
+      const d = $('linkDlg');
+      $('linkText').textContent = 'На iPad и iPhone ссылки из чатов открываются в Safari, а не в приложении — так устроен iOS, и у Safari с приложением раздельная память. Чтобы песня попала в приложение: нажмите «Скопировать для приложения», откройте приложение с экрана «Домой» и там: «…» → «Вставить ссылку на песню».';
+      $('linkCopy').hidden = false;
+      const f = $('linkUrl');
+      f.value = full;
+      $('linkCopy').onclick = () => {
+        // Сразу в обработчике нажатия: после await Safari не даст записать в буфер.
+        // Сначала старый способ (выделить поле и «копировать») — он синхронный и работает и там, где clipboard API запрещён
+        const ok = () => { $('linkText').textContent = 'Ссылка скопирована. Откройте приложение с экрана «Домой» → «…» → «Вставить ссылку на песню».'; $('linkCopy').hidden = true; };
+        const fail = () => { f.focus(); f.select(); toast('Не скопировалось — нажмите на ссылку в чате и держите → «Скопировать»'); };
+        let done = false;
+        try { f.focus(); f.setSelectionRange(0, full.length); done = document.execCommand('copy'); } catch { done = false; }
+        f.blur();
+        if (done) { ok(); return; }
+        try { navigator.clipboard.writeText(full).then(ok, fail); } catch { fail(); }
+      };
+      $('linkHere').onclick = () => { d.onclose = null; d.close(); resolve(true); };
+      d.onclose = () => resolve(false);
+      d.showModal();
+    });
+  }
+  // Ссылку вставили в приложении (из буфера или вручную). true — песня добавлена
+  async function pasteLink(text) {
+    const m = /#mps=([rz])\.([\w-]+)/.exec(String(text || '').trim());
+    if (!m) { toast('Это не ссылка на песню из приложения группы'); return false; }
+    return takeLink(m);
+  }
+  async function takeLink(m) {
     try {
       let u = fromB64u(m[2]);
       if (m[1] === 'z') u = await pipe(u, DecompressionStream);
@@ -854,5 +1047,24 @@ const Sheets = (() => {
     $('imMine').onclick = saveMine;
   }
 
-  return { init, wire, prefetch, flush, saveMyChords, saveMyEdit, canSign, dropPend, bar, open, auto, share, canShare, openFile, openText, fromShare, fromLink, extList, openExt, delExt, got: (id) => got.get(id) || null };
+  // Кнопки у песни из «Не синхронизированные»: поделиться и изменить (с правом — уйдёт в программу)
+  function extBar(v, body) {
+    const r = v.extId && got.get(v.extId);
+    if (!r) return;
+    const b = el('div', 'gotbar extbar');
+    if (canShare(v)) {
+      const sh = el('button', '', 'Перенести или поделиться');
+      sh.type = 'button';
+      sh.onclick = () => share(v);
+      b.append(sh);
+    }
+    if ((r.sg || r.ext) && canEdit()) {
+      const ed = el('button', '', r.sg ? 'Изменить' : 'Изменить и в программу');
+      ed.type = 'button';
+      ed.onclick = () => SongEd.openDraft(v.extId);
+      b.append(ed);
+    }
+    if (b.children.length) body.append(b);
+  }
+  return { init, wire, prefetch, flush, keepRec, toTwin, cleanExt, extBar, shareRec, jpeg: toJpeg, b64, saveMyChords, saveMyEdit, canSign, dropPend, bar, open, auto, share, canShare, openFile, openText, fromShare, fromLink, pasteLink, extList, openExt, delExt, got: (id) => got.get(id) || null };
 })();

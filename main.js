@@ -2125,6 +2125,26 @@ app.whenReady().then(() => {
         control.webContents.send('team:sheets', { id: c.id, add, del: c.del || '', who: c.who, rid });
       });
     },
+    // Песня с планшета (teamapi.js: putSong): новая или текст и аранжировки. Пишет окно оператора (team.js: onTeamSong),
+    // ответ — team:chordsDone с id песни
+    // sheets: null — листы не трогать; иначе весь список: { file, name } — уже есть, { buf, name } — новый (фото/PDF → листы здесь)
+    song: async (c) => {
+      let sheets = null;
+      if (c.sheets) {
+        sheets = [];
+        for (const x of c.sheets) {
+          if (x.file) { const { width: w, height: h } = nativeImage.createFromPath(x.file).getSize(); sheets.push({ file: x.file, name: x.name, w, h }); }
+          else sheets.push(...await sheetsFrom({ buf: x.buf, name: x.name }));
+        }
+      }
+      return new Promise((ok, no) => {
+        if (!control || control.isDestroyed()) return no(new Error('Окно программы закрыто'));
+        const rid = ++chordReq;
+        const t = setTimeout(() => { chordWait.delete(rid); no(new Error('Программа не ответила')); }, 8000);
+        chordWait.set(rid, { ok, no, t });
+        control.webContents.send('team:song', { ...c, sheets, rid });
+      });
+    },
     // Правка без связи, подписанная тем, кто может править (teamapi.js: putEdit); принёс любой телефон (via).
     // sheets: null — листы не трогать; иначе весь список: { file, name } — уже есть, { buf, name } — новый (фото → лист здесь)
     edit: async (c) => {
@@ -2151,7 +2171,7 @@ app.whenReady().then(() => {
     if (!w) return;
     chordWait.delete(r.rid);
     clearTimeout(w.t);
-    if (r.err) w.no(new Error(String(r.err))); else w.ok({});
+    if (r.err) w.no(new Error(String(r.err))); else w.ok(r.id ? { id: String(r.id) } : {});
   });
 
   ipcMain.handle('pool:list', async (_e, dir) => {

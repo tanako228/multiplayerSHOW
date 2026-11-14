@@ -356,10 +356,8 @@ const Pen = (() => {
     let scr = null;
     function ctx() {
       if (!on) return null;
-      try {
-        if (!ac) ac = new (window.AudioContext || window.webkitAudioContext)();
-        if (ac.state === 'suspended') ac.resume();
-      } catch { ac = null; }
+      // Общий контекст (touch.js): на iPad будится по нажатию и не глохнет в беззвучном режиме
+      if (ac !== TouchKit.audioCtx()) { ac = TouchKit.audioCtx(); buf = null; }
       return ac;
     }
     // Шум бумаги: мягкий белый шум с «зерном» — громкость мелко скачет, как волокна листа под кончиком
@@ -377,7 +375,10 @@ const Pen = (() => {
       }
       return buf;
     }
-    const hold = (p, t) => { if (p.cancelAndHoldAtTime) p.cancelAndHoldAtTime(t); else { p.cancelScheduledValues(t); p.setValueAtTime(p.value, t); } };
+    // Снять запланированное с момента t, не трогая уже идущее плавное изменение: новый setTargetAtTime продолжит
+    // с текущей громкости. Без cancelAndHoldAtTime и без чтения p.value — в Safari (iPad) первое криво держит
+    // значение, а второе отдаёт не текущую громкость, а 0: шорох обрывался на каждом движении пера
+    const hold = (p, t) => { p.cancelScheduledValues(t); };
     // Удар предмета о тетрадь: щелчок корпуса (шум в полосе своего тона) + глухой стук листа
     const HIT = { stylus: [2900, 260], pencil: [1700, 200], pen: [2400, 240], mRed: [1900, 210], mBlue: [2000, 215], mGreen: [1850, 205],
       hl: [1500, 190], eraser: [650, 130], ruler: [1250, 170] };
@@ -422,6 +423,8 @@ const Pen = (() => {
     const SCR = { ink: [2100, 0.9, 0.107], pencil: [4300, 0.7, 0.2], pen: [3000, 1.1, 0.12], marker: [1400, 0.8, 0.133], hl: [1200, 0.7, 0.12], eraser: [750, 0.6, 0.28] };
     function scratch(k) {
       stop();
+      // На iPad/iPhone шорох рвётся (Safari) — там его нет; пенал и метроном звучат как прежде (владелец 14.11.2026)
+      if (TouchKit.iosLike()) return;
       if (!ctx()) return;
       const [fq, q, vol] = SCR[k] || SCR.pen;
       const src = ac.createBufferSource();

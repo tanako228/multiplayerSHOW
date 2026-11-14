@@ -55,6 +55,62 @@ const TouchKit = (() => {
   // Допуск: пальцем — по размеру пятна касания (не меньше 12 px), пером — 6, мышью — 0
   const slop = (e) => (e.pointerType === 'touch' ? Math.max(12, Math.min(28, (Math.max(e.width || 0, e.height || 0)) / 2)) : e.pointerType === 'pen' ? 6 : 0);
 
-  return { fsElement, fsEnabled, fsCan, fsEnter, fsExit, fsListen, touching, penEdge, inRect, slop };
+  /* ----- Звук (пенал, метроном): один AudioContext на всё приложение ----- */
+  // Почему на iPad было тихо при включённой громкости:
+  // 1) Web Audio в iOS по умолчанию — «фоновый» звук: беззвучный режим (Пункт управления / переключатель) его глушит.
+  //    Звук приложения переводим в «воспроизведение» — navigator.audioSession (iOS 17+), а на старых iOS — тихий
+  //    <audio> (silence.wav): пока играет HTML-звук, Safari держит категорию «воспроизведение».
+  // 2) Касание пальцем (pointerdown) для iOS — не «нажатие»: контекст, созданный или разбуженный в нём, молчит.
+  //    Будим его на touchend / pointerup / click / keydown.
+  // 3) После блокировки экрана или звонка контекст «interrupted» и сам не просыпается — будим на следующем касании.
+  // Вызывать audioCtx() только когда звук действительно нужен: «воспроизведение» в iOS ставит на паузу музыку
+  // в других приложениях.
+  let ac = null;
+  let quiet = null; // тихий <audio> для iOS без audioSession
+  const win = typeof window !== 'undefined' ? window : null;
+  const iosLike = () => !!win && typeof navigator !== 'undefined' &&
+    (/iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1));
+  function session() {
+    try {
+      const s = navigator.audioSession;
+      if (s) { if (s.type !== 'playback') s.type = 'playback'; return; }
+    } catch { /* нет */ }
+    if (!iosLike() || typeof Audio === 'undefined') return;
+    try {
+      if (!quiet) { quiet = new Audio('silence.wav'); quiet.loop = true; quiet.preload = 'auto'; quiet.setAttribute('playsinline', ''); quiet.volume = 0.01; }
+      if (quiet.paused) { const p = quiet.play(); if (p && p.catch) p.catch(() => {}); }
+    } catch { quiet = null; }
+  }
+  function wake() {
+    if (!ac || ac.state === 'closed') return;
+    session();
+    if (ac.state !== 'running') { try { const p = ac.resume(); if (p && p.catch) p.catch(() => {}); } catch { /* нет */ } }
+    // Пустой звук в самом нажатии — так старый Safari «разблокирует» контекст
+    try { const b = ac.createBuffer(1, 1, 22050); const s = ac.createBufferSource(); s.buffer = b; s.connect(ac.destination); s.start(0); } catch { /* нет */ }
+  }
+  let wired = false;
+  function audioCtx() {
+    if (!win) return null;
+    if (!ac || ac.state === 'closed') {
+      const C = win.AudioContext || win.webkitAudioContext;
+      if (!C) return null;
+      try { ac = new C(); } catch { ac = null; return null; }
+    }
+    if (!wired) {
+      wired = true;
+      const opt = { capture: true, passive: true };
+      for (const t of ['touchend', 'pointerup', 'click', 'keydown']) win.addEventListener(t, () => { if (ac && ac.state !== 'running') wake(); }, opt);
+      document.addEventListener('visibilitychange', () => {
+        if (document.hidden) { if (quiet) quiet.pause(); } else if (ac && ac.state !== 'running') wake();
+      });
+    }
+    if (ac.state !== 'running') wake(); else session();
+    return ac;
+  }
+
+  // Открыто как приложение с экрана «Домой» (а не во вкладке браузера)
+  const standalone = () => !!win && ((win.matchMedia && win.matchMedia('(display-mode: standalone)').matches) || navigator.standalone === true);
+
+  return { fsElement, fsEnabled, fsCan, fsEnter, fsExit, fsListen, touching, penEdge, inRect, slop, audioCtx, iosLike, standalone };
 })();
 if (typeof module !== 'undefined' && module.exports) module.exports = TouchKit;

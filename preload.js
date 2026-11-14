@@ -192,6 +192,7 @@ contextBridge.exposeInMainWorld('api', {
   onTeamCmd: (cb) => on('team:cmd', cb), // телефон листает: { cmd: next|prev|show|clear, item, sid, pl, eid, who }
   onTeamChords: (cb) => on('team:chords', cb), // аккорды песни с телефона: { id, chords, key?, who, rid }
   onTeamSheets: (cb) => on('team:sheets', cb), // ноты песни с телефона: { id, add: [листы], del: имя файла, who, rid }
+  onTeamSong: (cb) => on('team:song', cb), // песня с планшета: { id ('' — новая), lib, name, text, arrangements, arr, key, tempo, time, who, rid }
   onTeamEdit: (cb) => on('team:edit', cb), // правка без связи: { id, chords, key, sheets: null | [листы], who, via, rid }
   teamChordsDone: (r) => ipcRenderer.invoke('team:chordsDone', r), // ответ: { rid, err? }
   onTeamInfo: (cb) => on('team:info', cb),

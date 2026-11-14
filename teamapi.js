@@ -21,8 +21,9 @@ const path = require('path');
 const crypto = require('crypto');
 const zlib = require('zlib');
 
-const FMT = 2; // вид песни для телефона; поменялся (новые поля) — меняются все отпечатки, телефоны докачают песни
+const FMT = 3; // вид песни для телефона; поменялся (новые поля) — меняются все отпечатки, телефоны докачают песни
 // 2 — этап 4: тональность, темп, размер, аккорды (song.chords целиком; по слайдам раскладывает телефон — chords.js)
+// 3 — песню можно править с планшета: исходный текст с разметкой частей (text), аранжировки (arrs) и выбранная (arr)
 const ROLES = [
   { id: 'musician', name: 'Музыкант' },
   { id: 'pianist', name: 'Пианист' }, // песня с нотами открывается нотами на весь экран
@@ -273,7 +274,8 @@ let pay = new Map(); // id → песня, как уходит на телефо
 let ord = [];        // [{ id, n, del }] по возрастанию номера
 let libs = [];       // библиотеки с песнями: [{ id, name, songs: [id] }]
 let sheetFiles = new Map(); // имя листа нот (abc.jpg) → путь на диске — только листы песен (song.sheets)
-let lh = '';         // отпечаток библиотек — телефон берёт их заново, только если поменялись
+let lh = '';         // отпечаток библиотек и типов частей — телефон берёт их заново, только если поменялись
+let types = [];      // типы частей песни: [{ name, color, num }] (lib.partTypes)
 let libSeen = -1;    // время изменения library.json, которое уже разобрано
 let fresh = null;    // { data, mtime } — свежая библиотека из lib:save (не читать файл заново)
 let sets = [];       // сетлисты: плейлисты с пометкой «для группы» (pl.team = { date }), тональность строки — entry.key
@@ -283,9 +285,9 @@ function loadSync() {
   sync = null;
   try {
     const j = JSON.parse(fs.readFileSync(syncFile(), 'utf8'));
-    if (j && j.v === 1 && typeof j.lib === 'string' && j.songs && j.gone) sync = { v: 1, lib: j.lib, seq: Number(j.seq) || 0, songs: j.songs, gone: j.gone };
+    if (j && j.v === 1 && typeof j.lib === 'string' && j.songs && j.gone) sync = { v: 1, fmt: Number(j.fmt) || 2, lib: j.lib, seq: Number(j.seq) || 0, songs: j.songs, gone: j.gone };
   } catch { /* первый запуск или файл испорчен — новая «база»: телефоны скачают всё заново */ }
-  if (!sync) sync = { v: 1, lib: newId(), seq: 0, songs: {}, gone: {} };
+  if (!sync) sync = { v: 1, fmt: FMT, lib: newId(), seq: 0, songs: {}, gone: {} };
 }
 function saveSync() {
   try {
@@ -310,6 +312,11 @@ function songPay(it) {
   if (Number(s.tempo) > 0) p.tempo = Math.round(Number(s.tempo));
   if (/^\d{1,2}\/\d{1,2}$/.test(String(s.time || ''))) p.time = String(s.time);
   if (typeof s.chords === 'string' && s.chords.trim()) p.chords = s.chords.slice(0, 30000);
+  // Для правки песни на планшете: текст с [Куплет 1]… и аранжировки (только порядок частей)
+  if (typeof s.text === 'string' && s.text.length <= 60000) p.text = s.text;
+  const arrs = (Array.isArray(s.arrangements) ? s.arrangements : []).filter((a) => a && a.id && Array.isArray(a.order))
+    .map((a) => ({ id: String(a.id), name: clean(a.name, 80), order: a.order.map((x) => String(x)) }));
+  if (arrs.length) { p.arrs = arrs; if (arrs.some((a) => a.id === s.arr)) p.arr = String(s.arr); }
   // Ноты: листы-картинки; телефон качает их отдельно (/api/v1/sheets/<f>) и хранит у себя
   const sh = (Array.isArray(s.sheets) ? s.sheets : []).filter((x) => x && typeof x.file === 'string' && SHEET_RE.test(path.basename(x.file)));
   if (sh.length) p.sheets = sh.map((x) => ({ f: path.basename(x.file), name: clean(x.name, 120), w: Number(x.w) || 0, h: Number(x.h) || 0 }));
@@ -327,13 +334,16 @@ function apply(lib) {
   }
   sheetFiles = files;
   let ch = false;
+  // Новый вид песни (FMT) — отпечатки поменяются у всех, но сами песни в программе не менялись: время правки не трогаем
+  const fmtCh = sync.fmt !== FMT;
+  if (fmtCh) { sync.fmt = FMT; ch = true; }
   for (const [id, p] of now) {
     const h = crypto.createHash('sha1').update(FMT + JSON.stringify(p)).digest('base64url').slice(0, 16);
     const old = sync.songs[id];
     if (!old || old[0] !== h) {
       const own = (expect.get(id) || 0) > Date.now();
       if (own) expect.delete(id);
-      sync.songs[id] = [h, ++sync.seq, !old ? 0 : own ? Number(old[2]) || 0 : Date.now()];
+      sync.songs[id] = [h, ++sync.seq, !old ? 0 : own || fmtCh ? Number(old[2]) || 0 : Date.now()];
       ch = true;
     }
     if (sync.gone[id] !== undefined) { delete sync.gone[id]; ch = true; }
@@ -344,11 +354,14 @@ function apply(lib) {
     ...Object.entries(sync.songs).map(([id, v]) => ({ id, n: v[1], del: false })),
     ...Object.entries(sync.gone).map(([id, n]) => ({ id, n, del: true })),
   ].sort((a, b) => a.n - b.n);
-  // Библиотеки — только песни, порядок как в программе
+  // Библиотеки — только песни, порядок как в программе; пустые тоже (в них можно добавить песню с планшета —
+  // в списке песен телефон их не показывает)
   libs = (Array.isArray(lib && lib.libraries) ? lib.libraries : [])
-    .map((l) => ({ id: String(l.id), name: clean(l.name, 80), songs: (Array.isArray(l.items) ? l.items : []).map(String).filter((id) => now.has(id)) }))
-    .filter((l) => l.songs.length);
-  lh = sha(JSON.stringify(libs)).slice(0, 12);
+    .map((l) => ({ id: String(l.id), name: clean(l.name, 80), songs: (Array.isArray(l.items) ? l.items : []).map(String).filter((id) => now.has(id)) }));
+  // Типы частей (Куплет, Припев…) с цветами — кнопки разметки в окне песни на планшете; приходят вместе с библиотеками
+  types = (Array.isArray(lib && lib.partTypes) ? lib.partTypes : []).filter((t) => t && t.name)
+    .map((t) => ({ name: clean(t.name, 40), color: /^#[0-9a-f]{3,8}$/i.test(String(t.color || '')) ? String(t.color) : '', num: !!t.num })).slice(0, 30);
+  lh = sha(JSON.stringify([libs, types])).slice(0, 12);
   // Сетлисты: строки — что угодно из плейлиста (песня, Библия, видео); у песни телефон откроет текст
   const byId = (id) => (Array.isArray(items) ? items.find((x) => x && String(x.id) === String(id)) : items[id]) || null;
   sets = (Array.isArray(lib && lib.playlists) ? lib.playlists : []).filter((pl) => pl && pl.id && pl.team)
@@ -400,7 +413,7 @@ function changes(req, res, u, d) {
   const more = rest > limit;
   const out = { ...base, since, next: more ? page[page.length - 1].n : sync.seq, more, total: rest, songs: [], gone: [] };
   for (const e of page) { if (e.del) out.gone.push(e.id); else if (pay.has(e.id)) out.songs.push(pay.get(e.id)); }
-  if (!more && u.searchParams.get('lh') !== lh) { out.libs = libs; out.lh = lh; }
+  if (!more && u.searchParams.get('lh') !== lh) { out.libs = libs; out.types = types; out.lh = lh; }
   if (!more) { d.synced = Date.now(); seenDirty = true; o.notify(); }
   send(req, res, 200, out);
 }
@@ -467,7 +480,61 @@ function handle(req, res, u) {
   if (p === '/songs/sheets' && req.method === 'POST') { putSheets(req, res, d, person); return; }
   // Правка (аккорды, ноты), подписанная тем, кто может править; принести может любой телефон группы
   if (p === '/songs/edit' && req.method === 'POST') { putEdit(req, res, d, person); return; }
+  // Новая песня или текст и аранжировки песни — с планшета (то же право, что аккорды)
+  if (p === '/songs/put' && req.method === 'POST') { putSong(req, res, d, person); return; }
   send(req, res, 404, { error: 'nf' });
+}
+
+/* ----- Песня с планшета: { id ('' — новая), nid, lib (куда новую), name, text, arrs: [{ id, name, order }], arr, key, tempo, time,
+   chords?, sheets? } -----
+   text — с разметкой частей [Куплет 1], [Припев]…, как в окне песни программы. Слайды собирает окно оператора (Songs.build).
+   chords — аккорды (нет поля — не трогать); sheets — листы нот целиком (нет поля — не трогать): { f } — лист, что уже есть
+   в программе, { name, data: base64 JPEG/PNG/PDF } — новый. Новую песню, сделанную без связи, планшет шлёт, когда подключится;
+   nid — номер черновика: ответ потерялся и планшет прислал её снова — вторую такую же не создаём. */
+const ARR_ID = /^[\w-]{1,40}$/;
+const made = new Map(); // nid черновика → id созданной песни
+async function putSong(req, res, d, person) {
+  if (!can(person, 'chords')) return send(req, res, 403, { error: 'perm', text: 'Добавлять и править песни разрешает оператор в окне «Группа»' });
+  let b;
+  try { b = await readBody(req, 80 * 1024 * 1024); } catch { return send(req, res, 400, { error: 'body', text: 'Песня слишком большая или не прочиталась' }); }
+  refresh();
+  const nid = /^[\w-]{4,60}$/.test(String(b.nid || '')) ? String(b.nid) : '';
+  if (!b.id && nid && made.has(nid) && pay.has(made.get(nid))) return send(req, res, 200, { ok: true, id: made.get(nid), same: true });
+  const id = String(b.id || '');
+  const it = id ? pay.get(id) : null;
+  if (id && !it) return send(req, res, 404, { error: 'nf', text: 'Такой песни в программе уже нет' });
+  const chords = typeof b.chords === 'string' ? b.chords.split(String.fromCharCode(13)).join('').trimEnd() : undefined;
+  if (chords !== undefined && chords.length > 30000) return send(req, res, 400, { error: 'body', text: 'Аккорды слишком длинные' });
+  let sheets = null;
+  if (Array.isArray(b.sheets)) {
+    sheets = [];
+    for (const x of b.sheets.slice(0, 60)) {
+      if (!x || typeof x !== 'object') continue;
+      if (typeof x.f === 'string') { const file = SHEET_RE.test(x.f) ? sheetFiles.get(x.f) : null; if (file) sheets.push({ file, name: clean(x.name, 120) }); continue; }
+      const buf = typeof x.data === 'string' ? Buffer.from(x.data, 'base64') : null;
+      if (!buf || buf.length < 100) return send(req, res, 400, { error: 'body', text: 'Пустой лист нот' });
+      if (buf.length > 30e6) return send(req, res, 400, { error: 'body', text: 'Лист нот больше 30 МБ' });
+      sheets.push({ buf, name: clean(x.name, 120) || 'Ноты' });
+    }
+  }
+  const name = clean(b.name, 200);
+  if (!name) return send(req, res, 400, { error: 'body', text: 'Впишите название песни' });
+  const text = typeof b.text === 'string' ? b.text.split(String.fromCharCode(13)).join('').replace(/\s+$/, '') : '';
+  if (!text.trim() || text.length > 60000) return send(req, res, 400, { error: 'body', text: text.trim() ? 'Текст слишком длинный' : 'Впишите текст песни' });
+  const arrs = (Array.isArray(b.arrs) ? b.arrs : []).slice(0, 30).filter((a) => a && ARR_ID.test(String(a.id)) && Array.isArray(a.order))
+    .map((a) => ({ id: String(a.id), name: clean(a.name, 80) || 'Аранжировка', order: a.order.slice(0, 200).map((x) => clean(x, 80)).filter(Boolean) }));
+  const arr = arrs.some((a) => a.id === String(b.arr || '')) ? String(b.arr) : '';
+  const libId = !id && typeof b.lib === 'string' ? b.lib : '';
+  if (Date.now() - (d.sgAt || 0) < 800) return send(req, res, 429, { error: 'rate', text: 'Подождите секунду' });
+  d.sgAt = Date.now();
+  if (!o.song) return send(req, res, 503, { error: 'off', text: 'Программа не готова принять песню — её нужно закрыть полностью и запустить заново (обновление не применилось)' });
+  try {
+    const r = await o.song({ id, lib: libId, name, text, arrangements: arrs, arr, key: clean(b.key, 8), tempo: Number(b.tempo) || 0, time: clean(b.time, 8),
+      ...(chords !== undefined ? { chords } : {}), sheets, who: person.name });
+    if (!id && nid && r && r.id) made.set(nid, String(r.id));
+    log('song', { name: person.name, song: name, add: !id });
+    send(req, res, 200, { ok: true, ...(r || {}) });
+  } catch (e) { send(req, res, 503, { error: 'off', text: (e && e.message) || 'Окно программы не ответило' }); }
 }
 function getSheet(req, res, f) {
   const file = SHEET_RE.test(f) ? sheetFiles.get(f) : null;
