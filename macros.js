@@ -104,22 +104,24 @@ R('trig.key', {
 });
 R('trig.bound', {
   cat: 'trigger', name: 'При запуске привязанного', icon: 'macro',
-  help: 'Срабатывает, когда показан объект, к которому привязан макрос: перетащите макрос на слайд, пункт плейлиста, песню, часть песни или файл медиапула.',
+  help: 'Срабатывает, когда показан объект с этим макросом (макрос перетащили на слайд, пункт плейлиста, заголовок песни или файл медиапула). Без этой ноды такой показ запускает «Ручной запуск» макроса или первые ноды цепочки.',
   on: [], outs: [...EXEC_OUT, { id: 'name', name: 'Название', t: 'str' }, { id: 'label', name: 'Подпись слайда', t: 'str' }],
   out: (ev) => ({ name: ev.name || '', label: ev.label || '' }),
 });
 const SLIDE_OUTS = [...EXEC_OUT, { id: 'name', name: 'Презентация', t: 'str' }, { id: 'label', name: 'Подпись', t: 'str' }, { id: 'text', name: 'Текст', t: 'str' }, { id: 'index', name: 'Номер', t: 'num' }, { id: 'total', name: 'Всего', t: 'num' }];
 const slideOut = (ev) => ({ name: ev.name || '', label: ev.label || '', text: ev.text || '', index: (ev.index || 0) + 1, total: ev.total || 0 });
 R('trig.slide', {
-  cat: 'trigger', name: 'Запуск слайда', icon: 'slides', help: 'Любой показанный слайд из плейлиста или библиотеки (можно ограничить видом, презентацией, подписью).',
+  cat: 'trigger', name: 'Запуск слайда', icon: 'slides', help: 'Любой показанный слайд из плейлиста или библиотеки (можно ограничить видом, презентацией, номером слайда, подписью). Постоянная связь макроса с презентацией и слайдом задаётся здесь.',
   params: [
     { id: 'kind', name: 'Вид слайда', t: 'select', opts: MC_KIND_SLIDE, def: '' },
     { id: 'item', name: 'Презентация', t: 'item', none: 'Любая', opts: () => mcItemOpts(null, 'Любая'), def: '' },
+    { id: 'num', name: 'Номер слайда (0 — любой)', t: 'num', def: 0, min: 0 },
     { id: 'label', name: 'Подпись содержит', t: 'text', def: '' },
   ],
-  on: ['slide'], match: (p, ev) => (!p.kind || ev.kind === p.kind) && (!p.item || ev.itemId === p.item) && (!p.label || (ev.label || '').toLowerCase().includes(p.label.toLowerCase())),
+  on: ['slide'], match: (p, ev) => (!p.kind || ev.kind === p.kind) && (!p.item || ev.itemId === p.item) && (!p.label || (ev.label || '').toLowerCase().includes(p.label.toLowerCase()))
+    && (!(mcNum(p.num) > 0) || (ev.index || 0) + 1 === mcNum(p.num)),
   outs: SLIDE_OUTS, out: slideOut,
-  sum: (p) => [mcOptName(MC_KIND_SLIDE, p.kind || ''), p.item && mcOptName(() => mcItemOpts(), p.item).split(' · ')[0], p.label && `«${p.label}»`].filter(Boolean).join(' · '),
+  sum: (p) => [mcOptName(MC_KIND_SLIDE, p.kind || ''), p.item && mcOptName(() => mcItemOpts(), p.item).split(' · ')[0], mcNum(p.num) > 0 && `слайд ${mcNum(p.num)}`, p.label && `«${p.label}»`].filter(Boolean).join(' · '),
 });
 R('trig.song', {
   cat: 'trigger', name: 'Запуск песни', icon: 'music', help: 'Показан первый слайд песни (перешли на неё с другого пункта).',
@@ -795,7 +797,9 @@ function mcFire(m, node, ev, opts = {}) {
       const d = mcDefOf(node);
       run.vals[node.id] = d && d.out ? d.out(ev || {}, mcParams(node)) : {};
       run.marks.set(node.id, 'ok');
-      await mcFollow(run, node, 'out');
+      // opts.starts — триггер на слайде без своей ноды в макросе: сразу первые ноды цепочки
+      if (opts.starts) await Promise.all(opts.starts.map((id) => mcExec(run, id, 'in')));
+      else await mcFollow(run, node, 'out');
     } catch (err) {
       mcLogAdd(m, node.id, 'Ошибка: ' + (err && err.message ? err.message : err), 'err');
     } finally {
@@ -958,13 +962,25 @@ function mcEmit(type, ev = {}) {
   return any;
 }
 
-// Привязанные макросы (ids) — их ноды «При запуске привязанного»
+// Первые ноды цепочки: не триггеры, со входом exec, к которому ничего не подключено
+const mcRoots = (m) => m.nodes.filter((n) => mcDefOf(n) && mcDefOf(n).cat !== 'trigger' && mcPorts(n, 'ins').some((p) => p.t === 'exec' && p.id === 'in')
+  && !m.links.some((l) => l.to[0] === n.id && l.to[1] === 'in'));
+const MC_BOUND_NODE = { id: '', type: 'trig.bound', p: {} }; // не нода макроса: триггер на слайде хранится у слайда
+
+// Привязанные макросы (ids) — триггеры на слайдах, частях, пунктах, файлах. Запускаются триггеры, от которых идёт цепочка:
+// «При запуске привязанного»; нет — «Ручной запуск»; нет — любой другой; нет и их — первые ноды цепочки. Сам макрос не меняется.
+// Пустые триггеры (без линий — например, «При запуске привязанного», который раньше добавлялся сам) пропускаются.
 function mcBound(ids, ev) {
   if (!ids.length || !lib || !lib.macros) return;
   for (const id of new Set(ids)) {
     const m = lib.macros.find((x) => x.id === id);
     if (!m || !m.enabled) continue;
-    m.nodes.filter((n) => n.type === 'trig.bound').forEach((n) => mcFire(m, n, ev));
+    const live = m.nodes.filter((n) => mcDefOf(n) && mcDefOf(n).cat === 'trigger' && m.links.some((l) => l.from[0] === n.id));
+    const pick = [(n) => n.type === 'trig.bound', (n) => n.type === 'trig.manual', () => true].map((f) => live.filter(f)).find((a) => a.length);
+    if (pick) { pick.forEach((n) => mcFire(m, n, ev)); continue; }
+    const roots = mcRoots(m);
+    if (roots.length) mcFire(m, MC_BOUND_NODE, ev, { starts: roots.map((n) => n.id) });
+    else mcLogAdd(m, '', 'Показан слайд с этим макросом, но в макросе нет нод для запуска', 'warn');
   }
 }
 
@@ -1112,22 +1128,11 @@ function mcNowEvent() {
 const mcById = (id) => (lib && lib.macros ? lib.macros.find((m) => m.id === id) || null : null);
 const mcList = (arr) => (arr || []).filter((id) => mcById(id));
 
-// Нет триггера «При запуске привязанного» — добавить слева и соединить с первой нодой без входа
-function mcEnsureBound(m) {
-  if (m.nodes.some((n) => n.type === 'trig.bound')) return;
-  const start = m.nodes.filter((n) => mcDefOf(n) && mcDefOf(n).cat !== 'trigger' && mcPorts(n, 'ins').some((p) => p.t === 'exec' && p.id === 'in') && !m.links.some((l) => l.to[0] === n.id && l.to[1] === 'in'))
-    .sort((a, b) => a.x - b.x)[0];
-  const xs = m.nodes.map((n) => n.x);
-  const node = { id: newId(), type: 'trig.bound', x: (xs.length ? Math.min(...xs) : 80) - 250, y: start ? start.y : 80, p: {} };
-  m.nodes.push(node);
-  if (start) m.links.push({ id: newId(), from: [node.id, 'out'], to: [start.id, 'in'] });
-}
-
+// Триггер на объекте: id макроса в списке объекта. Сам макрос (его ноды в редакторе) не меняется
 function mcAttach(list, holder, key, m) {
   if (!holder[key]) holder[key] = [];
-  if (holder[key].includes(m.id)) { flashStatus(`«${m.name}» уже привязан: ${list}`); return; }
+  if (holder[key].includes(m.id)) { flashStatus(`«${m.name}» уже стоит: ${list}`); return; }
   holder[key].push(m.id);
-  mcEnsureBound(m);
   saveLib();
   renderService();
   if (typeof drawPoolGrid === 'function' && poolData && $('poolGrid') && !$('pool').hidden) drawPoolGrid();
@@ -1163,18 +1168,51 @@ function mcDropAt(t, m, e) {
   if (t.kind === 'item') { mcAttach(`«${x.item.name}» (вся презентация)`, x.item, 'macros', m); return; }
   const slide = x.item.slides.find((s) => s.id === t.sid);
   if (!slide) return;
+  // Макрос на слайд — триггер только этого слайда (значок в углу), без меню и без связи с презентацией.
+  // Постоянная связь «презентация — слайд — макрос» задаётся в редакторе макросов (триггер «Запуск слайда»)
   const label = slide.label || `слайд ${x.item.slides.indexOf(slide) + 1}`;
-  const opts = [{ label: `Этот слайд («${label}»)`, fn: () => mcAttach(`слайд «${label}»`, slide, 'macros', m) }];
-  if (slide.part !== undefined && slide.part !== '') opts.push({ label: `Часть «${slide.part}» (все её повторы)`, fn: () => { if (!x.item.partMacros) x.item.partMacros = {}; mcAttach(`часть «${slide.part}» песни «${x.item.name}»`, x.item.partMacros, slide.part, m); } });
-  if (x.item.slides.length > 1) opts.push({ label: `${x.item.song ? 'Вся песня' : 'Вся презентация'} «${x.item.name}»`, fn: () => mcAttach(`«${x.item.name}»`, x.item, 'macros', m) });
-  if (x.entry) opts.push({ label: 'Только этот пункт плейлиста', fn: () => mcAttach(`пункт плейлиста «${x.item.name}»`, x.entry, 'macros', m) });
-  if (opts.length === 1) { opts[0].fn(); return; }
-  showMenu(e, [{ label: `Привязать «${m.name}» к…`, disabled: true, fn: () => {} }, '-', ...opts]);
+  mcAttach(`слайд «${label}»`, slide, 'macros', m);
 }
 
 // То же без мыши: правая кнопка по слайду или пункту → «Привязать макрос…»
+// Макросы, уже стоящие на этом объекте, отмечены «✓»: щелчок по ним убирает макрос; внизу — «Убрать …» по одному и все сразу
 function mcAttachMenu(e, t) {
-  showMenu(e, lib.macros.map((m) => ({ label: m.name + (m.enabled ? '' : ' (выключен)'), fn: () => mcDropAt(t, m, e) })));
+  const h = mcHolderOf(t);
+  const on = h ? mcList(h.holder[h.key]) : [];
+  const items = lib.macros.map((m) => {
+    const has = on.includes(m.id);
+    return { label: (has ? '✓ ' : '') + m.name + (m.enabled ? '' : ' (выключен)'), fn: () => (has ? mcDetach(h, m) : mcDropAt(t, m, e)) };
+  });
+  if (on.length) {
+    items.push('-');
+    on.forEach((id) => { const m = mcById(id); items.push({ label: `Убрать «${m.name}» ${h.what}`, fn: () => mcDetach(h, m) }); });
+    if (on.length > 1) items.push({ label: `Убрать все макросы ${h.what}`, fn: () => mcDetach(h, null) });
+  }
+  showMenu(e, items);
+}
+// Где у объекта (слайд, пункт) лежит список макросов: { holder, key, what }
+function mcHolderOf(t) {
+  if (t.kind === 'slide') {
+    const x = workEntry(t.key);
+    const slide = x && x.item.slides.find((s) => s.id === t.sid);
+    return slide ? { holder: slide, key: 'macros', what: 'со слайда' } : null;
+  }
+  if (t.kind === 'entry') {
+    const x = entryByKey(t.key);
+    if (!x) return null;
+    return x.entry ? { holder: x.entry, key: 'macros', what: 'с пункта плейлиста' } : { holder: x.item, key: 'macros', what: 'с презентации' };
+  }
+  return null;
+}
+// Убрать макрос m (null — все) с объекта; Ctrl+Z вернёт
+function mcDetach(h, m) {
+  if (!h || !h.holder[h.key]) return;
+  h.holder[h.key] = m ? h.holder[h.key].filter((id) => id !== m.id) : [];
+  if (!h.holder[h.key].length) delete h.holder[h.key];
+  saveLib();
+  renderService();
+  mcRenderAll();
+  flashStatus((m ? `«${m.name}» убран ` : 'Макросы убраны ') + h.what + ' · Ctrl+Z — вернуть');
 }
 
 let mcHot = null;

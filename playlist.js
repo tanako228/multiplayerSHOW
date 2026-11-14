@@ -836,7 +836,34 @@ function slideClick(e, key, sid) {
   }
   sel = [{ key, sid }];
   selAnchor = { key, sid };
+  // Слайд уже на экране — только выделить: без нового показа, перехода, анимаций и макросов слайда
+  if (slideOnScreen(key, sid)) { keepShown(key, sid); return; }
   showSlide(key, sid);
+}
+
+// Этот слайд (из рабочего списка) сейчас на экране — ровно в том виде, в каком его покажет новый щелчок.
+// Слайд правили, в его слое уже другое (Библия, другой пункт) — не на экране. Музыкальные слайды — всегда заново (кнопка музыки)
+function slideOnScreen(key, sid, vk = workKey()) {
+  const entry = entryByKey(key, keyView(vk));
+  const slide = entry && entry.item.slides.find((s) => s.id === sid);
+  if (!slide || slide.k === 'audio') return false;
+  const ly = pickedLayer(entry);
+  const shown = isOverlay(ly) ? ovShown[ly] : plShown;
+  if (!shown || shown.view !== vk || shown.key !== key || shown.sid !== sid) return false;
+  let content;
+  try { content = contentOf(entry.item, slide); } catch { return false; }
+  const id = ly && layerById(ly) ? ly : autoLayer(content);
+  const on = layerOn[id];
+  return !!on && JSON.stringify(on.content) === JSON.stringify(content);
+}
+// Повторный щелчок по слайду на экране: подсветка, прокрутка к нему; остановленную автосмену — снова запустить
+function keepShown(key, sid, vk = workKey()) {
+  updatePlaylistLive();
+  const entry = entryByKey(key, keyView(vk));
+  const slide = entry && entry.item.slides.find((s) => s.id === sid);
+  if (slide && !autoT && entry.item.auto && entry.item.auto.sec > 0) autoArm(key, entry.item, slide, vk);
+  const el = document.querySelector(`#svcFeed .sl[data-key="${key}"][data-sid="${sid}"]`);
+  if (el) el.scrollIntoView({ block: 'nearest' });
 }
 
 /* ----- Показ и листание ----- */

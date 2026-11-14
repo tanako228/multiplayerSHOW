@@ -28,44 +28,51 @@ const Scene = (() => {
   const family = (f) => FONTS[f] || (f ? `"${String(f).replace(/"/g, '')}", sans-serif` : FONTS.segoe);
 
   // Переходы: in — как входит новый слайд, out — как уходит старый (нет — старый просто лежит под новым), ease — плавность,
-  // x — наплыв: старый гаснет, пока новый проявляется (animSwap). Список для окон выбора — TRANS (id, название); новый переход — строка здесь
+  // x — наплыв: старый гаснет, пока новый проявляется (animSwap). Список для окон выбора — TRANS (id, название); новый переход — строка здесь.
+  // Сменился только текст (тот же шаблон темы или тот же фон, textSwap): анимируется текст, фон стоит. tin/tout — свои кадры для текста
+  // (иначе in/out; нет out — старый текст гаснет в первой половине, OUT_Q). whole — переход всегда всего слайда (через чёрное, наезд, толчок, переворот)
   const TL = (x, y) => `translate(${x}, ${y})`;
   const P3 = 'perspective(2400px) ';
+  const EIO = 'cubic-bezier(.45,0,.55,1)'; // мягкий разгон и мягкая остановка, без рывков на краях
+  const OUT_Q = [{ opacity: 1, easing: 'ease-in' }, { opacity: 0, offset: 0.45 }, { opacity: 0 }];
   const TRD = {
-    fade: { name: 'Плавно (наплыв)', in: [{ opacity: 0 }, { opacity: 1 }], x: true },
-    black: { name: 'Через чёрное', in: [{ opacity: 0 }, { opacity: 0, offset: 0.5 }, { opacity: 1 }], out: [{ opacity: 1 }, { opacity: 0, offset: 0.5 }, { opacity: 0 }], ease: 'linear' },
-    blur: { name: 'Размытие', in: [{ opacity: 0, filter: 'blur(40px)' }, { opacity: 1, filter: 'blur(0px)' }] },
-    slide: { name: 'Сдвиг', in: [{ opacity: 0, transform: 'translateX(6%)' }, { opacity: 1, transform: 'translateX(0)' }] },
-    slideL: { name: 'Сдвиг слева', in: [{ opacity: 0, transform: 'translateX(-6%)' }, { opacity: 1, transform: 'translateX(0)' }] },
-    slideUp: { name: 'Сдвиг снизу', in: [{ opacity: 0, transform: 'translateY(6%)' }, { opacity: 1, transform: 'translateY(0)' }] },
-    slideDown: { name: 'Сдвиг сверху', in: [{ opacity: 0, transform: 'translateY(-6%)' }, { opacity: 1, transform: 'translateY(0)' }] },
-    cover: { name: 'Наезд справа', in: [{ transform: TL('100%', 0) }, { transform: TL(0, 0) }], ease: 'ease-in-out' },
-    coverL: { name: 'Наезд слева', in: [{ transform: TL('-100%', 0) }, { transform: TL(0, 0) }], ease: 'ease-in-out' },
-    coverUp: { name: 'Наезд снизу', in: [{ transform: TL(0, '100%') }, { transform: TL(0, 0) }], ease: 'ease-in-out' },
-    coverDown: { name: 'Наезд сверху', in: [{ transform: TL(0, '-100%') }, { transform: TL(0, 0) }], ease: 'ease-in-out' },
-    push: { name: 'Толкнуть влево', in: [{ transform: TL('100%', 0) }, { transform: TL(0, 0) }], out: [{ transform: TL(0, 0) }, { transform: TL('-100%', 0) }], ease: 'ease-in-out' },
-    pushR: { name: 'Толкнуть вправо', in: [{ transform: TL('-100%', 0) }, { transform: TL(0, 0) }], out: [{ transform: TL(0, 0) }, { transform: TL('100%', 0) }], ease: 'ease-in-out' },
-    pushUp: { name: 'Толкнуть вверх', in: [{ transform: TL(0, '100%') }, { transform: TL(0, 0) }], out: [{ transform: TL(0, 0) }, { transform: TL(0, '-100%') }], ease: 'ease-in-out' },
-    pushDown: { name: 'Толкнуть вниз', in: [{ transform: TL(0, '-100%') }, { transform: TL(0, 0) }], out: [{ transform: TL(0, 0) }, { transform: TL(0, '100%') }], ease: 'ease-in-out' },
-    zoom: { name: 'Увеличение', in: [{ opacity: 0, transform: 'scale(1.06)' }, { opacity: 1, transform: 'scale(1)' }] },
+    // Плавно: слои — встречный наплыв (сумма яркостей постоянна). Текст — старый мягко гаснет, новый мягко проявляется,
+    // почти не накладываясь: двоение строк посередине и выглядело как «размытие»
+    fade: { name: 'Плавно (наплыв)', in: [{ opacity: 0 }, { opacity: 1 }], x: true, ease: EIO,
+      tin: [{ opacity: 0 }, { opacity: 0, offset: 0.3, easing: EIO }, { opacity: 1 }], tout: [{ opacity: 1, easing: EIO }, { opacity: 0, offset: 0.7 }, { opacity: 0 }] },
+    black: { name: 'Через чёрное', in: [{ opacity: 0 }, { opacity: 0, offset: 0.5, easing: EIO }, { opacity: 1 }], out: [{ opacity: 1, easing: EIO }, { opacity: 0, offset: 0.5 }, { opacity: 0 }], ease: 'linear', whole: true },
+    blur: { name: 'Размытие', in: [{ opacity: 0, filter: 'blur(3cqh)' }, { opacity: 1, filter: 'blur(0)' }], out: [{ opacity: 1, filter: 'blur(0)' }, { opacity: 0, filter: 'blur(3cqh)' }], ease: EIO },
+    slide: { name: 'Сдвиг', in: [{ opacity: 0, transform: 'translateX(12%)' }, { opacity: 1, transform: 'translateX(0)' }], out: [{ opacity: 1, transform: 'translateX(0)' }, { opacity: 0, transform: 'translateX(-12%)' }], ease: 'cubic-bezier(.25,.75,.3,1)' },
+    slideL: { name: 'Сдвиг слева', in: [{ opacity: 0, transform: 'translateX(-12%)' }, { opacity: 1, transform: 'translateX(0)' }], out: [{ opacity: 1, transform: 'translateX(0)' }, { opacity: 0, transform: 'translateX(12%)' }], ease: 'cubic-bezier(.25,.75,.3,1)' },
+    slideUp: { name: 'Сдвиг снизу', in: [{ opacity: 0, transform: 'translateY(12%)' }, { opacity: 1, transform: 'translateY(0)' }], out: [{ opacity: 1, transform: 'translateY(0)' }, { opacity: 0, transform: 'translateY(-12%)' }], ease: 'cubic-bezier(.25,.75,.3,1)' },
+    slideDown: { name: 'Сдвиг сверху', in: [{ opacity: 0, transform: 'translateY(-12%)' }, { opacity: 1, transform: 'translateY(0)' }], out: [{ opacity: 1, transform: 'translateY(0)' }, { opacity: 0, transform: 'translateY(12%)' }], ease: 'cubic-bezier(.25,.75,.3,1)' },
+    cover: { name: 'Наезд справа', in: [{ transform: TL('100%', 0) }, { transform: TL(0, 0) }], ease: 'ease-in-out', whole: true },
+    coverL: { name: 'Наезд слева', in: [{ transform: TL('-100%', 0) }, { transform: TL(0, 0) }], ease: 'ease-in-out', whole: true },
+    coverUp: { name: 'Наезд снизу', in: [{ transform: TL(0, '100%') }, { transform: TL(0, 0) }], ease: 'ease-in-out', whole: true },
+    coverDown: { name: 'Наезд сверху', in: [{ transform: TL(0, '-100%') }, { transform: TL(0, 0) }], ease: 'ease-in-out', whole: true },
+    push: { name: 'Толкнуть влево', in: [{ transform: TL('100%', 0) }, { transform: TL(0, 0) }], out: [{ transform: TL(0, 0) }, { transform: TL('-100%', 0) }], ease: 'ease-in-out', whole: true },
+    pushR: { name: 'Толкнуть вправо', in: [{ transform: TL('-100%', 0) }, { transform: TL(0, 0) }], out: [{ transform: TL(0, 0) }, { transform: TL('100%', 0) }], ease: 'ease-in-out', whole: true },
+    pushUp: { name: 'Толкнуть вверх', in: [{ transform: TL(0, '100%') }, { transform: TL(0, 0) }], out: [{ transform: TL(0, 0) }, { transform: TL(0, '-100%') }], ease: 'ease-in-out', whole: true },
+    pushDown: { name: 'Толкнуть вниз', in: [{ transform: TL(0, '-100%') }, { transform: TL(0, 0) }], out: [{ transform: TL(0, 0) }, { transform: TL(0, '100%') }], ease: 'ease-in-out', whole: true },
+    zoom: { name: 'Увеличение', in: [{ opacity: 0, transform: 'scale(.85)' }, { opacity: 1, transform: 'scale(1)' }], out: [{ opacity: 1, transform: 'scale(1)' }, { opacity: 0, transform: 'scale(1.18)' }], ease: EIO },
     zoomIn: { name: 'Из глубины', in: [{ opacity: 0, transform: 'scale(.6)' }, { opacity: 1, transform: 'scale(1)' }] },
     zoomOut: { name: 'Навстречу', in: [{ opacity: 0, transform: 'scale(1.5)' }, { opacity: 1, transform: 'scale(1)' }], out: [{ opacity: 1, transform: 'scale(1)' }, { opacity: 0, transform: 'scale(.85)' }] },
-    wipe: { name: 'Шторка вправо', in: [{ clipPath: 'inset(0 100% 0 0)' }, { clipPath: 'inset(0 0 0 0)' }], ease: 'ease-in-out' },
-    wipeL: { name: 'Шторка влево', in: [{ clipPath: 'inset(0 0 0 100%)' }, { clipPath: 'inset(0 0 0 0)' }], ease: 'ease-in-out' },
-    wipeUp: { name: 'Шторка вверх', in: [{ clipPath: 'inset(100% 0 0 0)' }, { clipPath: 'inset(0 0 0 0)' }], ease: 'ease-in-out' },
-    wipeDown: { name: 'Шторка вниз', in: [{ clipPath: 'inset(0 0 100% 0)' }, { clipPath: 'inset(0 0 0 0)' }], ease: 'ease-in-out' },
+    // Шторки: старое закрывается той же кромкой, что открывает новое — без щели между ними
+    wipe: { name: 'Шторка вправо', in: [{ clipPath: 'inset(0 100% 0 0)' }, { clipPath: 'inset(0 0 0 0)' }], out: [{ clipPath: 'inset(0 0 0 0)' }, { clipPath: 'inset(0 0 0 100%)' }], ease: 'ease-in-out' },
+    wipeL: { name: 'Шторка влево', in: [{ clipPath: 'inset(0 0 0 100%)' }, { clipPath: 'inset(0 0 0 0)' }], out: [{ clipPath: 'inset(0 0 0 0)' }, { clipPath: 'inset(0 100% 0 0)' }], ease: 'ease-in-out' },
+    wipeUp: { name: 'Шторка вверх', in: [{ clipPath: 'inset(100% 0 0 0)' }, { clipPath: 'inset(0 0 0 0)' }], out: [{ clipPath: 'inset(0 0 0 0)' }, { clipPath: 'inset(0 0 100% 0)' }], ease: 'ease-in-out' },
+    wipeDown: { name: 'Шторка вниз', in: [{ clipPath: 'inset(0 0 100% 0)' }, { clipPath: 'inset(0 0 0 0)' }], out: [{ clipPath: 'inset(0 0 0 0)' }, { clipPath: 'inset(100% 0 0 0)' }], ease: 'ease-in-out' },
     split: { name: 'Раскрытие от центра', in: [{ clipPath: 'inset(0 50% 0 50%)' }, { clipPath: 'inset(0 0 0 0)' }], ease: 'ease-in-out' },
     splitV: { name: 'Раскрытие по горизонтали', in: [{ clipPath: 'inset(50% 0 50% 0)' }, { clipPath: 'inset(0 0 0 0)' }], ease: 'ease-in-out' },
     circle: { name: 'Круг', in: [{ clipPath: 'circle(0% at 50% 50%)' }, { clipPath: 'circle(75% at 50% 50%)' }], ease: 'ease-in' },
     diamond: { name: 'Ромб', in: [{ clipPath: 'polygon(50% 50%, 50% 50%, 50% 50%, 50% 50%)' }, { clipPath: 'polygon(50% -50%, 150% 50%, 50% 150%, -50% 50%)' }], ease: 'ease-in' },
     flip: { name: 'Переворот', in: [{ opacity: 0, transform: P3 + 'rotateY(90deg)' }, { opacity: 0, transform: P3 + 'rotateY(90deg)', offset: 0.5 }, { opacity: 1, transform: P3 + 'rotateY(0deg)' }],
-      out: [{ opacity: 1, transform: P3 + 'rotateY(0deg)' }, { opacity: 0, transform: P3 + 'rotateY(-90deg)', offset: 0.5 }, { opacity: 0, transform: P3 + 'rotateY(-90deg)' }], ease: 'linear' },
+      out: [{ opacity: 1, transform: P3 + 'rotateY(0deg)' }, { opacity: 0, transform: P3 + 'rotateY(-90deg)', offset: 0.5 }, { opacity: 0, transform: P3 + 'rotateY(-90deg)' }], ease: 'linear', whole: true },
     flipV: { name: 'Переворот вверх', in: [{ opacity: 0, transform: P3 + 'rotateX(-90deg)' }, { opacity: 0, transform: P3 + 'rotateX(-90deg)', offset: 0.5 }, { opacity: 1, transform: P3 + 'rotateX(0deg)' }],
-      out: [{ opacity: 1, transform: P3 + 'rotateX(0deg)' }, { opacity: 0, transform: P3 + 'rotateX(90deg)', offset: 0.5 }, { opacity: 0, transform: P3 + 'rotateX(90deg)' }], ease: 'linear' },
+      out: [{ opacity: 1, transform: P3 + 'rotateX(0deg)' }, { opacity: 0, transform: P3 + 'rotateX(90deg)', offset: 0.5 }, { opacity: 0, transform: P3 + 'rotateX(90deg)' }], ease: 'linear', whole: true },
     spin: { name: 'Вращение', in: [{ opacity: 0, transform: 'rotate(-90deg) scale(.3)' }, { opacity: 1, transform: 'rotate(0deg) scale(1)' }] },
     drop: { name: 'Падение', in: [{ opacity: 0, transform: 'translateY(-12%)' }, { opacity: 1, transform: 'translateY(1.5%)', offset: 0.7 }, { opacity: 1, transform: 'translateY(0)' }] },
   };
-  const FRAMES = Object.fromEntries(Object.entries(TRD).map(([k, v]) => [k, v.in]));
   const TRANS = [...Object.entries(TRD).map(([k, v]) => [k, v.name]), ['none', 'Без перехода']];
   // Анимация входа (и ухода старых слоёв, если у перехода есть out)
   function animIn(el, tr, ms) {
@@ -76,6 +83,31 @@ const Scene = (() => {
     const d = TRD[tr && tr.type];
     if (!d || !d.out) return;
     els.forEach((n) => n.animate(d.out, { duration: ms, easing: d.ease || 'ease-out', fill: 'forwards' }));
+  }
+  // Сменился только текст (textSwap в show): новый текст входит, старый уходит — каждый своими кадрами перехода.
+  // themed — блоки текста шаблона (у блока со своей анимацией появления/исчезновения — она, а не переход); иначе — .content простой темы
+  const textEls = (n, leaving, themed) => (themed
+    ? [...n.querySelectorAll(':scope > .ob.dyn')].filter((el) => !(leaving ? el._out : el._in)).map((el) => el._tx || el)
+    : [...n.querySelectorAll(':scope > .content')]);
+  const ownEase = (f) => f.some((k) => k.easing); // у кадров своя плавность — общий ход ровный
+  function animText(el, olds, d, ms, themed) {
+    const fin = d.tin || d.in;
+    const fout = d.tout || d.out || OUT_Q;
+    textEls(el, false, themed).forEach((t) => t.animate(fin, { duration: ms, easing: ownEase(fin) ? 'linear' : d.ease || 'ease-out' }));
+    olds.forEach((n) => textEls(n, true, themed).forEach((t) => t.animate(fout, { duration: ms, easing: ownEase(fout) ? 'linear' : d.ease || 'ease-out', fill: 'forwards' })));
+  }
+  // Видео фона того же шаблона при переходе всего слайда: новое начинает с того же места, что старое (без скачка на начало)
+  function syncVideo(nv, ov) {
+    const t0 = performance.now();
+    const at = ov.currentTime || 0;
+    const seek = () => {
+      try {
+        let t = at + (performance.now() - t0) / 1000;
+        if (nv.loop && nv.duration > 0) t %= nv.duration;
+        nv.currentTime = t;
+      } catch { /* не успело загрузиться — пусть идёт с начала */ }
+    };
+    if (nv.readyState >= 1) seek(); else nv.addEventListener('loadedmetadata', seek, { once: true });
   }
   const opNow = (n) => { const o = Number(getComputedStyle(n).opacity); return Number.isFinite(o) ? o : 1; };
   const clearBg = (cs) => cs.backgroundImage === 'none' && /^(rgba\(0, 0, 0, 0\)|rgb\(0, 0, 0\)|transparent)$/.test(cs.backgroundColor);
@@ -152,6 +184,8 @@ const Scene = (() => {
     .layer .ob > .ah { position: absolute; right: 0; top: 50%; transform: translateY(-50%); clip-path: polygon(0 0, 100% 50%, 0 100%); }
     .layer .ob > .m { width: 100%; height: 100%; display: block; }
     .layer.leaving > :not(.ob.dyn), .layer.leaving .pf, .layer.leaving .plw { visibility: hidden; }
+    .layer.ghost { background: transparent !important; }
+    .layer.ghost > :not(.content) { visibility: hidden; }
     .layer.leaving .ob.dyn, .layer.leaving .ob.dyn .pl, .layer.leaving .ob.dyn .ln2 { background: none !important; backdrop-filter: none !important; box-shadow: none !important; border-color: transparent !important; }
   `;
   document.head.append(style);
@@ -169,6 +203,7 @@ const Scene = (() => {
   // Фон: цвет, картинка или видео с размытием, сверху затемнение
   function addBackground(layer, st) {
     layer.style.background = st.bg || '#000000';
+    layer._bg = JSON.stringify([st.bg || '#000000', st.bgUrl || '', !!st.bgVideo, st.blur || 0, st.dim || 0]); // тот же фон — при смене меняется только текст
     if (st.bgUrl) {
       const m = make(st.bgVideo ? 'video' : 'img', 'bgm');
       m.src = st.bgUrl;
@@ -1414,15 +1449,23 @@ const Scene = (() => {
     const ink = box.querySelector(':scope > svg.ink');
     box.insertBefore(layer, ink); // рисунок всегда сверху
     if (!layerId && stage._view) viewOn(stage, layer, 0);
-    // Тот же шаблон темы, что был (следующий куплет): фон, фигуры и видео шаблона остаются, меняется только текст
-    const prev = old.filter((n) => !n.classList.contains('gone')).pop();
-    const same = !!(prev && layer._tpl && prev._tpl === layer._tpl && !prev.classList.contains('leaving'));
-    if (same) {
+    const ms = tr.type === 'none' ? 0 : Math.max(0, Number(tr.ms) || 0);
+    const d = TRD[tr.type] || TRD.fade;
+    // Что сейчас на экране: последний слой, который не уходит (уходящие при быстрых щелчках лежат выше нового)
+    const prev = old.filter((n) => !n.classList.contains('gone') && !n.classList.contains('leaving') && !n.classList.contains('ghost')).pop();
+    // Тот же шаблон темы, что был (следующий куплет): фон, фигуры и видео шаблона остаются, меняется только текст.
+    // Простая тема с тем же фоном (plain) — так же: меняется только текст
+    const same = !!(prev && layer._tpl && prev._tpl === layer._tpl);
+    const plain = !!(prev && !same && layer._bg && prev._bg === layer._bg && layer.classList.contains('text') && prev.classList.contains('text'));
+    // Переход всего слайда (через чёрное, наезд, толчок, переворот): старый слой нужен целиком — видео фона не переносим, а догоняем
+    const textSwap = (same || plain) && !(ms && d.whole);
+    if (same || plain) {
       layer.querySelectorAll('video').forEach((nv) => {
-        const box = nv.closest('.ob');
-        const sel = box ? `:scope > .ob[data-oid="${box.dataset.oid}"] > video` : ':scope > .tbg > video';
+        const ob = nv.closest('.ob');
+        const sel = ob ? `:scope > .ob[data-oid="${ob.dataset.oid}"] > video` : plain ? ':scope > video.bgm' : ':scope > .tbg > video';
         const ov = prev.querySelector(sel);
-        if (ov && ov.src === nv.src) { ov.className = nv.className; ov.style.cssText = nv.style.cssText; nv.replaceWith(ov); }
+        if (!ov || ov.src !== nv.src) return;
+        if (textSwap) { ov.className = nv.className; ov.style.cssText = nv.style.cssText; nv.replaceWith(ov); } else syncVideo(nv, ov);
       });
     }
     fitLayer(layer);
@@ -1431,18 +1474,19 @@ const Scene = (() => {
     // Старые слои убирает переход, который подхватил их последним (быстрые щелчки: слой не пропадает посреди наплыва)
     const tok = {};
     old.forEach((n) => { n._by = tok; });
-    const done = () => old.forEach((n) => { if (n._by === tok) dispose(n); });
-    const ms = tr.type === 'none' ? 0 : Math.max(0, Number(tr.ms) || 0);
+    let fin = false;
+    const done = () => { if (fin) return; fin = true; old.forEach((n) => { if (n._by === tok) dispose(n); }); };
     old.forEach((n) => fadeOutSound(n, ms)); // видео того же шаблона уже перенесено в новый слой и не гаснет
     // content.edit — редактор тем: без анимаций исчезновения при каждой правке
-    if (!content.edit) old.forEach((n) => { if (!n.classList.contains('leaving') && !n.classList.contains('gone')) playOut(n, same); });
+    const fresh = old.filter((n) => !n.classList.contains('leaving') && !n.classList.contains('ghost') && !n.classList.contains('gone'));
+    if (!content.edit) fresh.forEach((n) => playOut(n, same));
     const outMs = content.edit ? 0 : old.reduce((t, n) => Math.max(t, outTime(n, same)), 0);
-    if (same) {
-      old.forEach((n) => n.classList.add('leaving'));
-      if (ms) {
-        layer.querySelectorAll(':scope > .ob.dyn').forEach((el) => { if (el._tx && !el._in) el._tx.animate(FRAMES.fade, { duration: ms, easing: 'ease-out' }); });
-        old.forEach((n) => n.querySelectorAll(':scope > .ob.dyn').forEach((el) => { if (el._tx && !el._out) el._tx.animate([{ opacity: 1 }, { opacity: 0 }], { duration: ms, fill: 'forwards' }); }));
-      }
+    if (textSwap) {
+      // Старые слои — только текст (без фона) и поверх нового: уходящий текст виден, пока гаснет, а не пропадает под новым фоном
+      fresh.forEach((n) => n.classList.add(same ? 'leaving' : 'ghost'));
+      const top = old.find((n) => !n.classList.contains('gone'));
+      if (top) box.insertBefore(layer, top);
+      if (ms) animText(layer, fresh, d, ms, same);
       if (!ms && !outMs) return done();
       setTimeout(done, Math.max(ms, outMs));
       return;
@@ -1453,6 +1497,7 @@ const Scene = (() => {
     if (outMs > ms) { setTimeout(done, outMs); return; }
     anim.onfinish = done;
     anim.oncancel = done;
+    setTimeout(done, ms + 250); // окно не рисуется (свёрнуто) — анимация стоит, а старые слои всё равно уходят
   }
 
   // layerId — очистить только этот слой; без него — всё
