@@ -16,12 +16,18 @@ const I18n = (() => {
   let lang = 'ru';
   try { lang = localStorage.getItem('cp.lang') || 'ru'; } catch { /* нет хранилища */ }
   if (lang !== 'ru' && !(lang in IDX)) lang = 'ru';
+  // Окна вывода (<html data-lang-lazy>) грузят словарь lang.js (650 КБ) только для нерусского языка: окон несколько,
+  // каждому он стоил памяти и времени запуска. Язык сменят потом — set() подгрузит
+  try {
+    if (document.readyState === 'loading' && document.documentElement && document.documentElement.hasAttribute('data-lang-lazy') && lang !== 'ru') document.write('<script src="lang.js"></script>');
+  } catch { /* не страшно: останется по-русски */ }
 
   const dict = new Map(); // строка → [en, et]
   const pats = []; // { re, n, v: [en, et] }
   const frags = new Map(); // кусок фразы (склейка в коде) → [en, et]
   let fragRe;
   let cache = new Map();
+  let dictLoading = false;
 
   const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const normNl = (s) => s.replace(/[ \t ]+/g, ' ').replace(/ ?\n ?/g, '\n').trim();
@@ -284,6 +290,14 @@ const I18n = (() => {
     cache = new Map();
     applyCss();
     if (!manual) walk(document.body, true);
+    // Окно вывода при русском языке словарь не грузит (output.html) — подгрузить, когда язык сменили
+    if (l !== 'ru' && !dict.size && !pats.length && !dictLoading && document.head) {
+      dictLoading = true;
+      const s = document.createElement('script');
+      s.src = 'lang.js';
+      s.onload = () => { cache = new Map(); if (!manual) walk(document.body, true); };
+      document.head.append(s);
+    }
     syncPicker();
     tellMain();
     document.dispatchEvent(new CustomEvent('i18n:change', { detail: l }));

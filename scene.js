@@ -825,11 +825,14 @@ const Scene = (() => {
     const tmId = tmOver || o.timer || '';
     let bib = B && !isTm ? bibleInBox(o, B) : undefined;
     if (bib === null) return null;
+    // Окно, куда Библия кладёт стих или ссылку (в т. ч. «статичное», выбранное в окне «Библия»), меняется от слайда к слайду —
+    // переход анимирует его, как текст песни (иначе смена стиха — склейка: animText берёт только .dyn)
+    const dyn = (o.bind && o.bind !== 'static') || bib !== undefined;
     if (isTm) value = tmText(tmId, o.tmFmt);
     else if (bib && bib.value != null) { value = bib.value; bib = undefined; }
     else if (!bib && o.bind === 'content') { if (c.type === 'custom') return null; }
     else if (!bib) { value = bindValue(o, c); if (!String(value).trim()) return null; }
-    const el = objBox(o, 't2' + (o.bind && o.bind !== 'static' ? ' dyn' : ''));
+    const el = objBox(o, 't2' + (dyn ? ' dyn' : ''));
     if (o.bind) el.dataset.bind = o.bind;
     decorate(el, o);
     el.style.padding = cq(o.pad);

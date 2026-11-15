@@ -47,9 +47,6 @@
     input[type=range] { accent-color: var(--live); }
     input[type=color] { width: 44px; height: 30px; padding: 0; border: 1px solid var(--line); border-radius: calc(6px * var(--rk, 1)); background: none; }
 
-    #notice { padding: 8px 16px; background: var(--live-soft); color: var(--live); border-bottom: 1px solid var(--line); }
-    #notice.error { background: #2a1d1f; color: var(--warn); cursor: pointer; }
-    #notice[hidden] { display: none; }
 
     .tabs { display: flex; align-items: center; gap: 4px; padding: 0 12px 0 16px; background: var(--panel); border-bottom: 1px solid var(--line); }
     .tab-btn { padding: 5px 11px; font-size: 13px; }
@@ -417,6 +414,8 @@
     /* Пункт ленты: полоса-заголовок и под ней слайды, без подложки */
     .svc-item { padding-bottom: 16px; flex: none; }
     .svc-item.drop-item .svc-ihead { box-shadow: 0 -3px 0 0 var(--live); }
+    /* Слайды бросают на свободное место презентации — встанут в её конец */
+    .svc-item.drop-slides .svc-slides { outline: 2px dashed var(--live); outline-offset: 3px; border-radius: calc(6px * var(--rk, 1)); }
     .svc-ihead { display: flex; align-items: center; gap: 8px; padding: 5px 8px 5px 10px; margin-bottom: 8px; cursor: pointer; user-select: none;
       background: var(--panel); border: 1px solid var(--line); border-left: 3px solid var(--line); border-radius: calc(5px * var(--rk, 1)); }
     /* Выбранный пункт — та же плашка, чуть светлее (работает с любым цветом метки) */
@@ -1074,9 +1073,64 @@
     #viewBar .off input, #viewBar .off button { opacity: .45; }
     #songPreview { --svc-tile: 170px; } /* окно песни масштабом не меняется */
 
-    /* Всплывающее сообщение внизу слева */
-    #status { position: fixed; left: 16px; bottom: 16px; z-index: 900; max-width: 50vw; padding: 7px 12px; border: 1px solid var(--line); border-radius: calc(8px * var(--rk, 1)); background: var(--panel); color: var(--text); font-size: 13px; box-shadow: 0 6px 18px rgba(0, 0, 0, .4); pointer-events: none; }
-    #status:empty { display: none; }
+    /* Уведомления-«островки» (notify.js): выпадают сверху по центру, как Dynamic Island. Контейнер — popover (верхний слой, поверх окон).
+       Вид — .ui-pop (стекло и рамки тем); цвет вида (--k) — только у значка, счётчика и полоски. */
+    /* Обновление: кнопки и текст «Что нового» */
+    .set-group .field.upd-acts { flex-wrap: wrap; gap: 8px; justify-content: flex-start; }
+    .upd-notes { white-space: pre-line; overflow-wrap: anywhere; font-size: 13.5px; line-height: 1.5; padding: 10px 12px; max-height: 46vh; overflow: auto;
+      background: var(--field); border: 1px solid var(--line); border-radius: calc(8px * var(--rk, 1)); }
+    #isles { position: fixed; inset: var(--isle-top, 8px) auto auto var(--isle-x, 50%); transform: translateX(-50%); margin: 0; padding: 0; border: 0; background: none; overflow: visible;
+      width: min(440px, calc(100vw - 32px)); display: flex; flex-direction: column; align-items: center; color: var(--text); pointer-events: none; z-index: 2000; }
+    .isle-slot { width: 100%; display: grid; justify-items: center; grid-template-rows: 0fr; transition: grid-template-rows .38s cubic-bezier(.3, 1.1, .4, 1), margin .38s; }
+    .isle-slot.in { grid-template-rows: 1fr; margin-bottom: 8px; }
+    .isle-slot > .isle { min-height: 0; }
+    .isle { --k: var(--live); position: relative; box-sizing: border-box; width: max-content; max-width: 100%; min-width: min(280px, 100%); display: flex; align-items: flex-start; gap: 12px; padding: 12px 10px 12px 14px; overflow: hidden; pointer-events: auto;
+      color: var(--text); background: var(--panel); border: 1px solid var(--line); border-radius: calc(22px * var(--rk, 1)); box-shadow: 0 14px 40px rgba(0, 0, 0, .45);
+      opacity: 0; transform: translateY(-18px) scale(.6, .55); transform-origin: 50% 0; filter: blur(6px);
+      transition: opacity .3s, transform .42s cubic-bezier(.2, 1.25, .35, 1), filter .3s; }
+    .isle-slot.in > .isle { opacity: 1; transform: none; filter: none; }
+    .isle-slot.out > .isle { opacity: 0; transform: translateY(-14px) scale(.7, .5); filter: blur(4px); transition-duration: .3s; transition-timing-function: ease-in; }
+    .isle:has(.isle-acts:not([hidden])), .isle:not(.one) { width: 100%; }
+    .isle.one { align-items: center; padding-block: 8px; border-radius: calc(999px * var(--rk, 1)); }
+    .isle.k-ok { --k: var(--ok, #3fb950); }
+    .isle.k-warn { --k: var(--note, #d9a441); }
+    .isle.k-error { --k: var(--warn); border-color: color-mix(in srgb, var(--warn) 45%, var(--line)); }
+    .isle-ico { flex: none; width: 30px; height: 30px; display: grid; place-items: center; border-radius: 50%; color: var(--k); background: color-mix(in srgb, var(--k) 18%, transparent); }
+    .isle.one .isle-ico { width: 26px; height: 26px; }
+    .isle-ico svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+    .isle-spin { stroke-dasharray: 34 60; transform-origin: 12px 12px; animation: isleSpin .9s linear infinite; }
+    @keyframes isleSpin { to { transform: rotate(360deg); } }
+    .isle-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; padding-top: 1px; }
+    .isle.one .isle-body { padding-top: 0; }
+    .isle-body [hidden] { display: none; }
+    .isle-title { font-size: 14px; font-weight: 600; line-height: 1.3; overflow-wrap: anywhere; }
+    .isle-text { font-size: 13px; line-height: 1.4; color: var(--muted); white-space: pre-line; overflow-wrap: anywhere; max-height: 7em; overflow: auto; }
+    .isle.one .isle-text { color: var(--text); }
+    .isle-acts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+    .isle-acts button { padding: 4px 12px; font-size: 12.5px; border-radius: calc(999px * var(--rk, 1)); }
+    .isle-n { flex: none; align-self: center; min-width: 20px; height: 20px; padding: 0 6px; box-sizing: border-box; border-radius: 10px; display: grid; place-items: center;
+      font-size: 11.5px; font-weight: 700; color: var(--live-ink); background: var(--k); }
+    .isle-n[hidden] { display: none; }
+    .isle-x { flex: none; width: 26px; height: 26px; padding: 0; display: grid; place-items: center; border-radius: 50%; font-size: 17px; line-height: 1;
+      color: var(--muted); background: transparent !important; border-color: transparent !important; box-shadow: none !important; opacity: .55; transition: opacity .15s, color .15s; }
+    .isle.one .isle-x { align-self: center; }
+    .isle:hover .isle-x, .isle-x:focus-visible { opacity: 1; }
+    .isle-x:hover { color: var(--text); background: var(--field) !important; }
+    /* Полоска внизу: отсчёт 10 с (пропадает, пока мышь на островке) или прогресс (--p от 0 до 1) */
+    .isle-bar { position: absolute; left: 18px; right: 18px; bottom: 0; height: 2px; border-radius: 2px; background: var(--k); opacity: 0; transform-origin: 0 50%; pointer-events: none; }
+    .isle.run .isle-bar { opacity: .5; animation: isleLife var(--life, 10s) linear forwards; }
+    .isle.hold .isle-bar { opacity: 0; animation: none; }
+    .isle .isle-bar.pct { opacity: .9; animation: none; transform: scaleX(var(--p, 0)); transition: transform .3s; }
+    @keyframes isleLife { from { transform: scaleX(1); } to { transform: scaleX(0); } }
+    .isle.morph .isle-body { animation: isleMorph .35s ease-out; }
+    .isle.morph .isle-n { animation: isleBump .35s cubic-bezier(.2, 1.6, .4, 1); }
+    @keyframes isleMorph { from { opacity: .2; filter: blur(3px); transform: translateY(3px); } }
+    @keyframes isleBump { 40% { transform: scale(1.35); } }
+    @media (prefers-reduced-motion: reduce) {
+      .isle, .isle-slot { transition: none !important; }
+      .isle { transform: none !important; filter: none !important; }
+      .isle-spin, .isle.morph .isle-body, .isle.morph .isle-n, .isle.run .isle-bar { animation: none; }
+    }
 
     /* Логотип в строке вкладок (brand/ — готовые файлы фирменного стиля; светлый/тёмный по цвету программы) */
     /* Видна только эмблема: файл тот же, надпись справа обрезана (эмблема — первые 253 из 1056 по ширине) */
@@ -1688,7 +1742,7 @@
     .cpk-spec canvas { display: block; width: 100%; height: auto; aspect-ratio: 3 / 2; border-radius: 8px; }
     .cpk-ring { position: absolute; width: 26px; height: 26px; margin: -13px 0 0 -13px; border-radius: 50%; border: 3px solid #fff; box-shadow: 0 0 0 .5px rgba(0, 0, 0, .3), 0 2px 6px rgba(0, 0, 0, .35); pointer-events: none; }
     .cpk-sl label, .cpk-lbl { display: block; margin: 12px 14px 6px; font-size: 12px; font-weight: 600; letter-spacing: .02em; color: var(--cpmuted); }
-    .cpk-lbl small { font-weight: 400; letter-spacing: 0; }
+    .cpk-lbl small, .cpk-sl label small { font-weight: 400; letter-spacing: 0; }
     .cpk-sl label { margin: 10px 0 6px; }
     .cpk-sl label:first-child { margin-top: 2px; }
     .cpk-slr { display: flex; align-items: center; gap: 12px; }
@@ -1762,7 +1816,7 @@
         linear-gradient(160deg, color-mix(in srgb, var(--ink) 88%, #fff 6%), var(--ink)) fixed;
     }
     html.ui-glass .ctx-menu, html.ui-glass .note-pop, html.ui-glass .ly-pop, html.ui-glass #srcPop, html.ui-glass .mc-picker,
-    html.ui-glass .il-pop, html.ui-glass #mcDock, html.ui-glass .st-pop, html.ui-glass #status, html.ui-glass dialog,
+    html.ui-glass .il-pop, html.ui-glass #mcDock, html.ui-glass .st-pop, html.ui-glass dialog,
     html.ui-glass #quick, html.ui-glass .te-pop, html.ui-glass .ui-pop { backdrop-filter: blur(var(--blur, 18px)) saturate(1.3); }
     /* .ui-pop — общий класс всплывающих панелей (новая плавающая панель — давайте ей этот класс, тогда стекло и размытие работают сами) */
     html.ui-glass aside, html.ui-glass .tabs, html.ui-glass .set-nav { box-shadow: inset 0 1px 0 rgba(255, 255, 255, .05); }
@@ -1965,6 +2019,86 @@
       box-shadow: inset 0 1px 0 rgba(255, 255, 255, .35), 0 4px 10px rgba(30, 30, 60, .5); }
     .ui-th-pv[data-deco=sunset] { background: radial-gradient(70% 50% at 50% 120%, rgba(255, 160, 120, .7), transparent 70%), var(--a); }
     .ui-th-pv[data-deco=sunset] i:nth-child(3) { border-radius: 999px; background: #fffaf4; box-shadow: 0 0 4px #fff, 0 0 10px #ff9a7a; }
+    /* ----- Тема «Лазурь» (deco: 'azure'): тёмная версия макета «multiplayerSHOW UI kit» — тёмно-синие карточки
+       с мягкой тенью, яркий синий акцент, белый текст на синем, выбранное — синяя подложка с полоской слева ----- */
+    html[data-ui-deco=azure] { --live-ink: #fff !important; --az-sh: inset 0 1px 0 rgba(255, 255, 255, .04), 0 10px 28px -12px rgba(0, 0, 0, .7);
+      --az-blue: linear-gradient(180deg, color-mix(in srgb, var(--live) 75%, #fff 25%), var(--live)); --az-on: color-mix(in srgb, var(--live) 45%, #fff); }
+    html[data-ui-deco=azure], html[data-ui-deco=azure] body {
+      background: radial-gradient(60% 50% at 0% 0%, color-mix(in srgb, var(--live) 10%, transparent), transparent 70%),
+        radial-gradient(50% 40% at 100% 100%, color-mix(in srgb, var(--brown) 6%, transparent), transparent 70%), var(--ink) fixed;
+    }
+    /* Карточки: списки слева, блоки справа, панели редакторов */
+    html[data-ui-deco=azure] :is(.svc-side, .ly-box, .bm-box, .mu-pane, #bookNav, .te-side, .te-insp, .mc-side, .mc-props, .ae-side, .sc-side) {
+      border-color: rgba(255, 255, 255, .06); box-shadow: var(--az-sh); }
+    html[data-ui-deco=azure] aside { border-left-color: rgba(255, 255, 255, .05); }
+    html[data-ui-deco=azure] .tabs { border-bottom-color: rgba(255, 255, 255, .05); box-shadow: 0 6px 20px -14px rgba(0, 0, 0, .8); }
+    html[data-ui-deco=azure] :is(dialog, .ctx-menu, .note-pop, .ly-pop, #srcPop, .st-pop, .ui-pop, #quick) {
+      border: 1px solid rgba(255, 255, 255, .08); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .05), 0 24px 60px rgba(0, 0, 0, .6); }
+    html[data-ui-deco=azure] dialog::backdrop { background: rgba(4, 8, 16, .55); }
+    html[data-ui-deco=azure] :is(.dlg-head, .dlg-foot) { border-color: rgba(255, 255, 255, .06); }
+    /* Кнопки: обычные — плоская плашка, при наведении светлее; главная — синяя с белым текстом и мягкой синей тенью */
+    html[data-ui-deco=azure] :is(select, button, input[type=text], input[type=number]) { border-color: rgba(255, 255, 255, .07); }
+    html[data-ui-deco=azure] button:not(.tab):not(.primary):hover { background-color: color-mix(in srgb, var(--field) 85%, #fff 8%); border-color: rgba(255, 255, 255, .14); }
+    html[data-ui-deco=azure] button.primary:not(.on) { background: var(--az-blue); border-color: transparent; color: #fff; padding-inline: 16px;
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, .22), 0 6px 16px -6px color-mix(in srgb, var(--live) 85%, transparent); }
+    html[data-ui-deco=azure] button.primary:not(.on):hover { filter: brightness(1.08); }
+    html[data-ui-deco=azure] button.primary.on { color: var(--az-on); border-color: color-mix(in srgb, var(--live) 60%, transparent); }
+    html[data-ui-deco=azure] :is(select, input[type=text], input[type=number], textarea):focus { outline: none; border-color: var(--live); box-shadow: 0 0 0 3px color-mix(in srgb, var(--live) 28%, transparent); }
+    html[data-ui-deco=azure] :is(button, select, input, .tile, .tab):focus-visible { outline: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--live) 45%, transparent); }
+    /* Вкладки (как «Вкладки»): выбранная — синий текст и толстая скруглённая полоска снизу */
+    html[data-ui-deco=azure] .tab { position: relative; border-bottom-color: transparent !important; }
+    html[data-ui-deco=azure] .tab:hover { color: var(--text); }
+    html[data-ui-deco=azure] .tab[aria-selected=true] { color: var(--az-on); text-shadow: none; }
+    html[data-ui-deco=azure] .tab[aria-selected=true]::after { content: ""; position: absolute; left: 12px; right: 12px; bottom: 0; height: 3px; border-radius: 3px 3px 0 0;
+      background: var(--live); box-shadow: 0 0 10px color-mix(in srgb, var(--live) 70%, transparent); }
+    /* Списки слева и меню настроек (как «Главная» и «Ты со мной»): выбранное — синяя подложка и полоска слева */
+    html[data-ui-deco=azure] :is(.svc-row.cur, .svc-sub.open, .set-nav button[aria-current=true]) {
+      background: color-mix(in srgb, var(--live) 18%, transparent); color: var(--az-on); box-shadow: inset 3px 0 0 var(--live); text-shadow: none; }
+    html[data-ui-deco=azure] .svc-sub.live { color: var(--az-on); }
+    html[data-ui-deco=azure] :is(.svc-row, .svc-sub):not(.cur):not(.open):not(.marked):hover { background: rgba(255, 255, 255, .05); }
+    html[data-ui-deco=azure] .svc-fold { letter-spacing: .08em; font-weight: 600; }
+    /* Лента: шапка пункта — карточка с тенью */
+    html[data-ui-deco=azure] .svc-item:not(.marked) .svc-ihead { background: var(--panel); border-color: rgba(255, 255, 255, .06); box-shadow: var(--az-sh); }
+    html[data-ui-deco=azure] .svc-item.live-item:not(.marked) .svc-ihead { border-left-color: var(--live); }
+    html[data-ui-deco=azure] .svc-item.live-item .svc-ihead .iname { color: var(--az-on); }
+    /* Слайды и плитки: показанный — синяя рамка со свечением, как выбранная «Сцена 1» */
+    html[data-ui-deco=azure] .sl { border-color: transparent; box-shadow: 0 6px 16px -10px rgba(0, 0, 0, .8); }
+    html[data-ui-deco=azure] .sl:hover:not(.live):not(.sel) { border-color: rgba(255, 255, 255, .14); }
+    html[data-ui-deco=azure] :is(.tile.live, .sl.live) { border-color: var(--live); box-shadow: 0 0 0 1px var(--live), 0 10px 26px -8px color-mix(in srgb, var(--live) 75%, transparent); }
+    html[data-ui-deco=azure] .sl.live .cap { background: var(--az-blue); }
+    /* Ползунки (как «Слайдер 70 %»): дорожка 6px, синяя до значения (--pct), белая круглая ручка с тенью */
+    html[data-ui-deco=azure] input[type=range]:not(.cpk *) { -webkit-appearance: none; appearance: none; height: 20px; background: transparent; filter: none; }
+    html[data-ui-deco=azure] input[type=range]:not(.cpk *)::-webkit-slider-runnable-track { height: 6px; border-radius: 999px;
+      background: linear-gradient(90deg, var(--live), color-mix(in srgb, var(--live) 70%, #fff 30%) var(--pct, 0%), color-mix(in srgb, var(--line) 85%, #fff 8%) var(--pct, 0%)); }
+    html[data-ui-deco=azure] input[type=range]:not(.cpk *)::-webkit-slider-thumb { -webkit-appearance: none; width: 18px; height: 18px; margin-top: -6px; border: 0; border-radius: 50%;
+      background: #fff; box-shadow: 0 0 0 1px rgba(0, 0, 0, .15), 0 2px 6px rgba(0, 0, 0, .5); transition: box-shadow .12s; }
+    html[data-ui-deco=azure] input[type=range]:not(.cpk *):hover::-webkit-slider-thumb { box-shadow: 0 0 0 5px color-mix(in srgb, var(--live) 30%, transparent), 0 2px 6px rgba(0, 0, 0, .5); }
+    html[data-ui-deco=azure] input[type=range]:not(.cpk *):disabled { opacity: .4; }
+    /* Перемотка (как полоска под «Бог есть любовь»): тоньше, ручка — маленькая точка */
+    html[data-ui-deco=azure] :is(#seek, #vSeek)::-webkit-slider-runnable-track { height: 5px; }
+    html[data-ui-deco=azure] :is(#seek, #vSeek)::-webkit-slider-thumb { width: 12px; height: 12px; margin-top: -3.5px; }
+    html[data-ui-deco=azure] :is(#player, #vplayer).muted :is(#volume, #vVolume)::-webkit-slider-runnable-track { background: linear-gradient(90deg, var(--muted) var(--pct, 0%), var(--line) var(--pct, 0%)); }
+    /* Проигрыватель: «играть» — большой синий круг, остальные — просто значки */
+    html[data-ui-deco=azure] :is(#playPause, #vPlay) { width: 38px; height: 38px; border-radius: 50%; border-color: transparent; background: var(--az-blue); color: #fff; font-size: 14px;
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, .25), 0 6px 18px -4px color-mix(in srgb, var(--live) 80%, transparent); }
+    html[data-ui-deco=azure] :is(#muPrev, #muNext, #stop, #vStop) { background: none; border-color: transparent; box-shadow: none; color: var(--muted); }
+    html[data-ui-deco=azure] :is(#muPrev, #muNext, #stop, #vStop):hover { background: none; color: var(--text); }
+    html[data-ui-deco=azure] .pl-btns { align-items: center; }
+    /* Галочки (как «Чекбокс»): скруглённый квадрат, отмечено — синий с белой галкой */
+    html[data-ui-deco=azure] input[type=checkbox] { -webkit-appearance: none; appearance: none; position: relative; flex: none; width: 17px; height: 17px; margin: 0 2px; vertical-align: middle; cursor: pointer;
+      border-radius: 5px; border: 1.5px solid color-mix(in srgb, var(--muted) 70%, transparent); background: color-mix(in srgb, var(--field) 70%, transparent); filter: none; }
+    html[data-ui-deco=azure] input[type=checkbox]:hover { border-color: var(--text); }
+    html[data-ui-deco=azure] input[type=checkbox]:is(:checked, :indeterminate) { border-color: transparent; background: var(--az-blue); box-shadow: 0 2px 8px -2px color-mix(in srgb, var(--live) 80%, transparent); }
+    html[data-ui-deco=azure] input[type=checkbox]:checked::before { content: ""; position: absolute; left: 5px; top: 1.5px; width: 4px; height: 8px; border: solid #fff; border-width: 0 2px 2px 0; transform: rotate(45deg); }
+    html[data-ui-deco=azure] input[type=checkbox]:indeterminate::before { content: ""; position: absolute; left: 3.5px; right: 3.5px; top: 6.5px; height: 2px; border-radius: 1px; background: #fff; }
+    html[data-ui-deco=azure] input[type=checkbox]:disabled { opacity: .4; cursor: default; }
+    /* Крутилка: синяя дуга, ручка — тёмно-синяя шайба с белой меткой */
+    html[data-ui-deco=azure] .ui-knob .kn-arc { background: conic-gradient(from -136deg, var(--live), var(--brown) calc(var(--pct, 0%) * .75), transparent 0); filter: drop-shadow(0 0 3px color-mix(in srgb, var(--live) 80%, transparent)); }
+    html[data-ui-deco=azure] .ui-knob .kn-cap { background: linear-gradient(180deg, color-mix(in srgb, var(--field) 80%, #fff 10%), var(--panel)); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .12), 0 4px 10px rgba(0, 0, 0, .55); }
+    html[data-ui-deco=azure] ::-webkit-scrollbar-thumb { border-radius: 999px; }
+    .ui-th-pv[data-deco=azure] { background: radial-gradient(70% 70% at 0% 0%, color-mix(in srgb, var(--e) 30%, transparent), transparent 70%), var(--a); }
+    .ui-th-pv[data-deco=azure] i:nth-child(1) { border-radius: 4px; box-shadow: inset 2px 0 0 var(--e); }
+    .ui-th-pv[data-deco=azure] i:nth-child(3) { border-radius: 4px; box-shadow: 0 2px 6px -1px var(--e); }
     /* Шрифт программы (settings.uiFont): только системные шрифты Windows */
     html[data-ui-font=tech], html[data-ui-font=narrow] { font-family: Bahnschrift, "Segoe UI", system-ui, sans-serif; }
     html[data-ui-font=narrow] { font-stretch: 87.5%; }
@@ -2016,7 +2150,6 @@
     </div>
   </div>
 
-  <div id="notice" hidden></div>
 
   <div class="workspace">
     <!-- Рабочее поле и под ним тонкая строка #viewBar (Scale, переход) -->
@@ -2647,8 +2780,7 @@
     <div id="srcPopStage"></div>
   </div>
 
-  <!-- Короткие сообщения («Скопировано…») — всплывают внизу слева и исчезают -->
-  <div id="status" role="status"></div>
+  <!-- Сообщения программы — островки сверху по центру, их делает notify.js (#isles) -->
 
   <dialog id="setDialog" class="wide">
     <div class="dlg-head">
@@ -2863,8 +2995,13 @@
             <h2>Обновление программы</h2>
             <div class="field"><span>Установлена версия</span><b id="updVer">—</b></div>
             <div class="field"><span id="updState">Новые версии берутся с GitHub.</span><button id="updCheck" data-icon="update">Проверить обновления</button></div>
-            <div class="field" id="updReady" hidden><button id="updInstall" class="primary" data-icon="update">Перезапустить и обновить</button></div>
-            <div class="field"><label class="check" title="Новая версия скачивается сама и ставится, когда вы закроете программу"><input type="checkbox" id="updAuto"> Проверять обновления при запуске</label></div>
+            <div class="field upd-acts" id="updActs" hidden>
+              <button id="updGet" class="primary" data-icon="update" hidden>Скачать и установить</button>
+              <button id="updInstall" class="primary" data-icon="update" hidden>Перезапустить и обновить</button>
+              <button id="updNotes" hidden>Что нового</button>
+            </div>
+            <div class="field"><label class="check"><input type="checkbox" id="updAuto"> Обновлять автоматически</label></div>
+            <p class="hint">Включено — программа проверяет новые версии при запуске и раз в 6 часов, скачивает их в фоне и ставит, когда вы закроете программу (или сразу — «Перезапустить и обновить»). Выключено — программа сама ничего не проверяет и не скачивает; проверить — кнопкой «Проверить обновления», поставить — только после вашего «Скачать и установить».</p>
             <p class="hint">Обновление меняет только саму программу. Ваши данные (библиотеки, темы, переводы, настройки) лежат в отдельной папке и в репозитории — они не пропадут.</p>
           </div>
         </section>
@@ -3189,6 +3326,22 @@
 
   <!-- Вопрос «Да / Отмена» — своё окно вместо window.confirm (playlist.js: askYes).
        После системного окна Electron в Windows поля ввода переставали принимать буквы — не возвращать confirm -->
+  <!-- Что нового в версии (tools.js: updShowNotes). Текст выпуска с GitHub — только текстом, без HTML -->
+  <dialog id="updNotesDlg" style="width:min(600px, 92vw)">
+    <div class="dlg-head"><h2 id="unTitle">Что нового</h2><button class="dlg-x" title="Закрыть">×</button></div>
+    <div class="dlg-body">
+      <p class="hint" id="unMeta" style="margin:0 0 10px"></p>
+      <div id="unText" class="upd-notes" data-noi18n></div>
+    </div>
+    <div class="dlg-foot">
+      <button id="unPage" data-icon="web">Страница выпуска на GitHub</button>
+      <span class="spacer"></span>
+      <button id="unGet" class="primary" data-icon="update" hidden>Скачать и установить</button>
+      <button id="unInstall" class="primary" data-icon="update" hidden>Перезапустить и обновить</button>
+      <button class="dlg-x">Закрыть</button>
+    </div>
+  </dialog>
+
   <dialog id="askDialog" style="width:min(560px, 92vw)">
     <form method="dialog">
       <div class="dlg-head"><h2 id="askTitle"></h2></div>
@@ -3420,6 +3573,7 @@
   <script src="i18n.js"></script>
   <script src="lang.js"></script>
   <script src="icons.js"></script>
+  <script src="notify.js"></script>
   <script src="iconlib.js"></script>
   <script src="colorpicker.js"></script>
   <script src="scene.js"></script>

@@ -80,6 +80,7 @@ contextBridge.exposeInMainWorld('api', {
 
   libLoad: () => ipcRenderer.invoke('lib:load'),
   libSave: (data) => ipcRenderer.invoke('lib:save', data),
+  libPatch: (msg) => ipcRenderer.invoke('lib:patch', msg), // только изменённые презентации (playlist.js: libSend)
   // Профили (profiles.js): список, свои и общие библиотеки; команды { act: create|rename|remove|connect|disconnect|cat|switch, … }
   profState: () => ipcRenderer.invoke('profile:state'),
   profDo: (a) => ipcRenderer.invoke('profile:do', a),
@@ -115,8 +116,11 @@ contextBridge.exposeInMainWorld('api', {
   appVersion: () => ipcRenderer.invoke('app:version'),
   // Обновление программы с GitHub
   updGet: () => ipcRenderer.invoke('update:get'),
-  updCheck: () => ipcRenderer.invoke('update:check'),
+  updCheck: (o) => ipcRenderer.invoke('update:check', o),
+  updConfig: (c) => ipcRenderer.invoke('update:config', c),
+  updDownload: () => ipcRenderer.invoke('update:download'),
   updInstall: () => ipcRenderer.invoke('update:install'),
+  updPage: (v) => ipcRenderer.invoke('update:page', v),
   onUpdate: (cb) => on('update:state', cb),
 
   clipSet: (data) => ipcRenderer.invoke('clip:set', data),

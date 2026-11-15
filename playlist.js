@@ -80,7 +80,7 @@ function flushLib() {
   clearTimeout(saveTimer);
   saveTimer = 0;
   histTake();
-  window.api.libSave(lib).catch(() => showNotice('Не удалось сохранить плейлисты и библиотеки', true));
+  libSend(histCur);
   if (typeof mcLibSaved === 'function') mcLibSaved(); // макросы: «Добавлено в плейлист»
   if (typeof repoTouch === 'function') repoTouch('lib'); // репозиторий (tools.js)
   if (typeof scStage === 'function') scStage(); // очередь и части песни на сценах — после правки плейлиста (stage.js)
@@ -94,26 +94,87 @@ const HIST_CHARS = 80e6;       // и не больше ~80 млн символо
 let histCur = null;            // снимок того, что сохранено сейчас
 let histUndo = [];
 let histRedo = [];
-const histSnap = () => JSON.stringify(HIST_KEYS.map((k) => lib[k]));
+
+/* Снимок — по кускам: каждая презентация своей строкой JSON (кэш), остальное (списки, темы, макросы…) — одной строкой.
+   Строки презентаций, которые не менялись, берутся из прошлого снимка: 30 шагов отмены большой библиотеки
+   занимают почти столько же памяти, сколько один, а в main (libSend) уходят только изменённые презентации.
+   { items: Map id → строка, rest: строка, size: сколько нового в этом снимке } */
+function histSnap() {
+  const prev = histCur && histCur.items;
+  const items = new Map();
+  let size = 0;
+  for (const id of Object.keys(lib.items || {})) {
+    const s = JSON.stringify(lib.items[id]);
+    const old = prev && prev.get(id);
+    if (old === s) items.set(id, old);
+    else { items.set(id, s); size += s.length; }
+  }
+  const rest = JSON.stringify(HIST_KEYS.map((k) => (k === 'items' ? null : lib[k])));
+  return { items, rest, size: size + rest.length };
+}
+function snapSame(a, b) {
+  if (!a || !b || a.rest !== b.rest || a.items.size !== b.items.size) return false;
+  for (const [id, s] of a.items) if (b.items.get(id) !== s) return false;
+  return true;
+}
 
 function histTake() {
   if (!lib) return;
   const now = histSnap();
-  if (histCur === null || now === histCur) { histCur = now; return; }
+  if (histCur === null) { histCur = now; return; }
+  if (snapSame(now, histCur)) return; // ничего не поменялось — тот же снимок (по нему team.js, remote.js узнают о правках)
   histUndo.push(histCur);
   histRedo = [];
   histCur = now;
-  let size = histUndo.reduce((n, s) => n + s.length, 0);
-  while (histUndo.length > HIST_MAX || (histUndo.length > 5 && size > HIST_CHARS)) size -= histUndo.shift().length;
+  let size = histUndo.reduce((n, s) => n + s.size, 0);
+  while (histUndo.length > HIST_MAX || (histUndo.length > 5 && size > HIST_CHARS)) size -= histUndo.shift().size;
+}
+
+/* Сохранение по кускам: main (lib:patch) хранит строки презентаций, присланные раньше, и получает только изменённые.
+   Раньше каждая правка пересылала и разбирала всю библиотеку (7 МБ у 3000 песен) — ~0,2 с на правку */
+const libGen = newId(); // какой копией строк в main мы пользуемся (после перезапуска окна — новая)
+let libSent = null;     // Map id → строка: что уже лежит в main
+let libSendQ = Promise.resolve();
+function libSend(snap) {
+  if (!window.api.libPatch || !snap) {
+    window.api.libSave(lib).catch(() => showNotice('Не удалось сохранить плейлисты и библиотеки', true));
+    return;
+  }
+  const head = {};
+  for (const k of Object.keys(lib)) if (k !== 'items') head[k] = lib[k];
+  const msg = { gen: libGen, ids: [...snap.items.keys()], head: JSON.stringify(head), shared: (lib.libraries || []).some((l) => l && l.shared) };
+  // Отправки идут по очереди: следующая считает изменения от того, что main точно получил
+  libSendQ = libSendQ.then(async () => {
+    for (let tries = 0; tries < 2; tries++) {
+      const full = !libSent;
+      const items = {};
+      for (const [id, s] of snap.items) if (full || libSent.get(id) !== s) items[id] = s;
+      try {
+        const r = await window.api.libPatch({ ...msg, full, items });
+        if (r && r.resend) { libSent = null; continue; } // main не знает наших строк (перезапуск, другой профиль) — целиком
+        libSent = snap.items;
+        return;
+      } catch {
+        libSent = null;
+        showNotice('Не удалось сохранить плейлисты и библиотеки', true);
+        return;
+      }
+    }
+  });
 }
 
 function histApply(snap) {
   const liveWas = JSON.stringify(lib.themesLive || null);
   const splitsWas = JSON.stringify(lib.verseSplits || null);
-  JSON.parse(snap).forEach((v, i) => { if (v === undefined || v === null) delete lib[HIST_KEYS[i]]; else lib[HIST_KEYS[i]] = v; });
+  JSON.parse(snap.rest).forEach((v, i) => { if (HIST_KEYS[i] === 'items') return; if (v === undefined || v === null) delete lib[HIST_KEYS[i]]; else lib[HIST_KEYS[i]] = v; });
+  // Презентации: неизменные остаются теми же объектами (на них ссылается то, что на экране), остальные — из снимка
+  const was = histCur && histCur.items;
+  const items = {};
+  for (const [id, s] of snap.items) { const cur = lib.items[id]; items[id] = cur && was && was.get(id) === s && JSON.stringify(cur) === s ? cur : JSON.parse(s); }
+  lib.items = items;
   histCur = snap;
-  window.api.libSave(lib).catch(() => showNotice('Не удалось сохранить плейлисты и библиотеки', true));
   if (!findView()) lib.view = lib.playlists[0] ? { kind: 'pl', id: lib.playlists[0].id } : lib.libraries[0] ? { kind: 'lib', id: lib.libraries[0].id } : null;
+  libSend(snap);
   const keys = new Set(viewEntries().map((x) => x.key));
   selItems = selItems.filter((k) => keys.has(k));
   sel = [];
@@ -401,9 +462,9 @@ function renderSide() {
       if (isPoolDrag(e)) return; // файл из медиапула добавит общий обработчик (poolDrop) — в этот список
       // Стихи из «Библии» или источник из медиапула — новой презентацией в конец этого списка
       if (isListDrag(e)) { e.preventDefault(); e.stopPropagation(); dropList(e, kind, x, null); return; }
-      let itemId = e.dataTransfer.getData('application/x-cp-item');
+      let ids = draggedItemIds(e);
       const sl = e.dataTransfer.getData('application/x-cp-slides');
-      if (sl && !itemId) {
+      if (sl && !ids.length) {
         // Слайды на библиотеку — новой презентацией из их копий; в плейлисте новое не создаётся
         if (kind === 'pl') { e.preventDefault(); e.stopPropagation(); showNotice(PL_ONLY_DRAG, true); return; }
         const slides = draggedSlides(sl);
@@ -411,15 +472,12 @@ function renderSide() {
         const p = { id: newId(), type: 'pres', name: 'Слайды', slides: Slides.copy(slides) };
         p.kind = Slides.presKind(p);
         lib.items[p.id] = p;
-        itemId = p.id;
+        ids = [p.id];
       }
-      if (!itemId || !lib.items[itemId]) return;
+      if (!ids.length) return;
       e.preventDefault();
       e.stopPropagation();
-      if (kind === 'pl') x.entries.push({ eid: newId(), item: itemId });
-      else if (!x.items.includes(itemId)) x.items.push(itemId);
-      saveLib();
-      renderService();
+      putItems(kind, x, ids, null);
     });
     return b;
   };
@@ -498,8 +556,7 @@ function renderContent() {
     $('contentList').replaceChildren(empty);
     return;
   }
-  requestAnimationFrame(() => { box.scrollTop = keepTop; });
-  $('contentList').replaceChildren(...entries.map((x) => {
+  const make = (x) => {
     const { key, item } = x;
     const b = Object.assign(document.createElement('button'), { className: 'svc-sub', title: `${item.name} — ${Slides.PRES_NAMES[item.kind] || 'Презентация'}\nЩелчок или Enter — открыть в ленте`, draggable: true });
     b.dataset.key = key;
@@ -520,28 +577,109 @@ function renderContent() {
     b.addEventListener('dblclick', (e) => { if (!e.ctrlKey && !e.shiftKey && !e.metaKey) open(); });
     b.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.ctrlKey && !e.altKey && !e.shiftKey) { e.preventDefault(); e.stopPropagation(); open(); } });
     b.addEventListener('contextmenu', (e) => { e.preventDefault(); presMenu(e, key, item, kind === 'pl'); });
-    // Перетащить на другой плейлист — добавить; внутри плейлиста — поменять порядок
-    b.addEventListener('dragstart', (e) => {
-      e.dataTransfer.setData('application/x-cp-item', item.id);
-      if (kind === 'pl') e.dataTransfer.setData('application/x-cp-entry', key);
-      e.dataTransfer.effectAllowed = 'copyMove';
+    // Перетащить на другой плейлист — добавить (выделенные — все сразу); внутри плейлиста — поменять порядок
+    b.addEventListener('dragstart', (e) => itemDragStart(e, key, item, viewKey(), kind === 'pl'));
+    // В плейлисте пункт можно перетащить на другое место; стихи из «Библии» и пункты из другого списка, брошенные на пункт,
+    // встают перед ним; слайды — в конец этой презентации (копией)
+    const vk = viewKey();
+    b.addEventListener('dragover', (e) => {
+      if ((kind === 'pl' && isOwnEntryDrag(e, vk)) || isListDrag(e) || isForeignItemDrag(e, vk) || isSlidesDrag(e)) { e.preventDefault(); e.stopPropagation(); b.classList.add('drop'); }
     });
-    // В плейлисте пункт можно перетащить на другое место; стихи из «Библии», брошенные на пункт, встают перед ним
-    b.addEventListener('dragover', (e) => { if ((kind === 'pl' && e.dataTransfer.types.includes('application/x-cp-entry')) || isListDrag(e)) { e.preventDefault(); e.stopPropagation(); b.classList.add('drop'); } });
     b.addEventListener('dragleave', () => b.classList.remove('drop'));
     b.addEventListener('drop', (e) => {
       b.classList.remove('drop');
       $('contentBox').classList.remove('drop');
       if (isListDrag(e)) { e.preventDefault(); e.stopPropagation(); dropList(e, kind, v, key); return; }
+      if (isSlidesDrag(e)) { e.preventDefault(); e.stopPropagation(); dropSlides(e.dataTransfer.getData('application/x-cp-slides'), item, null); return; }
+      if (isForeignItemDrag(e, vk)) { e.preventDefault(); e.stopPropagation(); putItems(kind, v, draggedItemIds(e), key); return; }
       const from = kind === 'pl' && e.dataTransfer.getData('application/x-cp-entry');
       if (!from) return;
       e.preventDefault();
       e.stopPropagation();
-      reorderEntry(from, key);
+      reorderEntry(draggedEntryKeys(e), key);
     });
     return b;
-  }));
+  };
+  contentFill(entries, make, keepTop);
+}
+
+/* «Содержание» большой библиотеки (тысячи песен): на странице только видимые строки и запас вокруг,
+   остальные дорисовываются при прокрутке. Тысячи кнопок замедляли всё окно: любая правка перестраивала
+   список ~0,5 с, а смена слайда перебирала все строки. Маленькие списки рисуются целиком, как раньше */
+const VIRT_MIN = 150;   // с какого числа пунктов рисовать только видимые
+const VIRT_PAD = 12;    // строк запаса сверху и снизу
+let contentRows = null; // { entries, make, rowH, from, to }
+
+function contentFill(entries, make, keepTop) {
+  const list = $('contentList'), box = $('contentBox');
+  if (entries.length < VIRT_MIN) {
+    contentRows = null;
+    list.style.paddingTop = list.style.paddingBottom = '';
+    list.replaceChildren(...entries.map(make));
+    box.scrollTop = keepTop;
+    requestAnimationFrame(() => { box.scrollTop = keepTop; });
+    return;
+  }
+  contentRows = { entries, make, rowH: (contentRows && contentRows.rowH) || 0, from: -1, to: -1 };
+  // Высота строки (с промежутком) — по двум пробным строкам; одна на все: строки «Содержания» одинаковые
+  if (!contentRows.rowH && box.offsetParent) {
+    const a = make(entries[0]), b = make(entries[1]);
+    list.style.paddingTop = list.style.paddingBottom = '';
+    list.replaceChildren(a, b);
+    contentRows.rowH = b.offsetTop - a.offsetTop || a.offsetHeight || 30;
+  }
+  if (!contentRows.rowH) contentRows.rowH = 30; // панель скрыта — уточним, когда покажется
+  list.style.paddingBottom = entries.length * contentRows.rowH + 'px'; // сначала высота — потом прокрутка встаёт куда надо
+  list.replaceChildren();
   box.scrollTop = keepTop;
+  contentPaint(true);
+  requestAnimationFrame(() => { if (Math.abs(box.scrollTop - keepTop) > 1) { box.scrollTop = keepTop; contentPaint(); } });
+}
+
+// Нарисовать строки, попавшие в окно «Содержания» (и запас вокруг)
+function contentPaint(force) {
+  const r = contentRows;
+  if (!r) return;
+  const list = $('contentList'), box = $('contentBox');
+  if (box.hidden) return;
+  const n = r.entries.length, h = r.rowH;
+  const top = box.scrollTop - list.offsetTop;
+  const from = Math.max(0, Math.floor(top / h) - VIRT_PAD);
+  const to = Math.min(n, Math.ceil((top + box.clientHeight) / h) + VIRT_PAD);
+  if (!force && from === r.from && to === r.to) return;
+  // Строка под мышью при перетаскивании или в фокусе — не пересоздаём (иначе пропадёт перетаскивание и Tab)
+  const keep = new Map();
+  for (const el of list.children) keep.set(el.dataset.key, el);
+  r.from = from;
+  r.to = to;
+  const rows = r.entries.slice(from, to).map((x) => (!force && keep.get(x.key)) || r.make(x));
+  list.style.paddingTop = from * h + 'px';
+  list.style.paddingBottom = (n - to) * h + 'px';
+  list.replaceChildren(...rows);
+  paintSubs();
+}
+$('contentBox').addEventListener('scroll', () => { if (contentRows) contentPaint(); }, { passive: true });
+new ResizeObserver(() => {
+  if (!contentRows) return;
+  // Панель показали или поменялся масштаб — перемерить строку
+  const a = $('contentList').querySelector('.svc-sub');
+  if (a && a.nextElementSibling) { const h = a.nextElementSibling.offsetTop - a.offsetTop; if (h > 0 && h !== contentRows.rowH) { contentRows.rowH = h; return contentPaint(true); } }
+  contentPaint();
+}).observe($('contentBox'));
+
+// Строка пункта в «Содержании»: в большом списке её может не быть на странице — сначала прокрутить к ней
+function contentRowEl(key) {
+  const q = () => document.querySelector(`#contentList .svc-sub[data-key="${CSS.escape(key)}"]`);
+  let el = q();
+  if (!el && contentRows) {
+    const i = contentRows.entries.findIndex((x) => x.key === key);
+    if (i < 0) return null;
+    const box = $('contentBox');
+    box.scrollTop = $('contentList').offsetTop + i * contentRows.rowH - box.clientHeight / 2;
+    contentPaint();
+    el = q();
+  }
+  return el;
 }
 
 /* ----- Выделение пунктов «Содержания»: Ctrl+щелчок — по одному, Shift+щелчок — диапазон, Ctrl+A — все ----- */
@@ -587,16 +725,63 @@ function selectAllItems() {
 // Выделенные пункты (презентации) открытого плейлиста или библиотеки, по порядку
 const selectedItems = () => viewEntries().filter((x) => isItemSelected(x.key));
 
-// Поменять порядок в плейлисте: запись from встаёт на место записи to
+// Поменять порядок в плейлисте: запись from (или несколько — по порядку) встаёт на место записи to
 function reorderEntry(from, to, view = lib.view) {
-  const list = findView(view).entries;
-  const a = list.findIndex((x) => x.eid === from);
+  itemDrag = null;
+  const v = findView(view);
+  const keys = new Set(Array.isArray(from) ? from : [from]);
+  const list = v.entries;
+  const a = list.findIndex((x) => keys.has(x.eid));
   const b = list.findIndex((x) => x.eid === to);
-  if (a < 0 || b < 0 || a === b) return updatePlaylistLive();
-  const [moved] = list.splice(a, 1);
-  list.splice(b, 0, moved);
+  if (a < 0 || b < 0 || keys.has(to)) return updatePlaylistLive();
+  const moved = list.filter((x) => keys.has(x.eid));
+  const rest = list.filter((x) => !keys.has(x.eid));
+  // Тянут вниз — встают после to, вверх — перед ним (как раньше для одной записи)
+  rest.splice(rest.findIndex((x) => x.eid === to) + (a < b ? 1 : 0), 0, ...moved);
+  v.entries = rest;
   saveLib();
   renderService();
+}
+
+/* ----- Перетаскивание пунктов: выделенные в «Содержании» тянутся все сразу, по порядку списка ----- */
+
+let itemDrag = null; // { from: ключ списка, ids: [id презентаций], keys: [ключи пунктов] }
+
+function itemDragStart(e, key, item, vk, isPl) {
+  const many = vk === viewKey() && isItemSelected(key) && selItems.length > 1;
+  const list = many ? selectedItems() : [{ key, item }];
+  itemDrag = { from: vk, ids: list.map((x) => x.item.id), keys: list.map((x) => x.key) };
+  e.dataTransfer.setData('application/x-cp-item', item.id);
+  if (isPl) e.dataTransfer.setData('application/x-cp-entry', key);
+  e.dataTransfer.effectAllowed = 'copyMove';
+  if (many) flashStatus(`Перетаскивается пунктов: ${list.length}`);
+}
+const isItemDrag = (e) => e.dataTransfer.types.includes('application/x-cp-item');
+// Пункт тянут из другого списка (не переставляют внутри своего)
+const isForeignItemDrag = (e, vk) => isItemDrag(e) && (itemDrag ? itemDrag.from !== vk : !e.dataTransfer.types.includes('application/x-cp-entry'));
+const isOwnEntryDrag = (e, vk) => e.dataTransfer.types.includes('application/x-cp-entry') && (!itemDrag || itemDrag.from === vk);
+const isSlidesDrag = (e) => e.dataTransfer.types.includes('application/x-cp-slides');
+// id перетаскиваемых презентаций (все выделенные, если тянули одну из них)
+function draggedItemIds(e) {
+  const first = e.dataTransfer.getData('application/x-cp-item');
+  if (!first) return [];
+  const ids = itemDrag && itemDrag.ids.includes(first) ? itemDrag.ids : [first];
+  return ids.filter((id) => lib.items[id]);
+}
+function draggedEntryKeys(e) {
+  const first = e.dataTransfer.getData('application/x-cp-entry');
+  return itemDrag && itemDrag.keys.includes(first) ? itemDrag.keys : [first];
+}
+// Поставить несколько презентаций в список (перед beforeKey или в конец); в библиотеке — без повторов
+function putItems(kind, x, ids, beforeKey) {
+  itemDrag = null;
+  const add = kind === 'pl' ? ids : ids.filter((id, i) => !x.items.includes(id) && ids.indexOf(id) === i);
+  if (!add.length) { flashStatus(`Уже есть в «${x.name}»`); return 0; }
+  for (const id of add) putItem(kind, x, id, beforeKey);
+  saveLib();
+  renderService();
+  flashStatus(add.length > 1 ? `${add.length} шт. → «${x.name}»` : `«${lib.items[add[0]].name}» → «${x.name}»`);
+  return add.length;
 }
 
 /* ----- Лента: презентации по порядку, у каждой её слайды ----- */
@@ -684,11 +869,7 @@ function renderFeed() {
     });
     head.addEventListener('contextmenu', (e) => { e.preventDefault(); browseWork(); presMenu(e, key, item, isPl); });
     // Заголовок: на плейлист слева — добавить; внутри плейлиста — поменять порядок
-    head.addEventListener('dragstart', (e) => {
-      e.dataTransfer.setData('application/x-cp-item', item.id);
-      if (isPl) e.dataTransfer.setData('application/x-cp-entry', key);
-      e.dataTransfer.effectAllowed = 'copyMove';
-    });
+    head.addEventListener('dragstart', (e) => itemDragStart(e, key, item, workKey(), isPl));
     // Слайды, брошенные на заголовок, встают в конец презентации
     head.addEventListener('dragover', (e) => { if (e.dataTransfer.types.includes('application/x-cp-slides')) { e.preventDefault(); e.stopPropagation(); head.classList.add('drop'); } });
     head.addEventListener('dragleave', () => head.classList.remove('drop'));
@@ -700,30 +881,50 @@ function renderFeed() {
       e.stopPropagation();
       dropSlides(data, item, null);
     });
-    // Стихи или источник, брошенные на пункт ленты, встают перед ним
-    box.addEventListener('dragover', (e) => { if (isListDrag(e)) { e.preventDefault(); e.stopPropagation(); box.classList.add('drop-item'); } });
+    const grid = Object.assign(document.createElement('div'), { className: 'svc-slides' });
+    // Стихи, источник или пункты из другого списка, брошенные на пункт ленты, встают перед ним
+    const wk = workKey();
+    box.addEventListener('dragover', (e) => { if (isListDrag(e) || isForeignItemDrag(e, wk)) { e.preventDefault(); e.stopPropagation(); box.classList.add('drop-item'); } });
     if (!isPl) box.addEventListener('dragleave', () => box.classList.remove('drop-item'));
     box.addEventListener('drop', (e) => {
+      if (isForeignItemDrag(e, wk)) {
+        box.classList.remove('drop-item');
+        e.preventDefault();
+        e.stopPropagation();
+        putItems(work.kind, findView(work), draggedItemIds(e), key);
+        return;
+      }
       if (!isListDrag(e)) return;
       box.classList.remove('drop-item');
       e.preventDefault();
       e.stopPropagation();
       dropList(e, work.kind, findView(work), key);
     });
+    // Слайды, брошенные на свободное место презентации (между слайдами, под ними), встают в её конец
+    box.addEventListener('dragover', (e) => { if (isSlidesDrag(e)) { e.preventDefault(); e.stopPropagation(); box.classList.add('drop-slides'); } });
+    box.addEventListener('dragleave', (e) => { if (!box.contains(e.relatedTarget)) box.classList.remove('drop-slides'); });
+    box.addEventListener('drop', (e) => {
+      box.classList.remove('drop-slides');
+      if (!isSlidesDrag(e)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      dropSlides(e.dataTransfer.getData('application/x-cp-slides'), item, null);
+    });
+    // Правая кнопка по свободному месту презентации — её меню («Вставить слайды в конец» и др.)
+    grid.addEventListener('contextmenu', (e) => { if (e.target.closest('.sl')) return; e.preventDefault(); browseWork(); presMenu(e, key, item, isPl); });
     if (isPl) {
-      box.addEventListener('dragover', (e) => { if (e.dataTransfer.types.includes('application/x-cp-entry')) { e.preventDefault(); e.stopPropagation(); box.classList.add('drop-item'); } });
+      box.addEventListener('dragover', (e) => { if (isOwnEntryDrag(e, wk)) { e.preventDefault(); e.stopPropagation(); box.classList.add('drop-item'); } });
       box.addEventListener('dragleave', () => box.classList.remove('drop-item'));
       box.addEventListener('drop', (e) => {
         box.classList.remove('drop-item');
         const from = e.dataTransfer.getData('application/x-cp-entry');
-        if (!from) return;
+        if (!from || !isOwnEntryDrag(e, wk)) return;
         e.preventDefault();
         e.stopPropagation();
-        reorderEntry(from, key, work);
+        reorderEntry(draggedEntryKeys(e), key, work);
       });
     }
 
-    const grid = Object.assign(document.createElement('div'), { className: 'svc-slides' });
     if (!item.slides.length) grid.append(Object.assign(document.createElement('div'), { className: 'svc-noslides', textContent: 'Слайдов нет — вставьте (Ctrl+V) или перетащите сюда' }));
     item.slides.forEach((slide) => {
       const el = slideThumb(item, slide);
@@ -735,8 +936,10 @@ function renderFeed() {
       el.addEventListener('click', (e) => slideClick(e, key, slide.id));
       el.addEventListener('contextmenu', (e) => { e.preventDefault(); slideMenu(e, key, slide.id); });
       el.addEventListener('dragstart', (e) => {
-        const sids = isSelected(key, slide.id) ? sel.filter((x) => x.key === key).map((x) => x.sid) : [slide.id];
-        e.dataTransfer.setData('application/x-cp-slides', JSON.stringify({ view: workKey(), key, sids }));
+        // Выделенные слайды (и из других презентаций ленты) — все, в порядке ленты
+        const list = isSelected(key, slide.id) ? flatSlides().filter((x) => isSelected(x.key, x.sid)) : [{ key, sid: slide.id }];
+        e.dataTransfer.setData('application/x-cp-slides', JSON.stringify({ view: workKey(), key, sids: list.filter((x) => x.key === key).map((x) => x.sid), list }));
+        if (list.length > 1) flashStatus(`Перетаскивается слайдов: ${list.length}`);
         e.dataTransfer.effectAllowed = 'copyMove';
       });
       el.addEventListener('dragover', (e) => { if (e.dataTransfer.types.includes('application/x-cp-slides')) { e.preventDefault(); e.stopPropagation(); el.classList.add('drop'); } });
@@ -773,25 +976,33 @@ function renderService() {
 function updatePlaylistLive() {
   if (!lib) return;
   const on = plShown && plShown.view === workKey();      // лента — рабочий список
-  const onSide = plShown && plShown.view === viewKey();  // «Содержание» — список, открытый слева
   const same = workIsView();
   document.querySelectorAll('#svcFeed .sl').forEach((el) => {
     el.classList.toggle('live', !!on && el.dataset.key === plShown.key && el.dataset.sid === plShown.sid);
     el.classList.toggle('live-ov', Object.values(ovShown).some((o) => o.view === workKey() && o.key === el.dataset.key && o.sid === el.dataset.sid));
     el.classList.toggle('sel', isSelected(el.dataset.key, el.dataset.sid));
   });
+  const picked = new Set(selItems);
   document.querySelectorAll('#svcFeed .svc-item').forEach((el) => {
     el.classList.toggle('live-item', !!on && el.dataset.key === plShown.key);
-    el.classList.toggle('sel-item', same && isItemSelected(el.dataset.key));
+    el.classList.toggle('sel-item', same && picked.has(el.dataset.key));
   });
-  const many = selItems.length > 1;
+  paintSubs(picked);
+}
+
+// Подсветка строк «Содержания»: на экране, открыт в ленте, выделен
+function paintSubs(picked = new Set(selItems)) {
+  const onSide = plShown && plShown.view === viewKey();
+  const same = workIsView();
+  const all = feedAll();
+  const many = picked.size > 1;
   document.querySelectorAll('.svc-sub').forEach((el) => {
     const k = el.dataset.key;
     el.classList.toggle('live', !!onSide && k === plShown.key);
     // Открыт в ленте (рабочий) — рамка; выделен для просмотра, но не открыт — подсветка выбора
-    const open = same && (feedAll() ? isItemSelected(k) : k === openKey);
+    const open = same && (all ? picked.has(k) : k === openKey);
     el.classList.toggle('open', open);
-    el.classList.toggle('picked', isItemSelected(k) && (many || tab === 'bible' || !open));
+    el.classList.toggle('picked', picked.has(k) && (many || tab === 'bible' || !open));
   });
 }
 
@@ -1093,6 +1304,8 @@ async function svcPaste(target) {
   let item;
   let after = null;
   if (target) ({ item, after } = target);
+  // Выделена одна презентация (щелчок по шапке, по свободному месту в ленте или по пункту «Содержания») — в её конец
+  else if (selFocus === 'items' && selItems.length === 1 && entryByKey(selItems[0])) item = entryByKey(selItems[0]).item;
   else {
     const last = selectedSlides().pop();
     if (last) { item = last.item; after = last.slide.id; }
@@ -1171,23 +1384,29 @@ function selectAllSlides() {
   flashStatus(`Выделено слайдов: ${sel.length}`);
 }
 
-// Слайды, которые тянут мышью
-function draggedSlides(data) {
+// Слайды, которые тянут мышью: [{ item, slide }] по порядку ленты (list — и из разных презентаций)
+function draggedList(data) {
   try {
     const d = JSON.parse(data);
-    const e = entryByKey(d.key, keyView(d.view));
-    return e ? d.sids.map((sid) => e.item.slides.find((s) => s.id === sid)).filter(Boolean) : [];
+    const view = keyView(d.view);
+    const list = Array.isArray(d.list) ? d.list : d.sids.map((sid) => ({ key: d.key, sid }));
+    const out = [];
+    for (const { key, sid } of list) {
+      const e = entryByKey(key, view);
+      const slide = e && e.item.slides.find((s) => s.id === sid);
+      if (slide) out.push({ item: e.item, slide });
+    }
+    return out;
   } catch { return []; }
 }
+const draggedSlides = (data) => draggedList(data).map((x) => x.slide);
 
-// Бросили слайды: внутри той же презентации — переставить, в другую — скопировать
+// Бросили слайды: внутри той же презентации — переставить, в другую — скопировать (исходные остаются на месте)
 function dropSlides(data, target, beforeSid) {
-  let d;
-  try { d = JSON.parse(data); } catch { return; }
-  const src = entryByKey(d.key, keyView(d.view));
-  const slides = draggedSlides(data);
-  if (!src || !slides.length) return;
-  if (src.item === target) {
+  const list = draggedList(data);
+  const slides = list.map((x) => x.slide);
+  if (!slides.length) return;
+  if (list.every((x) => x.item === target)) {
     if (slides.some((s) => s.id === beforeSid)) return;
     target.slides = target.slides.filter((s) => !slides.includes(s));
     const at = beforeSid ? target.slides.findIndex((s) => s.id === beforeSid) : target.slides.length;
@@ -1196,18 +1415,21 @@ function dropSlides(data, target, beforeSid) {
     const copies = Slides.copy(slides);
     const at = beforeSid ? target.slides.findIndex((s) => s.id === beforeSid) : target.slides.length;
     target.slides.splice(at < 0 ? target.slides.length : at, 0, ...copies);
+    flashStatus(`Скопировано слайдов: ${copies.length} → «${target.name}» · Ctrl+Z — вернуть`);
   }
   touched(target);
   renderService();
 }
 
-// Короткое сообщение внизу слева (вместо всплывающих окон), само исчезает
-let flashTimer = 0;
-function flashStatus(text) {
-  const st = $('status');
-  clearTimeout(flashTimer);
-  st.textContent = text;
-  flashTimer = setTimeout(() => { st.textContent = ''; }, 1800);
+// Короткое сообщение о действии. Островок (notify.js) — только когда есть что сказать (решение владельца):
+// ошибка или «не получилось» (вид error/warn по началу текста) или important — событие не от самого человека
+// (группа, телефон, обновление). Обычный отклик на щелчок («вывод включён», «скопировано», «выделено…») — без островка.
+function flashStatus(text, important) {
+  if (!text) return;
+  const t = String(text);
+  const kind = Notify.guessKind(t);
+  if (!important && kind !== 'error' && kind !== 'warn') return;
+  Notify.show({ text: t, kind: important && kind === 'ok' ? 'info' : kind });
 }
 
 // Клавиши плейлиста на вкладке «Экран» — раньше общих горячих клавиш
@@ -1499,7 +1721,7 @@ function gotoItem(kind, id, itemId) {
   if (!x) return;
   openEntry(x.key);
   updatePlaylistLive();
-  const el = document.querySelector(`#contentList .svc-sub[data-key="${CSS.escape(x.key)}"]`);
+  const el = contentRowEl(x.key);
   if (!el) return;
   el.scrollIntoView({ block: 'center' });
   el.focus();
@@ -1861,29 +2083,24 @@ function dropList(e, kind, x, beforeKey) {
   return srcPut(s, kind, x, beforeKey);
 }
 
-// Готовая презентация из «Содержания» библиотеки (не запись плейлиста — та переставляется)
-const isLibItemDrag = (e) => e.dataTransfer.types.includes('application/x-cp-item') && !e.dataTransfer.types.includes('application/x-cp-entry');
-
 // Пустое место «Содержания» и ленты — стихи, источник или готовая презентация в конец списка
 // («Содержание» — открытый слева список, лента — рабочий: можно тянуть из библиотеки прямо в ленту плейлиста)
 for (const id of ['contentBox', 'svcFeed']) {
   const el = $(id);
   const target = () => (id === 'svcFeed' && work && findView(work) ? { kind: work.kind, v: findView(work) } : findView() ? { kind: lib.view.kind, v: findView() } : null);
-  el.addEventListener('dragover', (e) => { if ((isListDrag(e) || isPoolDrag(e) || isLibItemDrag(e)) && target()) { e.preventDefault(); el.classList.add('drop'); } });
+  const tk = (t) => t.kind + ':' + t.v.id;
+  el.addEventListener('dragover', (e) => { const t = target(); if (t && (isListDrag(e) || isPoolDrag(e) || isForeignItemDrag(e, tk(t)))) { e.preventDefault(); el.classList.add('drop'); } });
   el.addEventListener('dragleave', (e) => { if (!el.contains(e.relatedTarget)) el.classList.remove('drop'); });
   el.addEventListener('drop', (e) => {
     el.classList.remove('drop');
     const t = target();
     if (!t) return;
-    if (isLibItemDrag(e)) {
-      const itemId = e.dataTransfer.getData('application/x-cp-item');
-      if (!lib.items[itemId]) return;
+    // Пункты из другого списка (библиотека → плейлист, плейлист → библиотека, между плейлистами) — все выделенные
+    if (isForeignItemDrag(e, tk(t))) {
+      const ids = draggedItemIds(e);
+      if (!ids.length) return;
       e.preventDefault();
-      if (t.kind !== 'pl' && t.v.items.includes(itemId)) return;
-      putItem(t.kind, t.v, itemId, null);
-      saveLib();
-      renderService();
-      flashStatus(`«${lib.items[itemId].name}» → «${t.v.name}»`);
+      putItems(t.kind, t.v, ids, null);
       return;
     }
     if (!isListDrag(e)) return;
@@ -2221,7 +2438,8 @@ function rbStart(e) {
   if (!e.ctrlKey && !e.metaKey) { selItems = []; updatePlaylistLive(); }
   const rb = Object.assign(document.createElement('div'), { className: 'rubber-band' });
   document.body.append(rb);
-  rbState = { x0: e.clientX, y0: e.clientY, el: rb };
+  const box = e.target.closest('.svc-item');
+  rbState = { x0: e.clientX, y0: e.clientY, el: rb, key: box && box.dataset.key, ctrl: e.ctrlKey || e.metaKey };
 }
 
 function rbMove(e) {
@@ -2249,10 +2467,21 @@ function rbMove(e) {
   updatePlaylistLive();
 }
 
-function rbEnd() {
+function rbEnd(e) {
   if (!rbState) return;
   rbState.el.remove();
+  const st = rbState;
   rbState = null;
+  // Просто щелчок (без рамки) по свободному месту презентации — выделить её, как щелчком по шапке:
+  // Ctrl+V вставит скопированные слайды в её конец
+  if (st.key && Math.abs(e.clientX - st.x0) < 4 && Math.abs(e.clientY - st.y0) < 4) {
+    browseWork();
+    selItems = st.ctrl ? (isItemSelected(st.key) ? selItems.filter((k) => k !== st.key) : selItems.concat([st.key])) : [st.key];
+    itemAnchor = st.key;
+    selFocus = 'items';
+    sel = [];
+    updatePlaylistLive();
+  }
 }
 
 // Заставка ждёт его (splash.js). Начинаем, когда подключены все скрипты: лента нужна songs.js

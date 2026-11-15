@@ -1380,37 +1380,95 @@ app.whenReady().then(() => {
   ipcMain.handle('app:version', () => app.getVersion());
 
   /* ---------- Обновление программы: новые версии с GitHub (Releases), только в установленной программе.
-     Скачивается само, ставится при закрытии программы или по кнопке «Перезапустить и обновить». ---------- */
+     Само ничего не качается: окно говорит, можно ли (`update:config` ← settings.updAuto).
+     auto — проверка при запуске и раз в 6 часов (таймер в окне), найденная версия качается в фоне и ставится
+       при закрытии программы (это и есть согласие — галочка «Обновлять автоматически»).
+     без auto — только кнопка «Проверить»; скачать — по кнопке «Скачать и установить», поставить — «Перезапустить и обновить».
+     Состояние upd: { state: dev|checking|none|available|loading|ready|error, version, percent, error,
+       phase: check|download|install — где ошибка, manual — проверку запросил человек, info — что нового }. ---------- */
   let upd = { state: app.isPackaged ? '' : 'dev' };
   let au = null;
+  let updAuto = false;     // из настроек окна
+  let updWanted = false;   // человек сам нажал «Скачать и установить»
+  const updErr = (err) => String((err && err.message) || err || 'ошибка').split('\n')[0].slice(0, 300);
   const updSend = (s) => {
     upd = { ...upd, ...s };
     if (control && !control.isDestroyed()) control.webContents.send('update:state', upd);
   };
+  // Что нового: GitHub отдаёт HTML описания выпуска — в окно идёт только текст (без тегов и ссылок)
+  const notesText = (n) => {
+    if (Array.isArray(n)) return n.map((x) => (x.version ? `Версия ${x.version}\n` : '') + notesText(x.note)).join('\n\n');
+    return String(n || '')
+      .replace(/<\s*br\s*\/?>/gi, '\n').replace(/<\s*li[^>]*>/gi, '• ').replace(/<\/\s*(p|li|h\d|div|ul|ol)\s*>/gi, '\n')
+      .replace(/<[^>]*>/g, '')
+      .replace(/&nbsp;/g, ' ').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, '&')
+      .replace(/\n{3,}/g, '\n\n').trim().slice(0, 20000);
+  };
+  const updInfo = (i) => ({ version: i.version, name: i.releaseName || '', date: i.releaseDate || '', notes: notesText(i.releaseNotes) });
+  const updDownload = () => {
+    if (!au) return;
+    updSend({ state: 'loading', percent: 0, error: '' });
+    au.downloadUpdate().catch((err) => updSend({ state: 'error', phase: 'download', error: updErr(err) }));
+  };
   if (app.isPackaged) {
     try {
       au = require('electron-updater').autoUpdater;
-      au.autoDownload = true;
-      au.autoInstallOnAppQuit = true;
+      au.autoDownload = false;          // качаем только с разрешения (updAuto или кнопка)
+      au.autoInstallOnAppQuit = false;
       au.on('checking-for-update', () => updSend({ state: 'checking', error: '' }));
       au.on('update-not-available', () => updSend({ state: 'none' }));
-      au.on('update-available', (i) => updSend({ state: 'loading', version: i.version, percent: 0 }));
+      au.on('update-available', (i) => {
+        updSend({ state: 'available', version: i.version, info: updInfo(i), percent: 0 });
+        if (updAuto || updWanted) updDownload();
+      });
       au.on('download-progress', (p) => updSend({ state: 'loading', percent: Math.round(p.percent || 0) }));
-      au.on('update-downloaded', (i) => updSend({ state: 'ready', version: i.version }));
-      au.on('error', (err) => updSend({ state: 'error', error: String((err && err.message) || err) }));
-    } catch (err) { au = null; upd = { state: 'error', error: String(err && err.message || err) }; }
+      au.on('update-downloaded', (i) => {
+        au.autoInstallOnAppQuit = updAuto || updWanted;
+        updSend({ state: 'ready', version: i.version, info: upd.info || updInfo(i) });
+      });
+      au.on('error', (err) => updSend({ state: 'error', phase: upd.state === 'loading' ? 'download' : (upd.phase === 'install' ? 'install' : 'check'), error: updErr(err) }));
+    } catch (err) { au = null; upd = { state: 'error', phase: 'check', error: updErr(err) }; }
   }
   ipcMain.handle('update:get', () => upd);
-  ipcMain.handle('update:check', () => {
-    if (!au) { updSend({}); return false; }
-    if (upd.state === 'checking' || upd.state === 'loading' || upd.state === 'ready') { updSend({}); return true; }
-    au.checkForUpdates().catch((err) => updSend({ state: 'error', error: String((err && err.message) || err) }));
+  ipcMain.handle('update:config', (_e, c) => {
+    updAuto = !!(c && c.auto);
+    if (au) {
+      if (upd.state === 'ready') au.autoInstallOnAppQuit = updAuto || updWanted;
+      if (updAuto && upd.state === 'available') updDownload();
+    }
+    return true;
+  });
+  ipcMain.handle('update:check', (_e, o) => {
+    const manual = !!(o && o.manual);
+    if (!au) { updSend({ manual }); return false; }
+    if (upd.state === 'checking' || upd.state === 'loading' || upd.state === 'ready') { updSend({ manual }); return true; }
+    updSend({ manual, phase: 'check' });
+    au.checkForUpdates().catch((err) => updSend({ state: 'error', phase: 'check', error: updErr(err) }));
+    return true;
+  });
+  // «Скачать и установить» — с согласия человека
+  ipcMain.handle('update:download', () => {
+    if (!au) return false;
+    updWanted = true;
+    if (upd.state === 'available' || (upd.state === 'error' && upd.phase === 'download')) { updDownload(); return true; }
+    if (upd.state === 'loading' || upd.state === 'ready') { updSend({}); return true; }
+    au.checkForUpdates().catch((err) => updSend({ state: 'error', phase: 'check', error: updErr(err) }));
     return true;
   });
   ipcMain.handle('update:install', () => {
     if (!au || upd.state !== 'ready') return false;
     skipCloseAsk = true; // без вопроса «Вы точно хотите закрыть?»
-    setImmediate(() => au.quitAndInstall(true, true)); // тихо поставить и снова запустить
+    updSend({ phase: 'install' });
+    setImmediate(() => {
+      try { au.quitAndInstall(true, true); } // тихо поставить и снова запустить
+      catch (err) { skipCloseAsk = false; updSend({ state: 'error', phase: 'install', error: updErr(err) }); }
+    });
+    return true;
+  });
+  // Страница выпуска на GitHub (адрес свой, из окна приходит только номер версии)
+  ipcMain.handle('update:page', (_e, v) => {
+    const ver = String(v || '').replace(/[^0-9A-Za-z.\-]/g, '');
+    shell.openExternal('https://github.com/tanako228/multiplayerSHOW/releases' + (ver ? '/tag/v' + ver : ''));
     return true;
   });
 
@@ -2317,6 +2375,35 @@ app.whenReady().then(() => {
     // Пишется через временный файл и переименование (profiles.js), чтобы при сбое не потерять плейлисты
     const res = profiles.save(data);
     team.libSaved(data); // песни для телефонов группы (teamapi.js) — разберёт, когда телефон спросит
+    return res;
+  });
+
+  // Сохранение по кускам (playlist.js: libSend): окно присылает только изменённые презентации (строками JSON),
+  // остальные берутся из кэша — что присылали раньше. Без общих библиотек файл пишется готовым текстом, без разбора
+  let libCache = { gen: null, items: new Map() };
+  ipcMain.handle('lib:patch', (_e, p) => {
+    if (profSwitching) return { ok: false, skipped: true };
+    if (!p || !Array.isArray(p.ids) || typeof p.head !== 'string') return { ok: false };
+    if (p.full) libCache = { gen: p.gen, items: new Map() };
+    else if (p.gen !== libCache.gen) return { resend: true };
+    for (const [id, s] of Object.entries(p.items || {})) libCache.items.set(id, s);
+    const parts = [];
+    for (const id of p.ids) {
+      const s = libCache.items.get(id);
+      if (s === undefined) { libCache.gen = null; return { resend: true }; }
+      parts.push(JSON.stringify(id) + ':' + s);
+    }
+    if (libCache.items.size > p.ids.length) { const keep = new Set(p.ids); for (const id of [...libCache.items.keys()]) if (!keep.has(id)) libCache.items.delete(id); }
+    const text = '{"items":{' + parts.join(',') + '}' + (p.head.length > 2 ? ',' + p.head.slice(1) : '}');
+    if (!p.shared && profiles.plain()) {
+      const res = profiles.saveText(text);
+      team.libSaved(text); // разберёт, когда телефон спросит
+      return res;
+    }
+    // Есть общие библиотеки — разбор, что куда (profiles.save), как раньше
+    const data = JSON.parse(text);
+    const res = profiles.save(data);
+    team.libSaved(data);
     return res;
   });
 

@@ -247,6 +247,16 @@ function store(root) {
     return { ok: true, conflicts };
   }
 
+  // Профиль без общих библиотек и категорий — save() только записал бы файл как есть: можно писать готовый текст (lib:patch)
+  const plain = (pid = m().active) => !Object.keys(m().libs).some((l) => members(l).includes(pid)) && !catsOn(pid).length;
+  function saveText(text, pid = m().active) {
+    const f = libFile(pid);
+    fs.mkdirSync(path.dirname(f), { recursive: true });
+    fs.writeFileSync(f + '.tmp', text);
+    fs.renameSync(f + '.tmp', f); // при сбое не останется половины файла
+    return { ok: true, conflicts: [] };
+  }
+
   // Общие презентации, которых нет ни в одной общей библиотеке и на которые не ссылается ни один профиль, — убрать.
   // Профиль pid ещё не записан — его библиотека передаётся (outPid)
   function gc(pid, outPid) {
@@ -415,7 +425,7 @@ function store(root) {
     return true;
   }
 
-  return { MAIN, CATS, libFile, lsFile, load, save, state, catalog, create, rename, remove, setActive, connect, disconnect, setCat, active: () => m().active, _shared: S };
+  return { MAIN, CATS, libFile, lsFile, load, save, plain, saveText, state, catalog, create, rename, remove, setActive, connect, disconnect, setCat, active: () => m().active, _shared: S };
 }
 
 module.exports = { store, unionCat, freshLib, CATS };

@@ -234,3 +234,17 @@ test('unionCat: своё не теряется', () => {
   assert.deepEqual(u.themes.map((t) => t.id), ['a', 'b']);
   assert.deepEqual(u.themesLive, { a: 1, b: 2 });
 });
+
+test('сохранение готовым текстом (lib:patch): только у профиля без общих данных', () => {
+  const root = tmp();
+  const st = P.store(root);
+  st.load(); st.save(mainLib());
+  assert.equal(st.plain(), true);
+  const data = mainLib();
+  data.items.s1.name = 'Изменена';
+  st.saveText(JSON.stringify(data));
+  assert.deepEqual(st.load(), data);
+  // подключили общую библиотеку — дальше только через save(), который разбирает, что куда
+  st.create('Вечер', { libs: ['L1'] });
+  assert.equal(st.plain(), false);
+});

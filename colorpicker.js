@@ -43,6 +43,8 @@ const ColorPicker = (() => {
   let anchor = null; // кнопка, у которой открыли окно
   let picking = false; // идёт пипетка
   let st = null; // { hex, op (число или null), on, close, ring }
+  let briBase = null; // цвет до сдвига ползунка «Яркость»
+  let specNear = null; // (hex) → [x, y] в долях спектра
   let tab = 'grid';
   try { const t = localStorage.getItem('cp.tab'); if (['grid', 'spec', 'sl'].includes(t)) tab = t; } catch { /* нет */ }
   const q = (id) => dlg.querySelector('#' + id);
@@ -72,6 +74,7 @@ const ColorPicker = (() => {
         <label>КРАСНЫЙ</label><div class="cpk-slr"><input type="range" id="cpkR" min="0" max="255" data-nodef><input type="number" class="cpk-n" id="cpkRn" min="0" max="255"></div>
         <label>ЗЕЛЁНЫЙ</label><div class="cpk-slr"><input type="range" id="cpkG" min="0" max="255" data-nodef><input type="number" class="cpk-n" id="cpkGn" min="0" max="255"></div>
         <label>СИНИЙ</label><div class="cpk-slr"><input type="range" id="cpkB" min="0" max="255" data-nodef><input type="number" class="cpk-n" id="cpkBn" min="0" max="255"></div>
+        <label>ЯРКОСТЬ <small>(влево — темнее, вправо — светлее)</small></label><div class="cpk-slr"><input type="range" id="cpkL" min="-100" max="100" data-nodef><input type="number" class="cpk-n" id="cpkLn" min="-100" max="100"></div>
         <div class="cpk-hex"><span>Цвет в Hex #</span><input id="cpkHex" maxlength="7" autocomplete="off" spellcheck="false"></div>
       </div>
       <div id="cpkOpBox">
@@ -105,6 +108,19 @@ const ColorPicker = (() => {
     vg.addColorStop(0, 'rgba(255,255,255,1)'); vg.addColorStop(0.08, 'rgba(255,255,255,.85)'); vg.addColorStop(0.5, 'rgba(255,255,255,0)');
     vg.addColorStop(0.5, 'rgba(0,0,0,0)'); vg.addColorStop(1, 'rgba(0,0,0,.92)');
     x.fillStyle = vg; x.fillRect(0, 0, W, H);
+    const px = x.getImageData(0, 0, W, H).data;
+    // где в спектре ближе всего этот цвет (доли 0–1) — чтобы метка стояла сразу, а не только после щелчка
+    specNear = (hex) => {
+      const [r, g, b] = rgbOf(hex);
+      let best = Infinity; let bi = 0;
+      for (let i = 0; i < px.length; i += 4) {
+        const dr = px[i] - r; const dg = px[i + 1] - g; const db = px[i + 2] - b;
+        const d = 2 * dr * dr + 4 * dg * dg + 3 * db * db;
+        if (d < best) { best = d; bi = i; if (!d) break; }
+      }
+      const n = bi / 4;
+      return [((n % W) + 0.5) / W, (Math.floor(n / W) + 0.5) / H];
+    };
     follow(q('cpkSpec'), (e) => {
       const r = cv.getBoundingClientRect();
       const fx = Math.max(0, Math.min(0.999, (e.clientX - r.left) / r.width));
@@ -143,6 +159,15 @@ const ColorPicker = (() => {
       q('cpk' + k).oninput = () => set(toHex(+q('cpkR').value, +q('cpkG').value, +q('cpkB').value), null, 'sl');
       q('cpk' + k + 'n').oninput = () => set(toHex(...['R', 'G', 'B'].map((z) => Math.max(0, Math.min(255, Number(q('cpk' + z + 'n').value) || 0)))), null, 'num');
     }
+    // яркость: от исходного цвета к чёрному (влево) или к белому (вправо); исходный — какой был до первого сдвига
+    const bri = (v, from) => {
+      if (!briBase) briBase = st.hex;
+      const k = Math.max(-100, Math.min(100, Number(v) || 0)) / 100;
+      const c = rgbOf(briBase).map((n) => (k < 0 ? n * (1 + k) : n + (255 - n) * k));
+      set(toHex(...c), null, from);
+    };
+    q('cpkL').oninput = () => bri(q('cpkL').value, 'bri');
+    q('cpkLn').oninput = () => { if (q('cpkLn').value !== '' && q('cpkLn').value !== '-') bri(q('cpkLn').value, 'brin'); };
     q('cpkHex').oninput = () => { const v = norm(q('cpkHex').value); if (v) set(v, null, 'hex'); };
     q('cpkHex').onblur = () => paint();
     q('cpkOp').oninput = () => set(st.hex, Number(q('cpkOp').value) / 100, 'op');
@@ -165,6 +190,7 @@ const ColorPicker = (() => {
     st.hex = hex.toLowerCase();
     if (o != null && st.op != null) st.op = Math.max(0, Math.min(1, o));
     if (from !== 'spec') st.ring = null;
+    if (from !== 'bri' && from !== 'brin') briBase = null;
     paint(from);
     if (st.on) st.on(st.hex, st.op);
   }
@@ -176,6 +202,7 @@ const ColorPicker = (() => {
     q('cpkSl').hidden = tab !== 'sl';
     for (const i of q('cpkGrid').children) i.classList.toggle('on', i.dataset.c === st.hex);
     const ring = q('cpkRing');
+    if (!st.ring && tab === 'spec' && specNear) st.ring = specNear(st.hex);
     ring.hidden = !st.ring;
     if (st.ring) { ring.style.left = st.ring[0] * 100 + '%'; ring.style.top = st.ring[1] * 100 + '%'; ring.style.background = st.hex; }
     const [r, g, b] = rgbOf(st.hex);
@@ -185,6 +212,11 @@ const ColorPicker = (() => {
       q('cpk' + k).style.setProperty('--trk', `linear-gradient(to right, ${tr[k][0]}, ${tr[k][1]})`);
       if (from !== 'num') q('cpk' + k + 'n').value = String(v);
     }
+    const base = briBase || st.hex;
+    if (!briBase) { q('cpkL').value = '0'; q('cpkLn').value = '0'; }
+    else if (from === 'bri') q('cpkLn').value = q('cpkL').value;
+    else if (from === 'brin') q('cpkL').value = q('cpkLn').value;
+    q('cpkL').style.setProperty('--trk', `linear-gradient(to right, #000, ${base}, #fff)`);
     if (from !== 'hex') q('cpkHex').value = st.hex.slice(1).toUpperCase();
     const hasOp = st.op != null;
     q('cpkOpBox').hidden = !hasOp;

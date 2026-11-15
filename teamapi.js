@@ -385,8 +385,8 @@ function refresh() {
   try { m = fs.statSync(libPath()).mtimeMs; } catch { m = 0; }
   if (m === libSeen) return;
   let data = null;
-  if (fresh && fresh.mtime === m) data = fresh.data;
-  else if (m) { try { data = JSON.parse(fs.readFileSync(libPath(), 'utf8')); } catch { return; } } // пишется — в другой раз
+  if (fresh && fresh.mtime === m) { try { data = typeof fresh.data === 'string' ? JSON.parse(fresh.data) : fresh.data; } catch { data = null; } }
+  if (!data && m) { try { data = JSON.parse(fs.readFileSync(libPath(), 'utf8')); } catch { return; } } // пишется — в другой раз
   fresh = null;
   libSeen = m;
   apply(data || {});
@@ -394,7 +394,7 @@ function refresh() {
 function libSaved(data) {
   let m = 0;
   try { m = fs.statSync(libPath()).mtimeMs; } catch { /* нет файла */ }
-  fresh = data && typeof data === 'object' ? { data, mtime: m } : null;
+  fresh = data && (typeof data === 'object' || typeof data === 'string') ? { data, mtime: m } : null; // строка — текст файла (lib:patch), разберём, когда спросят
   // Кто-то на связи — сказать сразу (через 1,5 с: правки идут пачкой, разбор ~35 мс)
   if (socks.size) { clearTimeout(pushT); pushT = setTimeout(pushLib, 1500); }
 }

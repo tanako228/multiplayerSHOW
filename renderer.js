@@ -3,7 +3,6 @@ const grid = $('grid');
 // Монитор «Основного» и кнопка вывода — без места в окне: выбор монитора — в Редакторе сцен (screens.js), вывод — галочка «Зал»
 const displaySel = $('display') || document.createElement('select');
 const toggleBtn = $('toggleOutput') || document.createElement('button');
-const notice = $('notice');
 const prevWrap = $('previewWrap');
 const prevStage = $('previewStage');
 const peekStage = $('peekStage'); // просмотр без вывода — поверх «Предпросмотра»
@@ -682,7 +681,7 @@ function dispFix() {
   if (!ch) return;
   // Без шага отмены: это не правка оператора
   if (saveTimer) saveLib();
-  else { window.api.libSave(lib).catch(() => {}); if (histCur !== null) histCur = histSnap(); if (typeof repoTouch === 'function') repoTouch('lib'); }
+  else { if (histCur !== null) { histCur = histSnap(); libSend(histCur); } else window.api.libSave(lib).catch(() => {}); if (typeof repoTouch === 'function') repoTouch('lib'); }
   if (typeof scSend === 'function') scSend();
 }
 
@@ -1270,15 +1269,17 @@ function edPickSync() {
 }
 $('tabThemes').addEventListener('click', (e) => edMenu(edAt(e.currentTarget)));
 
-// Строка сверху показывает только ошибки и долгую загрузку (isProgress), а не «готово, добавлено»
+// Старый вход для сообщений — теперь островки notify.js. isError — ошибка; isProgress (или текст на «…») — долгая работа:
+// островок с крутилкой висит, пока не придёт showNotice('') — он же убирает и прежние ошибки отсюда.
 function showNotice(text, isError, isProgress) {
-  if (text && !isError && !isProgress) return;
-  notice.hidden = !text;
-  notice.textContent = text || '';
-  notice.classList.toggle('error', !!isError);
-  notice.title = isError ? 'Нажмите, чтобы скрыть' : '';
+  if (!text) { Notify.clear((o) => o.src === 'notice'); return; }
+  const busy = !isError && (isProgress || /…$/.test(String(text).trim()));
+  if (busy) { Notify.show({ id: 'progress', kind: 'progress', text, src: 'notice' }); return; }
+  Notify.close('progress');
+  const kind = isError ? 'error' : Notify.guessKind(text);
+  if (kind !== 'error' && kind !== 'warn') return; // «готово, добавлено» — без островка
+  Notify.show({ kind, text, src: 'notice' });
 }
-notice.addEventListener('click', () => { if (notice.classList.contains('error')) showNotice(''); });
 window.api.onStatus((text) => showNotice(text, false, true));
 
 /* ---------- Экран: фото, SVG, видео, слайды ---------- */

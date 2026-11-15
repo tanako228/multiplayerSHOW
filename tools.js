@@ -1563,6 +1563,10 @@ const UI_THEMES = [
   // Ползунки — тёмный утопленный жёлоб и светящаяся белая «таблетка» с розово-оранжевым ореолом
   { id: 'sunset', name: 'Закат', deco: 'sunset', fx: { uiGlass: 'glass', uiAlpha: 22, uiGlow: 55, uiRadius: 14 },
     c: ['#585a7a', '#66688a', '#4b4d6b', '#7d7fa0', '#fbf3ee', '#cfc9dc', '#ffe0cc', '#ff8c6e', '#ff6b7f'] },
+  // «Лазурь» (deco: 'azure', index.html): тёмная версия макета «UI kit» — тёмно-синие карточки с мягкой тенью, яркий синий акцент,
+  // белый текст на синем, выбранное в списках — синяя подложка с полоской слева, галочки — синие квадраты
+  { id: 'azure', name: 'Лазурь', deco: 'azure', fx: { uiGlass: '', uiAlpha: 16, uiGlow: 0, uiRadius: 12 },
+    c: ['#0a0f1a', '#111827', '#182134', '#253049', '#eaf0fb', '#8b98b3', '#2d7bff', '#6aa8ff', '#ff5d6c'] },
 ];
 
 // Правка тем владельцем (localStorage cp.uiThemes): over — изменённые готовые темы {id: {c, fx, light}},
@@ -1635,7 +1639,7 @@ function applyUiFx(p) {
   html.dataset.uiFont = UI_FONTS.some(([id]) => id === settings.uiFont) ? settings.uiFont : '';
   html.dataset.uiDeco = uiTheme().deco || ''; // особое оформление темы (свечение, «таблетки»)
   html.classList.toggle('ui-caps', !!settings.uiCaps);
-  const ctl = ['aura', 'amber', 'sunset'].includes(html.dataset.uiDeco); // темы со своими ползунками, переключателями и крутилками
+  const ctl = ['aura', 'amber', 'sunset', 'azure'].includes(html.dataset.uiDeco); // темы со своими ползунками, переключателями и крутилками
   html.classList.toggle('ui-ctl', ctl);
   auraRun(ctl);
 }
@@ -2346,40 +2350,154 @@ async function restoreOldBackup(dir, parts) {
 
 $('dataOpen').addEventListener('click', () => window.api.dataOpen());
 
-/* ===== Обновление программы: новые версии с GitHub (main.js, «Обновление программы») ===== */
+/* ===== Обновление программы: новые версии с GitHub (main.js, «Обновление программы») =====
+   settings.updAuto (галочка «Обновлять автоматически», по умолчанию включена):
+     да  — проверка через 30 с после запуска и раз в 6 часов, новая версия качается в фоне и ставится при закрытии программы;
+     нет — сама программа ничего не проверяет и не качает; «Проверить обновления» и «Скачать и установить» — вручную.
+   Всё, что происходит, сообщается островками (Notify, id 'upd' — один островок обновления, меняется на месте). */
 
-if (settings.updAuto === undefined) settings.updAuto = true; // по умолчанию — проверять при запуске
+if (settings.updAuto === undefined) settings.updAuto = true;
+const UPD_EVERY = 6 * 3600 * 1000;
+let updAutoAt = 0; // когда последний раз проверяли сами
 
-// Состояние из main.js: { state: dev|checking|none|loading|ready|error, version, percent, error }
+// Состояние из main.js: { state: dev|checking|none|available|loading|ready|error, version, percent, error, phase, manual, info }
 function updText(u) {
   switch (u && u.state) {
     case 'dev': return 'Обновление работает только в установленной программе (не при запуске через npm start).';
     case 'checking': return 'Проверяю…';
     case 'none': return 'У вас последняя версия.';
-    case 'loading': return `Скачиваю версию ${u.version || ''}… ${u.percent ? u.percent + '%' : ''}`;
+    case 'available': return `Есть новая версия ${u.version}.`;
+    case 'loading': return `Скачиваю версию ${u.version || ''}… ${u.percent ? u.percent + ' %' : ''}`;
     case 'ready': return `Версия ${u.version} скачана. Она установится, когда вы закроете программу, или нажмите «Перезапустить и обновить».`;
-    case 'error': return 'Не удалось проверить обновления (нет интернета?)' + (u.error ? ': ' + u.error.split('\n')[0].slice(0, 160) : '');
+    case 'error': return updErrTitle(u) + (u.error ? ': ' + u.error.slice(0, 160) : '');
     default: return 'Новые версии берутся с GitHub.';
   }
 }
+function updErrTitle(u) {
+  if (u.phase === 'download') return 'Не удалось скачать обновление';
+  if (u.phase === 'install') return 'Не удалось установить обновление';
+  return 'Не удалось проверить обновления';
+}
+const updCanGet = (u) => !!u && (u.state === 'available' || (u.state === 'error' && u.phase === 'download'));
+
+// Островки об обновлении — только когда состояние сменилось (и об одной версии — один раз)
+const updTold = new Set();
+let updUserDl = false; // «Скачать и установить» нажали в этом окне — показывать ход скачивания
+function updNotify(u, was) {
+  const st = u && u.state;
+  if (!st || (st === was && !u.manual)) return; // то же состояние — молчим, если человек сам не спросил ещё раз
+  const v = u.version;
+  const notes = { label: 'Что нового', run: () => { updShowNotes(); } };
+  const get = { label: 'Скачать и установить', primary: true, run: () => updGet() };
+  const install = { label: 'Перезапустить и обновить', primary: true, run: () => updInstall() };
+  if (st === 'checking') {
+    if (u.manual) Notify.show({ id: 'upd', kind: 'progress', text: 'Проверяю обновления…' });
+  } else if (st === 'none') {
+    if (u.manual) Notify.show({ id: 'upd', kind: 'ok', title: 'У вас последняя версия', text: $('updVer').textContent !== '—' ? `multiplayerSHOW ${$('updVer').textContent}` : '' });
+  } else if (st === 'available') {
+    if (updTold.has('a' + v) && !u.manual) return;
+    updTold.add('a' + v);
+    if (settings.updAuto) {
+      Notify.show({ id: 'upd', kind: 'info', icon: 'update', title: `Доступна версия ${v}`, text: 'Скачивается в фоне и не мешает работе — о готовности сообщу.', actions: [notes] });
+    } else {
+      Notify.show({ id: 'upd', kind: 'info', icon: 'update', title: `Доступна версия ${v}`, text: 'Скачать и установить новую версию? Ваши данные не пропадут.', actions: [get, notes] });
+    }
+  } else if (st === 'loading') {
+    if (updUserDl) Notify.show({ id: 'upd', kind: 'progress', title: `Скачиваю версию ${v || ''}`, text: (u.percent || 0) + ' %', percent: u.percent || 0 });
+  } else if (st === 'ready') {
+    updUserDl = false;
+    if (updTold.has('r' + v) && !u.manual) return;
+    updTold.add('r' + v);
+    Notify.show({ id: 'upd', kind: 'ok', icon: 'update', title: `Версия ${v} готова к установке`, text: 'Перезапустите программу сейчас — или обновление поставится само, когда вы её закроете.', actions: [install, notes] });
+  } else if (st === 'error') {
+    // Сама проверка в фоне без интернета — не мешаем (видно в Настройках); остальное — говорим
+    if (u.phase === 'check' && !u.manual) return;
+    updUserDl = false;
+    const retry = u.phase === 'download' ? { label: 'Повторить', primary: true, run: () => updGet() }
+      : u.phase === 'install' ? { label: 'Повторить', primary: true, run: () => updInstall() }
+        : { label: 'Повторить', primary: true, run: () => updCheckNow(true) };
+    Notify.show({ id: 'upd', kind: 'error', title: updErrTitle(u), text: (u.error ? u.error.slice(0, 200) + '\n' : '') + 'Проверьте интернет и попробуйте ещё раз.', actions: [retry] });
+  } else if (st === 'dev' && u.manual) {
+    Notify.show({ id: 'upd', kind: 'info', text: updText(u) });
+  }
+}
+// Прогресс скачивания — тот же островок, без нового «появления»
+function updProgress(u) {
+  if (updUserDl && u.state === 'loading' && Notify.has('upd')) Notify.show({ id: 'upd', kind: 'progress', title: `Скачиваю версию ${u.version || ''}`, text: (u.percent || 0) + ' %', percent: u.percent || 0 });
+}
+
 let updLast = null;
-function showUpd(u) {
+function showUpd(u, quiet) {
   const was = updLast && updLast.state;
   updLast = u;
   $('updState').textContent = updText(u);
-  $('updReady').hidden = !(u && u.state === 'ready');
   $('updCheck').disabled = !!u && (u.state === 'checking' || u.state === 'loading');
-  if (u && u.state === 'ready' && was !== 'ready') flashStatus(`Скачана новая версия ${u.version} — установится при закрытии программы`);
+  const st = u && u.state;
+  $('updGet').hidden = !updCanGet(u);
+  $('updInstall').hidden = st !== 'ready';
+  $('updNotes').hidden = !(u && u.info && u.info.version);
+  $('updActs').hidden = $('updGet').hidden && $('updInstall').hidden && $('updNotes').hidden;
+  if ($('updNotesDlg').open) updFillNotes();
+  if (quiet) return;
+  if (st === was && st === 'loading') updProgress(u);
+  else updNotify(u, was);
+}
+
+function updCheckNow(manual) {
+  if (!window.api.updCheck) return;
+  if (!manual) updAutoAt = Date.now();
+  window.api.updCheck({ manual: !!manual });
+}
+function updGet() {
+  updUserDl = true;
+  if (window.api.updDownload) window.api.updDownload();
+}
+async function updInstall() {
+  const ok = await window.api.updInstall().catch(() => false);
+  if (!ok) Notify.show({ kind: 'error', title: 'Не удалось установить обновление', text: 'Обновление ещё не скачано — нажмите «Проверить обновления».' });
+}
+
+// Окно «Что нового» — текст выпуска с GitHub
+function updFillNotes() {
+  const u = updLast || {};
+  const i = u.info || {};
+  $('unTitle').textContent = i.version ? `Что нового в версии ${i.version}` : 'Что нового';
+  let d = '';
+  try { if (i.date) d = new Date(i.date).toLocaleDateString(I18n.loc || 'ru-RU', { day: 'numeric', month: 'long', year: 'numeric' }); } catch { /* без даты */ }
+  $('unMeta').textContent = [i.name && i.name !== i.version && i.name !== 'v' + i.version ? i.name : '', d ? 'Выпущена ' + d : '', 'Сейчас у вас ' + $('updVer').textContent].filter(Boolean).join(' · ');
+  $('unText').textContent = i.notes || 'Описание этой версии не пришло — оно есть на странице выпуска на GitHub.';
+  $('unGet').hidden = !updCanGet(u);
+  $('unInstall').hidden = u.state !== 'ready';
+}
+async function updShowNotes() {
+  if ($('updVer').textContent === '—') $('updVer').textContent = await window.api.appVersion().catch(() => '—');
+  updFillNotes();
+  if (!$('updNotesDlg').open) $('updNotesDlg').showModal();
 }
 
 async function renderUpdate() {
   $('updVer').textContent = await window.api.appVersion().catch(() => '—');
   $('updAuto').checked = !!settings.updAuto;
-  showUpd(window.api.updGet ? await window.api.updGet().catch(() => null) : null);
+  // Открыли раздел — только показать состояние, без островков
+  showUpd(window.api.updGet ? await window.api.updGet().catch(() => null) : null, true);
 }
-$('updAuto').addEventListener('change', () => { settings.updAuto = $('updAuto').checked; saveSettings(); });
-$('updCheck').addEventListener('click', () => window.api.updCheck());
-$('updInstall').addEventListener('click', () => window.api.updInstall());
+$('updAuto').addEventListener('change', () => {
+  settings.updAuto = $('updAuto').checked;
+  saveSettings();
+  if (window.api.updConfig) window.api.updConfig({ auto: settings.updAuto });
+  Notify.show({ kind: 'ok', text: settings.updAuto ? 'Автоматическое обновление включено' : 'Автоматическое обновление выключено — проверяйте вручную' });
+  if (settings.updAuto && Date.now() - updAutoAt > UPD_EVERY) updCheckNow(false);
+});
+$('updCheck').addEventListener('click', () => updCheckNow(true));
+$('updGet').addEventListener('click', () => updGet());
+$('updInstall').addEventListener('click', () => updInstall());
+$('updNotes').addEventListener('click', () => updShowNotes());
+$('unGet').addEventListener('click', () => { $('updNotesDlg').close(); updGet(); });
+$('unInstall').addEventListener('click', () => { $('updNotesDlg').close(); updInstall(); });
+$('unPage').addEventListener('click', () => { if (window.api.updPage) window.api.updPage((updLast && updLast.info && updLast.info.version) || ''); });
 if (window.api.onUpdate) window.api.onUpdate(showUpd);
-// При запуске — проверить через полминуты (не мешать загрузке)
-setTimeout(() => { if (settings.updAuto && window.api.updCheck) window.api.updCheck(); }, 30000);
+if (window.api.updConfig) window.api.updConfig({ auto: !!settings.updAuto });
+if (window.api.appVersion) window.api.appVersion().then((v) => { $('updVer').textContent = v; }).catch(() => {});
+// При запуске — проверить через полминуты (не мешать загрузке), потом раз в 6 часов; только если включено «Обновлять автоматически»
+setTimeout(() => { if (settings.updAuto) updCheckNow(false); }, 30000);
+setInterval(() => { if (settings.updAuto && Date.now() - updAutoAt >= UPD_EVERY) updCheckNow(false); }, 10 * 60 * 1000);

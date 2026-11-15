@@ -247,7 +247,7 @@ function grBadge() {
   if (list.length) b.dataset.n = String(list.length); else delete b.dataset.n;
   const fresh = list.filter((r) => !grPendSeen.has(r.id));
   grPendSeen = new Set(list.map((r) => r.id));
-  if (fresh.length && !$('teamDialog').open) flashStatus(`«${fresh[0].name}» просит доступ к приложению группы — окно «Группа»`);
+  if (fresh.length && !$('teamDialog').open) flashStatus(`«${fresh[0].name}» просит доступ к приложению группы — окно «Группа»`, true);
 }
 
 // Журнал: читаем, когда раздел открыт (и после перемен, не чаще раза в секунду)
@@ -330,8 +330,18 @@ async function grCall(p, okText) {
 }
 const grSet = (p) => grCall(window.api.teamSet(p));
 
-window.api.onTeamInfo((n) => { grInfo = n; grBadge(); grMsgNew(); grPaint(); if (grTab === 'log') grJournal(); });
-window.api.teamInfo().then((n) => { grInfo = n; grBadge(); grMsgNew(); }).catch(() => {});
+// Телефон группы вышел на связь — островок (первое состояние после запуска только запоминается)
+let grOnSeen = null;
+function grOnlineWatch() {
+  const g = grInfo && grInfo.grp;
+  if (!g || !Array.isArray(g.people)) return;
+  const now = new Map();
+  for (const p of g.people) for (const d of p.devices || []) if (d.online && !d.off) now.set(d.id, { who: p.name, dev: d.name });
+  if (grOnSeen) for (const [id, x] of now) if (!grOnSeen.has(id)) Notify.show({ kind: 'ok', icon: 'info', group: 'team-on', text: `Группа: подключился «${x.who}»` + (x.dev && x.dev !== x.who ? ` (${x.dev})` : '') });
+  grOnSeen = new Set(now.keys());
+}
+window.api.onTeamInfo((n) => { grInfo = n; grBadge(); grOnlineWatch(); grMsgNew(); grPaint(); if (grTab === 'log') grJournal(); });
+window.api.teamInfo().then((n) => { grInfo = n; grBadge(); grOnlineWatch(); grMsgNew(); }).catch(() => {});
 
 $('teamOpen').addEventListener('click', grOpen);
 document.querySelectorAll('.tm-nav button').forEach((b) => b.addEventListener('click', () => grShowTab(b.dataset.tm)));
@@ -414,7 +424,7 @@ function grMsgPaint() {
 function grMsgNew() {
   const list = (grInfo && grInfo.grp && grInfo.grp.msgs) || [];
   const last = list[list.length - 1];
-  if (grMsgLast !== null && last && last.id !== grMsgLast && last.role !== 'op' && !($('teamDialog').open && grTab === 'msg')) flashStatus(`Группа — ${last.from}: «${last.text}»`);
+  if (grMsgLast !== null && last && last.id !== grMsgLast && last.role !== 'op' && !($('teamDialog').open && grTab === 'msg')) flashStatus(`Группа — ${last.from}: «${last.text}»`, true);
   grMsgLast = last ? last.id : '';
 }
 const grMsgSend = (t) => { const s = String(t || '').trim(); if (s) grDo({ act: 'msg', text: s }, 'Отправлено группе').then((r) => { if (r && r.ok) $('tmMsgText').value = ''; }); };
@@ -599,7 +609,7 @@ window.api.onTeamChords((c) => {
   // аккорды из чужого файла — в своей тональности: она приходит вместе с ними
   if (c.key !== undefined) { const k = String(c.key || '').trim().slice(0, 8); if (k) it.song.key = k; else delete it.song.key; }
   saveLib();
-  flashStatus(`Телефон (${c.who || '?'}): ${text.trim() ? 'аккорды записаны' : 'аккорды убраны'} — «${it.name}». Ctrl+Z — вернуть`);
+  flashStatus(`Телефон (${c.who || '?'}): ${text.trim() ? 'аккорды записаны' : 'аккорды убраны'} — «${it.name}». Ctrl+Z — вернуть`, true);
   done();
 });
 
@@ -616,7 +626,7 @@ window.api.onTeamSheets((c) => {
   for (const x of c.add || []) if (!list.some((y) => base(y.file) === base(x.file))) list.push(x);
   if (list.length) it.song.sheets = list; else delete it.song.sheets;
   saveLib();
-  flashStatus(`Телефон (${c.who || '?'}): ${c.del ? 'лист нот убран' : 'ноты добавлены'} — «${it.name}». Ctrl+Z — вернуть`);
+  flashStatus(`Телефон (${c.who || '?'}): ${c.del ? 'лист нот убран' : 'ноты добавлены'} — «${it.name}». Ctrl+Z — вернуть`, true);
   done();
 });
 
@@ -651,7 +661,7 @@ window.api.onTeamSong((c) => {
     it.slides = Songs.build(song, it.slides, first);
     touched(it);
     renderService();
-    flashStatus(`Телефон (${c.who || '?'}): изменена песня «${name}». Ctrl+Z — вернуть`);
+    flashStatus(`Телефон (${c.who || '?'}): изменена песня «${name}». Ctrl+Z — вернуть`, true);
     done('', it.id);
     return;
   }
@@ -663,7 +673,7 @@ window.api.onTeamSong((c) => {
   l.items.push(item.id);
   saveLib();
   renderService();
-  flashStatus(`Телефон (${c.who || '?'}): добавлена песня «${name}» в библиотеку «${l.name}». Ctrl+Z — вернуть`);
+  flashStatus(`Телефон (${c.who || '?'}): добавлена песня «${name}» в библиотеку «${l.name}». Ctrl+Z — вернуть`, true);
   done('', item.id);
 });
 
@@ -681,6 +691,6 @@ window.api.onTeamEdit((c) => {
   if (Array.isArray(c.sheets)) { if (c.sheets.length) it.song.sheets = c.sheets; else delete it.song.sheets; }
   saveLib();
   const by = c.via && c.via !== c.who ? `${c.who || '?'} (принёс телефон ${c.via})` : c.who || '?';
-  flashStatus(`Правка без связи от ${by}: ${Array.isArray(c.sheets) ? 'аккорды и ноты' : 'аккорды'} — «${it.name}». Ctrl+Z — вернуть`);
+  flashStatus(`Правка без связи от ${by}: ${Array.isArray(c.sheets) ? 'аккорды и ноты' : 'аккорды'} — «${it.name}». Ctrl+Z — вернуть`, true);
   done();
 });
