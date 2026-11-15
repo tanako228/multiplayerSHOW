@@ -2230,13 +2230,22 @@ function rbMove(e) {
   const w = Math.abs(e.clientX - rbState.x0), h = Math.abs(e.clientY - rbState.y0);
   Object.assign(rbState.el.style, { left: x + 'px', top: y + 'px', width: w + 'px', height: h + 'px' });
   if (w < 4 && h < 4) return;
-  const hit = [];
-  document.querySelectorAll('#svcFeed .svc-item').forEach((el) => {
-    const r = el.getBoundingClientRect();
-    if (r.left < x + w && r.right > x && r.top < y + h && r.bottom > y) hit.push(el.dataset.key);
-  });
-  selItems = e.ctrlKey || e.metaKey ? [...new Set([...selItems, ...hit])] : hit;
-  sel = [];
+  const inBand = (el) => { const r = el.getBoundingClientRect(); return r.left < x + w && r.right > x && r.top < y + h && r.bottom > y; };
+  const add = e.ctrlKey || e.metaKey;
+  // Рамка задела слайды — выделяем слайды: Delete уберёт только их, шапка презентации останется
+  const slides = [...document.querySelectorAll('#svcFeed .sl')].filter(inBand).map((el) => ({ key: el.dataset.key, sid: el.dataset.sid }));
+  if (slides.length) {
+    if (!rbState.sel0) rbState.sel0 = add ? sel.slice() : [];
+    sel = [...rbState.sel0, ...slides.filter((s) => !rbState.sel0.some((o) => o.key === s.key && o.sid === s.sid))];
+    selItems = [];
+    selFocus = 'slides';
+  } else {
+    // Только шапки — выделяем сами пункты
+    const hit = [...document.querySelectorAll('#svcFeed .svc-item')].filter(inBand).map((el) => el.dataset.key);
+    selItems = add ? [...new Set([...selItems, ...hit])] : hit;
+    sel = [];
+    selFocus = 'items';
+  }
   updatePlaylistLive();
 }
 

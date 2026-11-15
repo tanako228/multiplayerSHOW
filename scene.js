@@ -1266,9 +1266,13 @@ const Scene = (() => {
     for (const e of entries) {
       const layer = e.target;
       if (!layer.isConnected) { sizer.unobserve(layer); continue; }
+      // Следим и за шириной: макет сцены («Своё разрешение» у блока) меняет ширину слайда при той же высоте —
+      // переносы строк другие, текст надо подогнать сразу, а не на следующем слайде
       const h = Math.round(e.contentRect.height);
-      if (!h || h === layer._fitH) continue;
+      const w = Math.round(e.contentRect.width);
+      if (!h || (h === layer._fitH && w === layer._fitW)) continue;
       layer._fitH = h;
+      layer._fitW = w;
       fitLayer(layer);
     }
   });

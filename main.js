@@ -2289,8 +2289,11 @@ app.whenReady().then(() => {
 
   // Настоящее перетаскивание файла (как из Проводника): его можно бросить в любое окно программы
   const dragIcon = nativeImage.createFromBitmap(Buffer.alloc(32 * 32 * 4, 0xc0), { width: 32, height: 32 });
+  // Можно тянуть сразу несколько файлов (выделенные в медиапуле): массив путей
   ipcMain.on('drag:start', (e, file) => {
-    if (typeof file === 'string' && fs.existsSync(file)) e.sender.startDrag({ file, icon: dragIcon });
+    const files = (Array.isArray(file) ? file : [file]).filter((f) => typeof f === 'string' && fs.existsSync(f));
+    if (!files.length) return;
+    e.sender.startDrag(files.length > 1 ? { file: files[0], files, icon: dragIcon } : { file: files[0], icon: dragIcon });
   });
 
   /* ---------- Библиотеки и плейлисты ---------- */

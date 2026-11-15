@@ -141,7 +141,7 @@ contextBridge.exposeInMainWorld('api', {
   poolScan: (roots) => ipcRenderer.invoke('pool:scan', roots),
   poolThumb: (file) => ipcRenderer.invoke('pool:thumb', file),
   musicCover: (file) => ipcRenderer.invoke('music:cover', file),
-  startDrag: (file) => ipcRenderer.send('drag:start', file),
+  startDrag: (file) => ipcRenderer.send('drag:start', file), // путь или массив путей
   sourcesScreens: () => ipcRenderer.invoke('sources:screens'),
   sourcesNdi: () => ipcRenderer.invoke('sources:ndi'),
   ndiFind: () => ipcRenderer.invoke('ndi:find'),

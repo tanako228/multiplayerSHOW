@@ -905,9 +905,23 @@ const parentDir = (p) => {
 let poolData = { dirs: [], files: [] };
 const poolSeen = new Map(); // папка → её список (открывается мгновенно)
 let poolWatched = null; // за какой папкой следит main.js (pool:watch)
-let poolDrag = null; // { path, until } — какой файл сейчас тянут из медиапула
+let poolDrag = null; // { paths, until } — какие файлы сейчас тянут из медиапула
 // Тянут файл из медиапула (бросок разбирает poolDrop)
 const isPoolDrag = (e) => !!poolDrag && Date.now() < poolDrag.until && e.dataTransfer.types.includes('Files');
+// Выделенные файлы медиапула (Ctrl/Shift+щелчок, Ctrl+A, рамка мышью) — тянутся в список все сразу
+let poolSel = new Set();
+let poolAnchor = null; // от какого файла считать Shift+щелчок
+const poolTiles = () => [...$('poolGrid').querySelectorAll('.pf[data-path]')];
+function poolSelShow() {
+  for (const t of poolTiles()) t.classList.toggle('sel', poolSel.has(t.dataset.path));
+}
+function poolSelSet(paths) {
+  poolSel = new Set(paths);
+  poolSelShow();
+}
+// Выделенные — в порядке, как лежат в папке
+const poolSelPaths = () => poolTiles().map((t) => t.dataset.path).filter((p) => poolSel.has(p));
+const poolSelFiles = () => { const ps = new Set(poolSelPaths()); return poolData.files.filter((f) => ps.has(f.path)); };
 
 // Как показывать файлы из медиапула (Настройки → Показ и звук); пусто — как общий «Размер картинки»
 const poolFitValue = () => settings.poolFit || settings.fit;
@@ -915,7 +929,7 @@ const poolFitValue = () => settings.poolFit || settings.fit;
 // Если среди добавленных файлов есть тот, что перетащили из медиапула, — запомнить ему способ вписывания
 function markPoolFit(items) {
   if (!poolDrag || Date.now() > poolDrag.until || !items) return;
-  for (const i of items) if (i.path === poolDrag.path && (i.type === 'image' || i.type === 'video')) i.fit = poolFitValue();
+  for (const i of items) if (poolDrag.paths.includes(i.path) && (i.type === 'image' || i.type === 'video')) i.fit = poolFitValue();
   poolDrag = null;
 }
 
@@ -956,6 +970,7 @@ function renderPoolFolders() {
 }
 
 function poolOpenDir(dir) {
+  if (dir !== settings.poolCur) { poolSel = new Set(); poolAnchor = null; }
   settings.poolCur = dir;
   saveSettings();
   $('poolFilter').value = '';
@@ -996,7 +1011,7 @@ function drawPoolGrid(msg) {
   }
   for (const f of poolData.files.filter((x) => match(x.name))) {
     const vis = f.type === 'image' || f.type === 'video';
-    const t = Object.assign(document.createElement('div'), { className: 'pf', title: `${f.name}\n${vis ? 'Щелчок — на экран (слой «Медиа», под текстом)' : f.type === 'audio' ? 'Enter — включить' : 'Enter — в открытый список'}, правая кнопка — меню и «Предпросмотр», перетащите — в плейлист или библиотеку`, draggable: true, tabIndex: 0 });
+    const t = Object.assign(document.createElement('div'), { className: 'pf' + (poolSel.has(f.path) ? ' sel' : ''), title: `${f.name}\n${vis ? 'Щелчок — на экран (слой «Медиа», под текстом)' : f.type === 'audio' ? 'Enter — включить' : 'Enter — в открытый список'}, правая кнопка — меню и «Предпросмотр», перетащите — в плейлист или библиотеку\nCtrl/Shift+щелчок, Ctrl+A или рамка мышью — выделить несколько и перетащить все сразу`, draggable: true, tabIndex: 0 });
     // Превью в настоящих пропорциях: высота одна, ширина — как у самого файла
     const pv = Object.assign(document.createElement('div'), { className: 'pv' + (f.type === 'video' ? ' vid' : '') });
     // Лёгкая миниатюра; на экран и в плейлист идёт сам файл в полном качестве
@@ -1011,13 +1026,25 @@ function drawPoolGrid(msg) {
     t.addEventListener('dragstart', (e) => {
       e.preventDefault();
       // Порог сдвига уже проверила Windows (4 px) — свой порог больше не нужен: с ним плавное перетаскивание считалось щелчком
-      poolDrag = { path: f.path, until: Date.now() + 120000 };
-      window.api.startDrag(f.path);
+      // Тянут выделенный файл — едут все выделенные; невыделенный — только он
+      const paths = poolSel.has(f.path) && poolSel.size > 1 ? poolSelPaths() : [f.path];
+      poolDrag = { paths, until: Date.now() + 120000 };
+      window.api.startDrag(paths.length > 1 ? paths : f.path);
     });
-    // Щелчок — фото и видео сразу на экран (слой «Медиа»); музыка и прочее — только выбор
-    t.addEventListener('click', () => poolClick(f, t));
+    // Щелчок — фото и видео сразу на экран (слой «Медиа»); музыка и прочее — только выбор.
+    // Ctrl+щелчок — добавить/убрать из выделения, Shift+щелчок — выделить подряд (на экран не идёт)
+    t.addEventListener('click', (e) => poolClick(f, t, e));
     t.addEventListener('contextmenu', (e) => {
       e.preventDefault();
+      // Правая кнопка по одному из выделенных — действие сразу для всех
+      const many = poolSel.has(f.path) && poolSel.size > 1 ? poolSelFiles() : null;
+      if (many) {
+        showMenu(e, [
+          { label: `Добавить в открытый список (${many.length})`, fn: () => poolAddMany(many) },
+          { label: 'Снять выделение', key: 'Esc', fn: () => poolSelSet([]) },
+        ]);
+        return;
+      }
       mediaMenu(e, f, [
         ...(vis ? [{ label: 'Предпросмотр', fn: () => poolPopup(f, e) }] : []),
         { label: f.type === 'audio' ? 'Включить музыку' : 'Показать на экране', key: 'Enter', fn: () => poolShow(f) },
@@ -1030,10 +1057,75 @@ function drawPoolGrid(msg) {
   if (!grid.children.length) grid.append(Object.assign(document.createElement('div'), { className: 'pool-msg', textContent: q ? 'Ничего не найдено' : 'В этой папке нет фото, видео, музыки и презентаций' }));
 }
 
-function poolClick(f, tile) {
+function poolClick(f, tile, e) {
   if (tile) tile.focus();
+  if (e && (e.ctrlKey || e.metaKey)) {
+    if (poolSel.has(f.path)) poolSel.delete(f.path); else poolSel.add(f.path);
+    poolAnchor = f.path;
+    poolSelShow();
+    return;
+  }
+  if (e && e.shiftKey) {
+    const all = poolTiles().map((t) => t.dataset.path);
+    const a = all.indexOf(poolAnchor);
+    const b = all.indexOf(f.path);
+    poolSelSet(a < 0 ? [f.path] : all.slice(Math.min(a, b), Math.max(a, b) + 1));
+    return;
+  }
+  poolAnchor = f.path;
+  poolSelSet([f.path]);
   if (f.type === 'image' || f.type === 'video') poolShow(f);
 }
+
+// Несколько файлов сразу — в открытый список (как «＋» у одного)
+function poolAddMany(files) {
+  if (!files.length) return;
+  if (tab === 'music') { const au = files.filter((f) => f.type === 'audio'); if (au.length) musicAdd(au); return; }
+  const paths = files.map((f) => f.path);
+  if (tab === 'service') return svcAddPaths(paths, true);
+  inLists(() => svcAddPaths(paths, true))();
+}
+
+// Рамка мышью по пустому месту медиапула — выделить файлы, которые она задела (с Ctrl — добавить к выделенным)
+let poolBand = null;
+$('poolGrid').tabIndex = -1; // чтобы Ctrl+A работал и после рамки
+$('poolGrid').addEventListener('mousedown', (e) => {
+  if (e.button !== 0 || e.target.closest('.pf')) return;
+  if (e.target === $('poolGrid') && e.offsetX >= $('poolGrid').clientWidth) return; // полоса прокрутки
+  e.preventDefault();
+  $('poolGrid').focus({ preventScroll: true });
+  const el = Object.assign(document.createElement('div'), { className: 'rubber-band' });
+  document.body.append(el);
+  poolBand = { x0: e.clientX, y0: e.clientY, el, base: e.ctrlKey || e.metaKey ? [...poolSel] : [], moved: false };
+});
+window.addEventListener('mousemove', (e) => {
+  if (!poolBand) return;
+  const x = Math.min(poolBand.x0, e.clientX), y = Math.min(poolBand.y0, e.clientY);
+  const w = Math.abs(e.clientX - poolBand.x0), h = Math.abs(e.clientY - poolBand.y0);
+  Object.assign(poolBand.el.style, { left: x + 'px', top: y + 'px', width: w + 'px', height: h + 'px' });
+  if (w < 4 && h < 4) return;
+  poolBand.moved = true;
+  const hit = poolTiles().filter((t) => { const r = t.getBoundingClientRect(); return r.left < x + w && r.right > x && r.top < y + h && r.bottom > y; }).map((t) => t.dataset.path);
+  poolSelSet([...poolBand.base, ...hit]);
+});
+window.addEventListener('mouseup', () => {
+  if (!poolBand) return;
+  poolBand.el.remove();
+  if (!poolBand.moved && !poolBand.base.length) poolSelSet([]); // щелчок по пустому месту — снять выделение
+  poolBand = null;
+});
+// Ctrl+A — выделить все файлы папки (с учётом поиска), Esc — снять выделение
+$('pool').addEventListener('keydown', (e) => {
+  if (['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName)) return;
+  if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.code === 'KeyA') {
+    e.preventDefault();
+    e.stopPropagation();
+    poolSelSet(poolTiles().map((t) => t.dataset.path));
+  } else if (e.key === 'Escape' && poolSel.size) {
+    e.stopPropagation();
+    poolSelSet([]);
+  }
+});
 
 // Маленькое окошко просмотра (меню → «Предпросмотр»), как у источников; экран не трогает
 function poolPopup(f, e) {
@@ -1065,7 +1157,7 @@ function poolShow(f) {
 // Бросили файл из медиапула: добавить, только если отпустили над списком (строка слева, «Содержание», лента).
 // true — бросок разобран (в том числе «мимо» — тогда ничего не добавляется)
 function poolDrop(e, paths) {
-  if (!isPoolDrag(e) || !paths.includes(poolDrag.path)) return false;
+  if (!isPoolDrag(e) || !paths.some((p) => poolDrag.paths.includes(p))) return false;
   poolDrag = null;
   const row = e.target.closest && e.target.closest('.svc-row[data-view]');
   const into = row || (e.target.closest && e.target.closest('#contentBox, #svcFeed'));

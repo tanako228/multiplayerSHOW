@@ -504,6 +504,7 @@ const Compose = (() => {
       n._in = make('div', 'cmp-in');
       n._txt.append(n._in);
       c.append(n._txt);
+      txtWatch(n);
       n._type = type;
       n._msgAt = P.info.st.msg ? P.info.st.msg.at : 0; // мигать — только на новое сообщение
       stageNodes.add(n);
@@ -538,6 +539,7 @@ const Compose = (() => {
     } else if (it.type === 'text' || it.type === 'clock') {
       n._txt = make('div', 'cmp-txt');
       c.append(n._txt);
+      txtWatch(n);
       if (it.type === 'clock') clocks.add(n);
     }
     return n;
@@ -551,6 +553,7 @@ const Compose = (() => {
     if (n._video) { n._video.pause(); n._video.removeAttribute('src'); n._video.load(); }
     clocks.delete(n);
     stageNodes.delete(n);
+    if (n._txt) txtSizer.unobserve(n._txt);
     n.remove();
   }
 
@@ -989,6 +992,28 @@ const Compose = (() => {
     }
     if (relen) autoFit(n, it);
   }
+
+  // Блок с текстом сам подгоняет размер, когда меняется его рамка: в том числе когда он только что появился
+  // (новый макет сцены строится до того, как попал на страницу, — мерить было нечего) и когда меняют размер блока
+  const txtSizer = new ResizeObserver((entries) => {
+    for (const e of entries) {
+      const n = e.target._node;
+      if (!n || !e.target.isConnected) { txtSizer.unobserve(e.target); continue; }
+      const w = Math.round(e.contentRect.width), h = Math.round(e.contentRect.height);
+      if (!w || !h || (w === n._fitW && h === n._fitH)) continue;
+      n._fitW = w; n._fitH = h;
+      const it = n._it;
+      if (!it || n._txt !== e.target) continue;
+      if (n._in) autoFit(n, it);
+      else if (!n._run) fitPlain(n._txt, it);
+    }
+  });
+  function txtWatch(n) {
+    n._txt._node = n;
+    txtSizer.observe(n._txt);
+  }
+  // Шрифт догрузился — буквы стали другой ширины, текст инфоблоков подогнать заново
+  if (document.fonts) document.fonts.addEventListener('loadingdone', () => { for (const n of stageNodes) if (n._it && n._in && n._txt.isConnected) autoFit(n, n._it); });
 
   // Размер текста инфоблока: по режиму подгонки (fitMode)
   function autoFit(n, it) {

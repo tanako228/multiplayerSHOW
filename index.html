@@ -736,6 +736,8 @@
     .pf { position: relative; border: 1px solid var(--line); border-radius: calc(6px * var(--rk, 1)); background: var(--ink); cursor: grab; overflow: hidden; width: min-content; min-width: 60px; }
     .pf:hover { border-color: var(--muted); }
     .pf.cur { border-color: #f5c400; box-shadow: 0 0 0 1px #f5c400; } /* открыт в просмотре */
+    .pf.sel { border-color: var(--live); box-shadow: 0 0 0 1px var(--live); background: var(--live-soft); } /* выделен (Ctrl/Shift, Ctrl+A, рамкой) — тянуть можно все сразу */
+    .pf.sel .pn { color: var(--text); }
     .pf .pv { height: var(--pool-th); display: flex; align-items: center; justify-content: center; background: #000; color: var(--muted); font-size: 22px; }
     .pf .pv.icon { width: calc(var(--pool-th) * 1.2); }
     .pf .pv img, .pf .pv video { height: var(--pool-th); width: auto; max-width: calc(var(--pool-th) * 3.5); min-width: 30px; object-fit: cover; display: block; }
