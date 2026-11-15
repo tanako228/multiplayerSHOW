@@ -427,6 +427,12 @@
     .svc-ihead .kind { color: var(--brown); font-size: 11px; text-transform: uppercase; letter-spacing: .05em; min-width: 72px; }
     .svc-ihead .iname { flex: 1; min-width: 0; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .svc-ihead button { padding: 3px 9px; font-size: 13px; }
+    /* Пункт «Библия»: перевод и ‹ место › — расширить на стих (playlist.js: brefCtl) */
+    .svc-ihead .bref { display: inline-flex; align-items: center; gap: 3px; min-width: 0; cursor: default; }
+    .svc-ihead .bref:empty { display: none; }
+    .svc-ihead .bref select { max-width: 150px; padding: 2px 4px; font-size: 12px; }
+    .svc-ihead .bref .bref-step { padding: 2px 7px; font-size: 14px; line-height: 1; }
+    .svc-ihead .bref .bref-ref { max-width: 220px; padding: 0 3px; font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
     .svc-slides { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(var(--svc-tile, 170px), 100%), 1fr)); gap: 10px; padding: 0 2px; }
     /* Слайд: картинка 16:9 и полоска с номером и подписью; на экране — оранжевая рамка и полоска */
     .sl { position: relative; border: 2px solid transparent; border-radius: calc(5px * var(--rk, 1)); overflow: hidden; cursor: pointer; background: var(--field); }
@@ -914,10 +920,23 @@
     .preset-row .pname small { display: block; color: var(--muted); font-size: 11px; }
     .preset-row button { padding: 5px 10px; }
 
-    /* Список мест Писания → закладки */
-    #refListText { width: 100%; min-height: 220px; resize: vertical; font: inherit; line-height: 1.5; color: var(--text); background: var(--field); border: 1px solid var(--line); border-radius: calc(6px * var(--rk, 1)); padding: 10px 12px; }
-    #refListResult { margin-top: 10px; font-size: 13px; line-height: 1.5; }
-    #refListResult .bad { color: var(--warn); }
+    /* Список мест Писания: несколько мест в поле «Место» + Enter → окно #refPick (tools.js: refEnter, openRefPick). Не модальное — чтобы места можно было тянуть в плейлисты */
+    /* Оформление — общее: класс .ui-pop (стекло, размытие, темы) и шапка/низ окон .dlg-head/.dlg-foot; здесь только размеры и список */
+    #refPick { position: fixed; z-index: 900; width: 360px; max-width: calc(100vw - 24px); max-height: min(580px, 80vh); display: flex; flex-direction: column; color: var(--text); background: var(--panel); border: 1px solid var(--line); border-radius: calc(10px * var(--rk, 1)); box-shadow: 0 20px 60px rgba(0, 0, 0, .55); }
+    #refPick[hidden] { display: none; }
+    #refPick .dlg-head { padding: 10px 10px 10px 16px; cursor: move; user-select: none; touch-action: none; }
+    #refPick .dlg-head h2 { font-size: 15px; }
+    #refPick .dlg-foot { padding: 10px 16px; flex-wrap: wrap; }
+    #refPick .hint { margin: 0; padding: 10px 16px 4px; color: var(--muted); font-size: 12px; line-height: 1.4; }
+    #rpList { flex: 1; min-height: 60px; overflow: auto; padding: 4px 10px 8px; outline: none; display: flex; flex-direction: column; gap: 4px; }
+    #rpList:focus-visible { box-shadow: inset 0 0 0 1px var(--live); }
+    /* Строки — как закладки (.bm): плашка поля, выделенная — с оттенком акцента */
+    #rpList .rp-item { display: flex; gap: 8px; align-items: baseline; padding: 6px 10px; background: var(--field); border: 1px solid var(--line); border-radius: calc(6px * var(--rk, 1)); user-select: none; cursor: grab; }
+    #rpList .rp-item:hover { border-color: var(--muted); }
+    #rpList .rp-item.picked { background: color-mix(in srgb, var(--live) 22%, var(--field)); border-color: color-mix(in srgb, var(--live) 55%, var(--line)); }
+    #rpList .rp-ref { flex: 1; }
+    #rpList .rp-n { font-size: 12px; color: var(--muted); }
+    #rpList .rp-bad { padding: 6px 2px; color: var(--warn); font-size: 13px; }
     #trDialog { width: min(820px, 94vw); }
     .tr-row { display: flex; gap: 8px; align-items: center; padding: 8px 6px; border-bottom: 1px solid var(--line); border-radius: calc(6px * var(--rk, 1)); }
     .tr-row.cur { background: var(--live-soft); }
@@ -1783,7 +1802,7 @@
       border: 1px solid rgba(255, 255, 255, .09);
       box-shadow: inset 0 1px 0 rgba(255, 255, 255, .08), 0 20px 60px rgba(0, 0, 0, .55);
     }
-    html[data-ui-deco=aura] dialog { backdrop-filter: blur(calc(var(--blur, 18px) * 1.2)) saturate(1.3); }
+    html[data-ui-deco=aura] :is(dialog, .ui-pop) { backdrop-filter: blur(calc(var(--blur, 18px) * 1.2)) saturate(1.3); }
     /* ----- Элементы управления aura (tools.js: auraSyncRanges, makeKnob) ----- */
     /* Ползунки (как шкала Spotify): тонкая дорожка, залита акцентом до значения (--pct), белая светящаяся ручка */
     html[data-ui-deco=aura] input[type=range]:not(.cpk *) { -webkit-appearance: none; appearance: none; height: 16px; background: transparent; }
@@ -1843,7 +1862,7 @@
     }
     html[data-ui-deco=amber] button.primary:not(.on) { border-color: transparent; border-radius: 999px; padding-inline: 14px; box-shadow: 0 0 14px -4px color-mix(in srgb, var(--live) 70%, transparent); }
     html[data-ui-deco=amber] :is(.tile.live, .sl.live) { box-shadow: 0 0 0 1px var(--live), 0 0 22px -6px color-mix(in srgb, var(--live) 65%, transparent); }
-    html[data-ui-deco=amber] :is(dialog, .ctx-menu, .note-pop, .ly-pop, #srcPop, .st-pop) {
+    html[data-ui-deco=amber] :is(dialog, .ctx-menu, .note-pop, .ly-pop, #srcPop, .st-pop, .ui-pop) {
       border: 1px solid rgba(255, 255, 255, .08); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .06), 0 20px 50px rgba(0, 0, 0, .5);
     }
     /* Ползунок (как шкала «25 lbs»): тонкая линия, жёлтая до значения, риски под ней, тёмная ручка-шайба в жёлтом ореоле */
@@ -1906,7 +1925,7 @@
       background: linear-gradient(90deg, #ffd9c4, #fffaf4); color: var(--live-ink); box-shadow: 0 0 6px #fff, 0 0 16px -2px rgba(255, 140, 110, .9); }
     html[data-ui-deco=sunset] .tab[aria-selected=true] { color: #fff7ef; text-shadow: 0 0 10px rgba(255, 150, 115, .9); border-image: linear-gradient(90deg, #fffaf4, #ff9a7a) 1; }
     html[data-ui-deco=sunset] :is(.tile.live, .sl.live) { box-shadow: 0 0 0 2px #fff3e4, 0 0 12px #fff, 0 0 30px -4px rgba(255, 140, 110, .9); }
-    html[data-ui-deco=sunset] :is(dialog, .ctx-menu, .note-pop, .ly-pop, #srcPop, .st-pop) {
+    html[data-ui-deco=sunset] :is(dialog, .ctx-menu, .note-pop, .ly-pop, #srcPop, .st-pop, .ui-pop) {
       border: 1px solid rgba(255, 255, 255, .28); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .3), 0 20px 50px rgba(30, 30, 60, .5);
     }
     /* Ползунок: жёлоб утоплен, заливка до значения (--pct) — белая с персиковым краем, ореол — полоса света по ширине заливки */
@@ -2054,7 +2073,7 @@
           <button id="bibleSettings" class="icon-btn" data-icon="library" title="Библия: какие переводы на экране и в какие окна темы, длинные стихи; переводы — добавить, удалить, порядок">Библия</button>
         </div>
         <div class="bible-bar">
-          <input type="text" id="refInput" placeholder="Место: Ин 3:16, 1 Кор 13:4-7, Пс 22" autocomplete="off">
+          <input type="text" id="refInput" placeholder="Место: Ин 3:16 — или список: Ин 3:16; Пс 22; 1 Кор 13:4-7" title="Одно место и Enter — показать. Несколько мест (через «;» или вставленный список из плана проповеди) и Enter — откроется окно, откуда места можно перетащить в плейлист или библиотеку" autocomplete="off" spellcheck="false">
           <button id="refGo" class="primary">Показать</button>
           <button id="bsetAdd" title="Дополнительные стихи: заранее загрузить стихи до и после показанных — потом их можно показать, не прерывая вывод">＋</button>
           <span class="search-box">
@@ -2109,7 +2128,6 @@
             <div class="bm-box">
               <div class="pane-head">
                 <span class="pane-title">Закладки <span class="pane-tag">Ctrl+D — добавить, Ctrl+B — скрыть</span></span>
-                <button id="bmImport" title="Вставить список мест Писания — все станут закладками">Список мест…</button>
                 <button id="bmClearAll" title="Удалить все закладки">Очистить</button>
                 <span class="dock-pos" role="group" aria-label="Где показывать закладки">
                   <button data-dock="left" title="Слева">⇤</button>
@@ -3231,23 +3249,21 @@
     </div>
   </dialog>
 
-  <dialog id="refListDialog" class="wide">
-    <div class="dlg-head">
-      <h2>Список мест Писания → закладки</h2>
-      <button class="dlg-x" title="Закрыть">×</button>
+  <!-- Плавающее окно: .ui-pop + .dlg-head/.dlg-foot — тот же вид, что у окон и панелей программы во всех темах оформления -->
+  <div id="refPick" class="ui-pop" role="dialog" aria-labelledby="rpTitle" hidden>
+    <div class="dlg-head" id="rpHead">
+      <h2 id="rpTitle">Места Писания</h2>
+      <button id="rpClose" class="dlg-x" title="Закрыть (Esc)">×</button>
     </div>
-    <div class="dlg-body" style="max-height:none;flex:1">
-      <p class="hint" style="margin-top:0">Вставьте список мест в любом виде: каждое с новой строки или через точку с запятой. Например: «Ин 3:16», «1 Кор 13:4-7», «Пс 22», «Рим 8:28; 12:1-2» (без книги — та же книга, что перед ним). Можно перетащить сюда текстовый файл.</p>
-      <textarea id="refListText" spellcheck="false" placeholder="Ин 3:16&#10;Рим 8:28; 12:1-2&#10;1 Кор 13:4-7&#10;Пс 22"></textarea>
-      <div id="refListResult"></div>
-    </div>
+    <p class="hint">Ctrl/Shift+щелчок, Ctrl+A — выделить; Ctrl+C — копировать; выделенные перетащите в плейлист или библиотеку</p>
+    <div id="rpList" tabindex="0"></div>
     <div class="dlg-foot">
-      <label class="check"><input type="checkbox" id="refListReplace"> Сначала удалить старые закладки</label>
+      <button id="rpCopy" title="Копировать выделенные места как текст (Ctrl+C)">Копировать</button>
+      <button id="rpBm" title="Добавить выделенные места в закладки">В закладки</button>
       <span class="spacer"></span>
-      <button class="dlg-x">Закрыть</button>
-      <button id="refListAdd" class="primary">Добавить в закладки</button>
+      <button id="rpDel" title="Убрать выделенные из этого списка (Delete)">Убрать</button>
     </div>
-  </dialog>
+  </div>
 
   <dialog id="themeDialog" class="wide">
     <div class="dlg-head">

@@ -2411,7 +2411,7 @@ function goRef() {
 
 // Пока печатают «Ин 3:16», сразу открываем главу и подсвечиваем стихи; на экран — по Enter
 function previewRef() {
-  if (!bible) return;
+  if (!bible || isRefList($('refInput').value)) return; // список мест — по Enter откроется окно (tools.js: refEnter)
   const r = oneChapterFix(Bible.parseRef($('refInput').value));
   if (!r) return;
   const bi = Bible.findBook(bible, r.token);
@@ -2848,8 +2848,9 @@ $('bibleSettings').addEventListener('click', () => { renderTrRows(); syncTrShow(
 $('trDlgClose').addEventListener('click', () => $('trDialog').close());
 $('trDlgDone').addEventListener('click', () => $('trDialog').close());
 
-$('refGo').addEventListener('click', goRef);
-$('refInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') goRef(); });
+// Одно место — показать; несколько («Ин 3:16; Пс 22», строки из плана проповеди) — окно со списком (tools.js: refEnter)
+$('refGo').addEventListener('click', () => refEnter());
+$('refInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') refEnter(); });
 $('refInput').addEventListener('input', debounce(previewRef, 120));
 $('searchInput').addEventListener('input', debounce(() => {
   const q = $('searchInput').value.trim();

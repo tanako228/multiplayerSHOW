@@ -1131,7 +1131,9 @@ $('poolGrip').addEventListener('pointerdown', (e) => {
 applyPool();
 if (settings.poolOpen) renderPool();
 
-/* ===== Список мест Писания → закладки ===== */
+/* ===== Список мест Писания: несколько мест в поле «Место» + Enter → окно #refPick =====
+   Окно не модальное (обычный div, не <dialog>): из него тянут места в плейлисты и библиотеки
+   тем же форматом, что и закладки (application/x-cp-bible: { groups }, playlist.js: dropBible). */
 
 // Делим текст на места: строки, «;», и запятая, если после неё начинается новая книга («Ин 3:16, Рим 8:28»)
 function splitRefList(text) {
@@ -1150,10 +1152,11 @@ function oneChapterFix(r) {
   return { ...r, ch: 1, v1: r.ch, v2: r.ch };
 }
 
-function importRefList(text, replace) {
-  if (!bible) return { added: [], bad: ['сначала добавьте перевод Библии'] };
-  if (replace) bookmarks = [];
-  const added = [];
+const sameRef = (a, b) => a.canon === b.canon && a.bi === b.bi && a.ci === b.ci && a.v1 === b.v1 && a.v2 === b.v2;
+
+// Места в открытом переводе — в виде закладок ({ canon, bi, ci, book, v1, v2 }), чтобы работали bmRef/bmKeys; и что не поняли
+function parseRefList(text) {
+  const items = [];
   const bad = [];
   let lastBook = '';
   for (const part of splitRefList(text)) {
@@ -1164,52 +1167,261 @@ function importRefList(text, replace) {
     const chapter = bi >= 0 ? bible.books[bi].chapters[r.ch - 1] : null;
     if (!chapter || !chapter.length || (r.v1 && !chapter[r.v1 - 1])) { bad.push(part); continue; }
     lastBook = r.token;
-    const bm = {
+    const it = {
       id: newId(), canon: bible.books[bi].canon || 0, bi, ci: r.ch - 1, book: bible.books[bi].name,
       v1: r.v1 || null, v2: r.v1 ? Math.min(r.v2, chapter.length) : null,
     };
-    if (!bookmarks.some((b) => b.canon === bm.canon && b.bi === bm.bi && b.ci === bm.ci && b.v1 === bm.v1 && b.v2 === bm.v2)) bookmarks.push(bm);
-    added.push(bmRef(bm));
+    if (!items.some((b) => sameRef(b, it))) items.push(it);
+  }
+  return { items, bad };
+}
+
+let rpItems = [];
+let rpBad = [];
+let rpPick = new Set(); // id выделенных
+let rpAnchor = 0; // откуда считать Shift-диапазон
+let rpCur = 0; // где «курсор» для стрелок
+const rpPicked = () => rpItems.filter((it) => rpPick.has(it.id));
+
+// Разобрать список и показать окно; true — всё понято (поле можно очистить)
+function openRefPick(text) {
+  if (!bible) { showNotice('Сначала добавьте перевод Библии', true); return false; }
+  const { items, bad } = parseRefList(text);
+  if (!items.length && !bad.length) return false;
+  rpItems = items;
+  rpBad = bad;
+  rpPick = new Set(items.map((it) => it.id)); // сразу выделены все — можно тянуть весь список
+  rpAnchor = 0;
+  rpCur = 0;
+  const box = $('refPick');
+  const was = !box.hidden;
+  box.hidden = false;
+  rpRender();
+  if (!was) rpPlace();
+  $('rpList').focus();
+  return !bad.length;
+}
+
+// Где открыть окно: где его оставили, иначе — под полем ввода; всегда в пределах окна программы
+function rpPlace(x, y) {
+  const box = $('refPick');
+  if (x == null) {
+    const p = settings.rpPos;
+    if (p && Number.isFinite(p.x) && Number.isFinite(p.y)) ({ x, y } = p);
+    else { const r = $('refInput').getBoundingClientRect(); x = r.left; y = r.bottom + 6; }
+  }
+  x = Math.max(4, Math.min(x, innerWidth - box.offsetWidth - 4));
+  y = Math.max(4, Math.min(y, innerHeight - box.offsetHeight - 4));
+  box.style.left = x + 'px';
+  box.style.top = y + 'px';
+}
+
+function rpRender() {
+  const list = $('rpList');
+  list.replaceChildren();
+  $('rpTitle').textContent = `Места Писания: ${rpItems.length}`;
+  rpItems.forEach((it, i) => {
+    const row = Object.assign(document.createElement('div'), {
+      className: 'rp-item' + (rpPick.has(it.id) ? ' picked' : ''), draggable: true,
+      title: 'Двойной щелчок — открыть в Библии',
+    });
+    row.dataset.i = i;
+    row.append(
+      Object.assign(document.createElement('span'), { className: 'rp-ref', textContent: bmRef(it) }),
+      Object.assign(document.createElement('span'), { className: 'rp-n', textContent: `${bmKeys(it).length} ст.` }),
+    );
+    list.append(row);
+  });
+  if (rpBad.length) {
+    list.append(Object.assign(document.createElement('div'), {
+      className: 'rp-bad', textContent: `Не удалось понять (${rpBad.length}): ${rpBad.join(' · ')}`,
+    }));
+  }
+  $('rpCopy').disabled = $('rpBm').disabled = $('rpDel').disabled = !rpPick.size;
+}
+
+function rpSelectRange(i) {
+  const a = Math.max(0, Math.min(rpAnchor, rpItems.length - 1));
+  rpPick = new Set(rpItems.slice(Math.min(a, i), Math.max(a, i) + 1).map((it) => it.id));
+}
+
+// Нажатие: Ctrl — добавить/убрать, Shift — диапазон, просто — одно место.
+// Нажали на уже выделенное — выделение не сбиваем (может, его сейчас потянут); одно останется, если просто отпустили
+let rpDownKeep = false;
+$('rpList').addEventListener('mousedown', (e) => {
+  const row = e.target.closest('.rp-item');
+  if (!row || e.button !== 0) return;
+  const i = +row.dataset.i;
+  const id = rpItems[i].id;
+  rpDownKeep = false;
+  rpCur = i;
+  if (e.ctrlKey || e.metaKey) { if (rpPick.has(id)) rpPick.delete(id); else rpPick.add(id); rpAnchor = i; }
+  else if (e.shiftKey) rpSelectRange(i);
+  else if (rpPick.has(id)) { rpDownKeep = true; rpAnchor = i; return; }
+  else { rpPick = new Set([id]); rpAnchor = i; }
+  rpRender();
+});
+$('rpList').addEventListener('click', (e) => {
+  const row = e.target.closest('.rp-item');
+  if (!row || !rpDownKeep) return;
+  rpDownKeep = false;
+  rpPick = new Set([rpItems[+row.dataset.i].id]);
+  rpRender();
+});
+$('rpList').addEventListener('dblclick', (e) => {
+  const row = e.target.closest('.rp-item');
+  if (row) rpOpen(rpItems[+row.dataset.i]);
+});
+
+// Открыть место в «Библии» — как при наборе в поле «Место», без вывода на экран
+function rpOpen(it) {
+  if (!it) return;
+  if (tab !== 'bible') setTab('bible');
+  $('refInput').value = bmRef(it);
+  previewRef();
+}
+
+// Тянем выделенные (или одно — то, за которое взяли): каждое место станет своей презентацией в плейлисте/библиотеке
+$('rpList').addEventListener('dragstart', (e) => {
+  const row = e.target.closest('.rp-item');
+  if (!row || !bible) { e.preventDefault(); return; }
+  rpDownKeep = false;
+  const it = rpItems[+row.dataset.i];
+  if (!rpPick.has(it.id)) { rpPick = new Set([it.id]); rpRender(); }
+  const picked = rpPicked();
+  const groups = picked.map(bmKeys).filter((k) => k.length);
+  if (!groups.length) { e.preventDefault(); return; }
+  e.dataTransfer.setData('application/x-cp-bible', JSON.stringify({ groups }));
+  e.dataTransfer.setData('text/plain', picked.map(bmRef).join('\n'));
+  e.dataTransfer.effectAllowed = 'copy';
+  const tag = Object.assign(document.createElement('div'), {
+    className: 'drag-tag', textContent: picked.length > 1 ? `Мест Писания: ${picked.length}` : bmRef(picked[0]),
+  });
+  document.body.append(tag);
+  e.dataTransfer.setDragImage(tag, 12, 12);
+  setTimeout(() => tag.remove());
+});
+
+// Копировать — текстом, по месту на строку (его можно снова вставить в поле «Список мест»)
+async function rpCopy() {
+  const picked = rpPicked();
+  if (!picked.length) return;
+  const text = picked.map(bmRef).join('\n');
+  try {
+    if (window.api && window.api.clipSet) await window.api.clipSet({ slides: null, text });
+    else await navigator.clipboard.writeText(text);
+    flashStatus(`Скопировано мест: ${picked.length}`);
+  } catch { showNotice('Не удалось скопировать', true); }
+}
+
+function rpToBookmarks() {
+  const picked = rpPicked();
+  if (!picked.length) return;
+  let n = 0;
+  for (const it of picked) {
+    if (bookmarks.some((b) => sameRef(b, it))) continue;
+    bookmarks.push({ ...it, id: newId() });
+    n++;
   }
   saveBookmarks();
   renderBookmarks();
-  return { added, bad };
+  setDockOpen(true);
+  flashStatus(n ? `Добавлено в закладки: ${n}` : 'Эти места уже в закладках');
 }
 
-function openRefList() {
-  if (!bible) { showNotice('Сначала добавьте перевод Библии', true); return; }
-  $('refListResult').replaceChildren();
-  $('refListDialog').showModal();
-  $('refListText').focus();
+function rpRemove() {
+  if (!rpPick.size) return;
+  rpItems = rpItems.filter((it) => !rpPick.has(it.id));
+  rpPick = new Set();
+  rpAnchor = rpCur = 0;
+  rpRender();
 }
 
-$('bmImport').addEventListener('click', openRefList);
+function closeRefPick() {
+  $('refPick').hidden = true;
+  if (tab === 'bible') $('refInput').focus();
+}
+
+// Клавиши в окне — свои; общие горячие клавиши программы сюда не доходят
+$('refPick').addEventListener('keydown', (e) => {
+  const mod = e.ctrlKey || e.metaKey;
+  const inList = $('rpList').contains(e.target);
+  let done = true;
+  if (e.key === 'Escape') closeRefPick();
+  else if (!inList) done = false;
+  else if (mod && e.code === 'KeyA') { rpPick = new Set(rpItems.map((it) => it.id)); rpRender(); }
+  else if (mod && e.code === 'KeyC') rpCopy();
+  else if (e.key === 'Delete' || e.key === 'Backspace') rpRemove();
+  else if (e.key === 'Enter') rpOpen(rpPicked()[0]);
+  else if ((e.key === 'ArrowDown' || e.key === 'ArrowUp') && rpItems.length) {
+    const i = Math.max(0, Math.min(rpItems.length - 1, rpCur + (e.key === 'ArrowDown' ? 1 : -1)));
+    rpCur = i;
+    if (e.shiftKey) rpSelectRange(i);
+    else { rpPick = new Set([rpItems[i].id]); rpAnchor = i; }
+    rpRender();
+    const row = $('rpList').children[i];
+    if (row) row.scrollIntoView({ block: 'nearest' });
+  } else done = false;
+  if (done) { e.preventDefault(); e.stopPropagation(); }
+});
+
+$('rpClose').addEventListener('click', closeRefPick);
+$('rpCopy').addEventListener('click', rpCopy);
+$('rpBm').addEventListener('click', rpToBookmarks);
+$('rpDel').addEventListener('click', rpRemove);
+
+// Окно двигают за шапку; место запоминается
+$('rpHead').addEventListener('pointerdown', (e) => {
+  if (e.button !== 0 || e.target.closest('button')) return;
+  const head = e.currentTarget;
+  const box = $('refPick');
+  const dx = e.clientX - box.offsetLeft;
+  const dy = e.clientY - box.offsetTop;
+  head.setPointerCapture(e.pointerId);
+  const move = (ev) => rpPlace(ev.clientX - dx, ev.clientY - dy);
+  const up = () => {
+    head.removeEventListener('pointermove', move);
+    head.removeEventListener('pointerup', up);
+    settings.rpPos = { x: box.offsetLeft, y: box.offsetTop };
+    saveSettings();
+  };
+  head.addEventListener('pointermove', move);
+  head.addEventListener('pointerup', up);
+});
+addEventListener('resize', () => { if (!$('refPick').hidden) rpPlace(); });
+
+/* Поле «Место» (#refInput): одно место — показать (goRef), несколько — окно со списком.
+   Список из нескольких строк при вставке не склеивается — переводы строк заменяем на «; » */
+const rlIn = $('refInput');
+const isRefList = (text) => splitRefList(text).length > 1;
+function refEnter() {
+  if (!isRefList(rlIn.value)) { goRef(); return; }
+  if (openRefPick(rlIn.value)) rlIn.value = ''; // всё понято — поле свободно для следующего места
+}
+rlIn.addEventListener('paste', (e) => {
+  const t = e.clipboardData.getData('text/plain');
+  if (!/[\r\n]/.test(t.trim())) return;
+  e.preventDefault();
+  const v = t.split(/\r?\n/).map((s) => s.trim()).filter(Boolean).join('; ');
+  rlIn.setRangeText(v, rlIn.selectionStart, rlIn.selectionEnd, 'end');
+});
+// Текстовый файл со списком можно бросить прямо в поле
+rlIn.addEventListener('dragover', (e) => { e.preventDefault(); e.stopPropagation(); });
+rlIn.addEventListener('drop', async (e) => {
+  e.preventDefault();
+  e.stopPropagation();
+  const f = e.dataTransfer.files[0];
+  const t = f ? await f.text() : e.dataTransfer.getData('text/plain');
+  if (!t) return;
+  rlIn.value = t.split(/\r?\n/).map((s) => s.trim()).filter(Boolean).join('; ');
+  refEnter();
+});
+
 $('bmClearAll').addEventListener('click', async () => {
   if (!bookmarks.length || !(await askYes(`Удалить все закладки (${bookmarks.length})?`, 'Удалить все', true))) return;
   bookmarks = [];
   saveBookmarks();
   renderBookmarks();
-});
-$('refListAdd').addEventListener('click', () => {
-  const { added, bad } = importRefList($('refListText').value, $('refListReplace').checked);
-  const box = $('refListResult');
-  box.replaceChildren();
-  if (added.length) box.append(Object.assign(document.createElement('div'), { textContent: `✓ Добавлено в закладки (${added.length}): ${added.join(', ')}` }));
-  if (bad.length) box.append(Object.assign(document.createElement('div'), { className: 'bad', textContent: `✗ Не удалось понять (${bad.length}): ${bad.join(' · ')}` }));
-  if (!added.length && !bad.length) box.append(Object.assign(document.createElement('div'), { className: 'bad', textContent: 'Список пуст' }));
-  if (added.length) {
-    setDockOpen(true);
-    if (!bad.length) { $('refListText').value = ''; $('refListReplace').checked = false; }
-  }
-});
-// Текстовый файл со списком можно бросить прямо в окно
-$('refListDialog').addEventListener('dragover', (e) => { e.preventDefault(); e.stopPropagation(); });
-$('refListDialog').addEventListener('drop', async (e) => {
-  e.preventDefault();
-  e.stopPropagation();
-  const f = e.dataTransfer.files[0];
-  if (f) $('refListText').value = ($('refListText').value ? $('refListText').value + '\n' : '') + (await f.text());
-  else $('refListText').value += e.dataTransfer.getData('text/plain');
 });
 
 /* ===== Цвета программы (Настройки → Оформление) ===== */

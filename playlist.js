@@ -650,6 +650,7 @@ function renderFeed() {
       noteBtn(item),
       Object.assign(document.createElement('span'), { className: 'cnt', textContent: item.slides.length > 1 ? `${item.slides.length} сл.` : '' }),
     );
+    if (item.kind === 'bible') head.append(brefCtl(item)); // место, перевод и ‹ › — расширить на стих
     const btn = (text, title, fn) => {
       const b = Object.assign(document.createElement('button'), { textContent: text, title });
       b.addEventListener('click', (e) => { e.stopPropagation(); fn(); });
@@ -884,6 +885,7 @@ function showSlide(key, sid, vk = workKey()) {
     updatePlaylistLive(); // триггеры слайдов макросов не трогаем (на Overlay срабатывает «Слой»)
     return;
   }
+  const moved = !plShown || plShown.view !== vk || plShown.key !== key || plShown.sid !== sid;
   if (slide.k === 'audio') {
     // Музыкальный слайд: экран не меняется, включается музыка
     playAudioItem(slide);
@@ -894,6 +896,13 @@ function showSlide(key, sid, vk = workKey()) {
     const many = item.slides.length > 1;
     present(() => contentOf(item, slide), item.name + (many ? ` — ${slide.label || si + 1}` : ''), false, pickedLayer(entry), ownTransition(item, slide)); // слой, выбранный у пункта; свой переход
     plShown = { view: vk, key, sid };
+  }
+  // Выделение в ленте — всегда на показанном слайде: пробел, стрелки, автосмена, макросы, пульт, телефон.
+  // Тот же слайд показали заново (правка темы и т. п.) — выделение не трогаем, оно может быть шире
+  if (moved && vk === workKey()) {
+    sel = [{ key, sid }];
+    selAnchor = { key, sid };
+    selFocus = 'slides';
   }
   if (slide.k !== 'audio') autoArm(key, item, slide, vk); // авто-переключение по таймеру (item.auto)
   // Листание дошло до следующего пункта — в режиме «один пункт» открыть его
@@ -1603,7 +1612,7 @@ function bibleSlidesSelected() {
     for (let v = bSet.x1; v <= bSet.x2; v++) if (verseText(vkey(bSet.bi, bSet.ci, v))) keys.push(vkey(bSet.bi, bSet.ci, v));
     const b = bibleSlidesFor(keys, (k) => { const v = unkey(k).v; return v < bSet.m1 || v > bSet.m2; });
     const main = keys.filter((k) => { const v = unkey(k).v; return v >= bSet.m1 && v <= bSet.m2; });
-    return { name: `${refString(main)} (+ ${bSet.x1}-${bSet.x2})`, slides: b.slides };
+    return { name: `${refString(main)} (+ ${bSet.x1}-${bSet.x2})`, slides: b.slides, keys };
   }
   const keys = bibleKeysForAction();
   if (!keys.length) { flashStatus('Сначала выберите стихи: щелчок по стиху, в «Слайдах» Ctrl/Shift+щелчок — несколько'); return null; }
@@ -1614,11 +1623,175 @@ function bibleSlidesSelected() {
 // extraOf(k) — дополнительный ли стих
 function bibleSlidesFor(keys, extraOf) {
   const slides = keys.filter(verseText).flatMap((k) => verseParts(k).map((_, pi) => bibleSlide([k], pi, extraOf && extraOf(k))));
-  // Целые главы называем коротко: «Иоанна 3-4», а не «Иоанна 3:1-36; 4:1-54»
+  return { name: bibleNameFor(keys), slides, keys };
+}
+// Целые главы называем коротко: «Иоанна 3-4», а не «Иоанна 3:1-36; 4:1-54»
+function bibleNameFor(keys) {
   const chs = [];
   for (const k of keys) { const { bi, ci } = unkey(k); if (!chs.some((x) => x[0] === bi && x[1] === ci)) chs.push([bi, ci]); }
   const whole = chapterKeys(chs).length === keys.length;
-  return { name: whole ? chaptersTitle(chs) : refString(keys), slides };
+  return whole ? chaptersTitle(chs) : refString(keys);
+}
+
+/* ----- Место Писания у пункта «Библия»: item.bref = { tr, canon, bi, vs: [[ci, v], …] } -----
+   Перевод (id), книга (канонический номер; bi — запасной, если в переводе нет номеров) и стихи по порядку.
+   По нему пункт перестраивается в другом переводе и расширяется на стих влево/вправо — в шапке ленты (brefCtl).
+   У старых пунктов bref нет — восстанавливаем по подписям слайдов (brefEnsure). */
+
+// Стихи открытого перевода → bref (только одна книга)
+function brefOf(keys) {
+  if (!bible || !keys || !keys.length) return null;
+  const ks = sortKeys(keys).map(unkey);
+  if (ks.some((k) => k.bi !== ks[0].bi)) return null;
+  return { tr: bible.id, canon: bible.books[ks[0].bi].canon || 0, bi: ks[0].bi, vs: ks.map((k) => [k.ci, k.v]) };
+}
+// Книга места в переводе b; -1 — такой книги в нём нет
+function brefBook(b, r) {
+  if (r.canon) return b.books.findIndex((bk) => bk.canon === r.canon);
+  return b.books[r.bi] ? r.bi : -1;
+}
+// Сделать что-то так, будто открыт перевод b (слайды, названия, деление стихов берутся из открытого перевода)
+function withBible(b, fn) {
+  const saved = bible;
+  bible = b;
+  try { return fn(); } finally { bible = saved; }
+}
+function brefKeys(b, r) {
+  const bi = brefBook(b, r);
+  if (bi < 0) return [];
+  const ch = b.books[bi].chapters;
+  return r.vs.filter(([ci, v]) => ch[ci] && ch[ci][v - 1]).map(([ci, v]) => vkey(bi, ci, v));
+}
+const brefName = (b, r) => { const keys = brefKeys(b, r); return keys.length ? withBible(b, () => bibleNameFor(keys)) : ''; };
+const brefRef = (b, r) => { const keys = brefKeys(b, r); return keys.length ? withBible(b, () => refString(keys)) : ''; };
+// В пункте только слайды Библии — иначе перестраивать его нельзя (потеряются свои слайды)
+const brefOk = (item) => item.kind === 'bible' && item.slides.length > 0 && item.slides.every((s) => s.k === 'bible');
+
+// Старый пункт без bref: перевод — по подписи перевода на слайдах, стихи — по подписям «Книга 3:16» (или «3:16A» — часть стиха)
+const brefFailed = new WeakSet();
+async function brefEnsure(item) {
+  if (item.bref) return item.bref;
+  if (!brefOk(item) || brefFailed.has(item) || !bibleIndex.length) return null;
+  const fail = () => { brefFailed.add(item); return null; };
+  const label = item.slides[0].translation || item.translation || '';
+  const t = bibleIndex.find((x) => label && (trLabel(x) === label || x.name === label || trAbbr(x) === label))
+    || (bible && bibleIndex.find((x) => x.id === bible.id));
+  const b = t && (await loadBible(t.id));
+  if (!b) return fail();
+  let book = null;
+  const vs = [];
+  for (const s of item.slides) {
+    const m = /^(.*\S)\s+(\d+):(\d+)(?:-(\d+))?[A-Z]?$/.exec(String(s.ref || '').trim());
+    if (!m || (book !== null && m[1] !== book)) return fail();
+    book = m[1];
+    const ci = +m[2] - 1;
+    for (let v = +m[3]; v <= +(m[4] || m[3]); v++) if (!vs.some((x) => x[0] === ci && x[1] === v)) vs.push([ci, v]);
+  }
+  const bi = Bible.findBook(b, book);
+  if (bi < 0 || item.bref) return item.bref || fail();
+  item.bref = { tr: t.id, canon: b.books[bi].canon || 0, bi, vs }; // сохранится со следующей правкой — отмены не нужно
+  return item.bref;
+}
+
+// Соседний непустой стих книги: d = 1 — следующий (за концом главы — первый стих следующей), -1 — предыдущий
+function brefNext(ch, ci, v, d) {
+  for (let guard = 0; guard < 400; guard++) {
+    v += d;
+    if (v < 1) { ci--; if (ci < 0) return null; v = (ch[ci] || []).length + 1; continue; }
+    if (v > (ch[ci] || []).length) { ci++; if (ci >= ch.length) return null; v = 0; continue; }
+    if (ch[ci][v - 1]) return [ci, v];
+  }
+  return null;
+}
+
+// Правки места идут по очереди: несколько быстрых щелчков по ‹ › — несколько стихов, без гонок
+let brefQueue = Promise.resolve();
+const brefDo = (fn) => { brefQueue = brefQueue.then(fn).catch((e) => console.error(e)); return brefQueue; };
+
+// Расширить место на стих (d = 1 — справа, -1 — слева); shrink — наоборот, убрать крайний стих с этой стороны
+function brefStep(item, d, shrink) {
+  return brefDo(async () => {
+    const r = item.bref;
+    const b = r && (await loadBible(r.tr));
+    const bi = b ? brefBook(b, r) : -1;
+    if (bi < 0) return;
+    const vs = r.vs.slice();
+    if (shrink) {
+      if (vs.length <= 1) { flashStatus('Остался один стих — меньше некуда'); return; }
+      if (d > 0) vs.pop(); else vs.shift();
+    } else {
+      const edge = d > 0 ? vs[vs.length - 1] : vs[0];
+      const nx = brefNext(b.books[bi].chapters, edge[0], edge[1], d);
+      if (!nx) { flashStatus(d > 0 ? 'Это последний стих книги' : 'Это первый стих книги'); return; }
+      if (d > 0) vs.push(nx); else vs.unshift(nx);
+    }
+    await brefApply(item, { ...r, vs });
+  });
+}
+
+// Перестроить слайды пункта по новому месту/переводу. Слайды тех же стихов сохраняют id и свои настройки
+// (тему, переход, заметки…), поэтому показанный слайд остаётся на экране и обновляется
+async function brefApply(item, nr) {
+  const b = await loadBible(nr.tr);
+  if (!b) { showNotice('Перевод не найден', true); renderFeed(); return; }
+  const keys = brefKeys(b, nr);
+  if (!keys.length) { showNotice(`В переводе «${b.name}» нет этого места`, true); renderFeed(); return; }
+  const oldB = item.bref && (await loadBible(item.bref.tr));
+  const oldName = oldB ? brefName(oldB, item.bref) : '';
+  const built = withBible(b, () => bibleSlidesFor(keys));
+  const tagOf = (s) => { const m = /(\d+):(\d+)([A-Z]?)$/.exec(s.ref || ''); return m ? m.slice(1).join(':') : ''; };
+  const old = new Map(item.slides.map((s) => [tagOf(s), s]));
+  const CONTENT = ['k', 'label', 'ref', 'verses', 'translation', 'trs']; // extra (доп. стих) — переносится со старого слайда
+  for (const s of built.slides) {
+    const o = old.get(tagOf(s));
+    if (!o) continue;
+    old.delete(tagOf(s));
+    for (const [k, v] of Object.entries(o)) if (!CONTENT.includes(k)) s[k] = v;
+  }
+  item.slides = built.slides;
+  // Название меняем вместе с местом, только если его не переименовывали
+  if (!item.name || item.name === oldName) item.name = built.name;
+  item.bref = nr;
+  saveLib();
+  renderService();
+  // Показанный слайд этого пункта — сразу в новом виде
+  const on = plShown && entryByKey(plShown.key, keyView(plShown.view));
+  if (on && on.item === item && item.slides.some((s) => s.id === plShown.sid)) showSlide(plShown.key, plShown.sid, plShown.view);
+}
+
+// Шапка пункта «Библия»: [перевод ▾] ‹ Иоанна 3:16-18 ›
+function brefCtl(item) {
+  const box = Object.assign(document.createElement('span'), { className: 'bref' });
+  // Щелчки здесь — не выбор пункта и не перетаскивание
+  for (const ev of ['click', 'mousedown', 'dblclick']) box.addEventListener(ev, (e) => e.stopPropagation());
+  box.addEventListener('dragstart', (e) => { e.preventDefault(); e.stopPropagation(); });
+  if (!brefOk(item)) return box;
+  brefEnsure(item).then(async (r) => {
+    const b = r && (await loadBible(r.tr));
+    if (!b || !box.isConnected || !brefOk(item)) return;
+    const sel = Object.assign(document.createElement('select'), { title: 'Перевод этого места — выберите другой, глава и стихи сохранятся' });
+    for (const t of bibleIndex) sel.append(Object.assign(document.createElement('option'), { value: t.id, textContent: trLabel(t) }));
+    if (!bibleIndex.some((t) => t.id === r.tr)) sel.append(Object.assign(document.createElement('option'), { value: r.tr, textContent: b.name || '—' }));
+    sel.value = r.tr;
+    sel.addEventListener('change', () => brefDo(() => brefApply(item, { ...item.bref, tr: sel.value })));
+    const arrow = (text, d, title) => {
+      const a = Object.assign(document.createElement('button'), { className: 'bref-step', textContent: text, title });
+      a.addEventListener('click', (e) => brefStep(item, d, e.shiftKey || e.altKey));
+      return a;
+    };
+    // Место полностью; если оно и так в названии пункта — коротко, главы и стихи: «3:28–4:1»
+    const ref = brefRef(b, r);
+    const [c1, v1] = r.vs[0];
+    const [c2, v2] = r.vs[r.vs.length - 1];
+    const short = `${c1 + 1}:${v1}` + (c1 === c2 && v1 === v2 ? '' : `–${c2 === c1 ? '' : `${c2 + 1}:`}${v2}`);
+    box.append(
+      sel,
+      arrow('‹', -1, 'Добавить стих перед местом (за началом главы — из предыдущей). Shift+щелчок — убрать первый стих'),
+      Object.assign(document.createElement('span'), { className: 'bref-ref', textContent: ref === item.name ? short : ref, title: ref }),
+      arrow('›', 1, 'Добавить стих после места (за концом главы — из следующей). Shift+щелчок — убрать последний стих'),
+    );
+  });
+  return box;
 }
 
 // Выделенные стихи — в открытый слева плейлист или библиотеку отдельной презентацией, по стиху на слайд
@@ -1627,7 +1800,7 @@ function svcAddBible() {
   if (!b) return;
   const v = findView();
   if (!v) { showNotice('Сначала создайте плейлист: «＋» у «Плейлистов» слева', true); return; }
-  const it = { id: newId(), type: 'pres', kind: 'bible', name: b.name, slides: b.slides };
+  const it = { id: newId(), type: 'pres', kind: 'bible', name: b.name, slides: b.slides, bref: brefOf(b.keys) };
   lib.items[it.id] = it;
   putItem(lib.view.kind, v, it.id, null);
   saveLib();
@@ -1664,7 +1837,7 @@ function dropBible(e, kind, x, beforeKey) {
     if (!Array.isArray(keys) || !keys.length) continue;
     const b = bibleSlidesFor(sortKeys(keys));
     if (!b.slides.length) continue;
-    const it = { id: newId(), type: 'pres', kind: 'bible', name: b.name, slides: b.slides };
+    const it = { id: newId(), type: 'pres', kind: 'bible', name: b.name, slides: b.slides, bref: brefOf(b.keys) };
     lib.items[it.id] = it;
     putItem(kind, x, it.id, beforeKey);
     names.push(b.name);
