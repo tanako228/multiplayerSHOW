@@ -71,7 +71,8 @@ let profSwitching = false; // от команды переключения до 
 
 // Окно, закрытое другим окном целиком (заставка, окно показа), Chromium считает спрятанным и перестаёт рисовать;
 // когда его открывают, программа секунду рисуется заново — был чёрный экран после заставки. Не отключать обратно
-app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion');
+// WebRtcHideLocalIpsWithMdns: трансляция экрана на планшет (opcast.js) — в локальной сети свой IP, а не имя .local
+app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion,WebRtcHideLocalIpsWithMdns');
 
 // Только одна копия программы: две копии делят одно хранилище настроек (localStorage),
 // и Chromium может его стереть — пропадали папки медиапула и другие настройки.
@@ -684,7 +685,7 @@ const videoAudio = {}; // последние команды 'volume' и 'sink' �
    остальные экраны — окна из screenWins. Все окна получают одно и то же (слои, рисунок), а что показать — решает экран. */
 
 const floatWins = new Map(); // id экрана или 'scene:id' → плавающее окно (правая кнопка по «Предпросмотру» → «Открыть в отдельном окне»)
-const outWins = () => [output, ...[...screenWins.values()].map((x) => x.win), ...floatWins.values(), rmMirror].filter((w) => w && !w.isDestroyed());
+const outWins = () => [output, ...[...screenWins.values()].map((x) => x.win), ...floatWins.values(), rmMirror, ...[...opMirrors.values()].map((m) => m.win)].filter((w) => w && !w.isDestroyed());
 
 // Плавающее окно: экран или сцена в обычном окне поверх остальных, без звука; повторный вызов — показать уже открытое
 function openFloatWin({ id, name }) {
@@ -2222,8 +2223,32 @@ app.whenReady().then(() => {
         control.webContents.send('team:edit', { id: c.id, chords: c.chords, key: c.key, sheets, who: c.who, via: c.via, rid });
       });
     },
+    // Пульт оператора на планшете (право «Полное управление», app/op.js ↔ opctl.js): команда — окну оператора, ответ — team:opDone
+    op: (c) => opCall(c),
+    opWant: (n) => { if (control && !control.isDestroyed()) control.webContents.send('team:opWant', n > 0); if (!n) opLiveIdle(); },
+    opRtc: (r) => { if (control && !control.isDestroyed()) control.webContents.send('team:rtc', r); },
+    opThumb: (v) => opThumb(v),
+    opPoolThumb: (id) => opPoolThumb(id),
+    opLive: (q) => opLive(q),
   });
   app.on('will-quit', team.shutdown);
+  // Окно оператора раз в секунду: эти экраны идут на планшеты видео — держать их зеркала и слать кадры
+  ipcMain.handle('team:castKeep', (_e, sids) => {
+    for (const sid of (Array.isArray(sids) ? sids : []).slice(0, 4)) {
+      const m = opMirror(String(sid));
+      if (!m) continue;
+      const fresh = !m.cast;
+      m.cast = Date.now();
+      if (fresh && m.img) opCastSend(m); // новый зритель — текущий кадр сразу
+    }
+  });
+  ipcMain.handle('team:opDone', (_e, r) => {
+    const w = r && opWait.get(r.rid);
+    if (!w) return;
+    opWait.delete(r.rid);
+    clearTimeout(w.t);
+    w.ok(opOut(r.res));
+  });
   ipcMain.handle('team:chordsDone', (_e, r) => {
     const w = r && chordWait.get(r.rid);
     if (!w) return;
@@ -2862,7 +2887,8 @@ function rmHandle(req, res) {
   if (u.pathname === '/api/live') {
     rmMirrorUsed = Date.now();
     rmMirrorOpen();
-    const img = rmMirrorFrame;
+    let img = rmMirrorFrame;
+    if (img && !img.isEmpty() && img.getSize().width > 480) img = img.resize({ width: 480 }); // зеркало открыто крупным для пульта оператора
     return img && !img.isEmpty() ? rmSend(res, 200, 'image/jpeg', img.toJPEG(70)) : rmSend(res, 204, 'image/jpeg', '');
   }
   if (u.pathname === '/api/cmd' && req.method === 'POST') {
@@ -2918,7 +2944,7 @@ function rmThumb(s) {
     const buf = rmThumbFrame && !rmThumbFrame.isEmpty() ? rmThumbFrame.toJPEG(72) : null;
     if (buf) {
       rmThumbs.set(s.v, buf);
-      if (rmThumbs.size > 400) rmThumbs.delete(rmThumbs.keys().next().value);
+      if (rmThumbs.size > 1200) rmThumbs.delete(rmThumbs.keys().next().value); // ~30 КБ картинка; пульт оператора — сотни слайдов
     }
     return buf;
   });
@@ -2927,12 +2953,19 @@ function rmThumb(s) {
 }
 
 // «Сейчас на экране»: зеркало вывода «Основного» экрана; закрывается само, когда телефоны не смотрят
-function rmMirrorOpen() {
-  if (rmMirror && !rmMirror.isDestroyed()) return;
+// big — для пульта оператора (960 px, 8 кадров/с: планшет сам берёт ширину под свой экран и сеть); пульт презентации — 480 px, 4 кадра/с
+let rmMirrorW = 0;
+function rmMirrorOpen(big) {
+  const want = big ? 960 : 480; // пульт презентации — 480; у пульта оператора свои зеркала (opMirror)
+  if (rmMirror && !rmMirror.isDestroyed()) {
+    if (rmMirrorW >= want) return;
+    rmMirrorClose(); // нужен крупнее — открыть заново
+  }
   const { W, H } = rmState.size;
-  rmMirror = new BrowserWindow({ width: 480, height: Math.round((480 * H) / W) || 270, show: false, frame: false, useContentSize: true, webPreferences: { ...webPreferences, offscreen: true } });
+  rmMirrorW = want;
+  rmMirror = new BrowserWindow({ width: want, height: Math.round((want * H) / W) || Math.round(want * 9 / 16), show: false, frame: false, useContentSize: true, webPreferences: { ...webPreferences, offscreen: true } });
   rmMirror.webContents.setAudioMuted(true);
-  rmMirror.webContents.setFrameRate(4);
+  rmMirror.webContents.setFrameRate(big ? 8 : 4);
   rmMirror.webContents.on('paint', (_e, _d, img) => { rmMirrorFrame = img; });
   rmMirror.webContents.on('did-finish-load', () => {
     rmMirror.webContents.send('output:settings', { resW: W, resH: H });
@@ -2941,8 +2974,193 @@ function rmMirrorOpen() {
   rmMirror.on('closed', () => { rmMirror = null; rmMirrorFrame = null; });
   rmMirror.loadFile('output.html', { query: { screen: 'main' } });
 }
-function rmMirrorClose() { if (rmMirror && !rmMirror.isDestroyed()) rmMirror.destroy(); rmMirror = null; rmMirrorFrame = null; }
+function rmMirrorClose() { if (rmMirror && !rmMirror.isDestroyed()) rmMirror.destroy(); rmMirror = null; rmMirrorFrame = null; rmMirrorW = 0; }
 setInterval(() => { if (rmMirror && Date.now() - rmMirrorUsed > 15000) rmMirrorClose(); }, 5000);
+
+/* ---------- Пульт оператора на планшете (приложение группы, право «Полное управление»: app/op.js) ----------
+   Команды идут по WebSocket группы (teamapi.js: op) → сюда → окну оператора (opctl.js, team:op) → ответ team:opDone.
+   В ответе у слайдов есть их содержимое — здесь оно меняется на отпечаток v: картинку слайда телефон берёт отдельно
+   (/api/v1/op/thumb/<v>), рисует её то же скрытое окно, что у пульта презентации (rmThumb), и хранит у себя навсегда
+   (отпечаток меняется вместе с содержимым). Файлы медиапула — по id (путь на телефон не уходит).
+   «Что на экране» — то же зеркало вывода (rmMirror), кадр только когда картинка поменялась (opPaint);
+   телефон просит кадр новее своего, ширину и качество JPEG выбирает сам под скорость сети. */
+let opReq = 0;
+const opWait = new Map();
+const opContent = new Map(); // v → содержимое слайда
+const opFiles = new Map();   // id → файл медиапула { type, url, name, path }
+const opFileId = (p) => crypto.createHash('sha1').update(String(p).toLowerCase()).digest('hex').slice(0, 16);
+const opTrim = (m, n) => { while (m.size > n) m.delete(m.keys().next().value); };
+
+function opCall(c) {
+  return new Promise((ok, no) => {
+    if (!control || control.isDestroyed()) return no(new Error('Окно программы закрыто'));
+    let x = c.x || {};
+    if (c.a === 'pool.show') {
+      const f = opFiles.get(String(x.id || ''));
+      if (!f) return ok({ err: 'Файла уже нет — откройте папку заново' });
+      x = { file: f };
+    }
+    const rid = ++opReq;
+    const t = setTimeout(() => { opWait.delete(rid); no(new Error('Программа не ответила')); }, 12000);
+    opWait.set(rid, { ok, t });
+    control.webContents.send('team:op', { rid, a: c.a, x, who: c.who });
+  });
+}
+function opOut(res) {
+  if (!res || typeof res !== 'object') return res || null;
+  if (res.size && res.size.W > 0 && res.size.H > 0) rmState.size = { W: Number(res.size.W), H: Number(res.size.H) };
+  const fix = (it) => {
+    if (!it || !Array.isArray(it.slides)) return;
+    for (const s of it.slides) {
+      if (s.content) {
+        s.v = rmHash([s.content, rmState.size]);
+        opContent.delete(s.v);
+        opContent.set(s.v, s.content);
+      }
+      delete s.content;
+    }
+  };
+  fix(res);
+  if (res.items && typeof res.items === 'object') for (const it of Object.values(res.items)) fix(it);
+  opTrim(opContent, 6000);
+  if (Array.isArray(res.files)) {
+    res.files = res.files.map((f) => {
+      const id = opFileId(f.path);
+      opFiles.set(id, { type: f.type, url: f.url, name: f.name, path: f.path });
+      return { id, name: f.name, type: f.type };
+    });
+    opTrim(opFiles, 20000);
+  }
+  return res;
+}
+function opThumb(v) {
+  const content = opContent.get(v);
+  if (!content) return Promise.resolve(null);
+  return rmThumb({ v, content });
+}
+// Миниатюра файла медиапула: тот же кэш на диске (thumbs/), что у медиапула в программе
+async function opPoolThumb(id) {
+  const f = opFiles.get(id);
+  if (!f || (f.type !== 'image' && f.type !== 'video')) return null;
+  try {
+    const st = await fs.promises.stat(f.path);
+    const dir = path.join(app.getPath('userData'), 'thumbs');
+    const out = path.join(dir, crypto.createHash('md5').update(f.path + st.mtimeMs + st.size).digest('hex') + '.jpg');
+    try { return await fs.promises.readFile(out); } catch { /* ещё нет */ }
+    let img = null;
+    try { img = await nativeImage.createThumbnailFromPath(f.path, { width: 320, height: 320 }); } catch { /* нет миниатюры у Windows */ }
+    if ((!img || img.isEmpty()) && f.type === 'image') {
+      img = nativeImage.createFromPath(f.path);
+      if (!img.isEmpty() && img.getSize().height > 240) img = img.resize({ height: 240, quality: 'good' });
+    }
+    if (!img || img.isEmpty()) return null;
+    const buf = img.toJPEG(82);
+    await fs.promises.mkdir(dir, { recursive: true });
+    await fs.promises.writeFile(out, buf);
+    return buf;
+  } catch { return null; }
+}
+
+/* «Что на экране» для пульта: у каждого экрана (Основной, другой экран, сцена 'scene:id') своё скрытое зеркало вывода.
+   Планшет выбирает экран сам. Картинка идёт двумя путями:
+   — видео (WebRTC, opcast.js в окне оператора): кадр сменился — JPEG окну оператора, там холст → видеопоток VP8/H.264
+     с ограничением битрейта (мало трафика, плавно);
+   — запасной: долгий запрос /op/live → JPEG нужной ширины и качества (если видео не соединилось). */
+const opMirrors = new Map(); // sid → { sid, win, used, cast, seq, img, sig, q: Set, enc: Map }
+function opScreenOk(sid) {
+  if (sid === 'main') return true;
+  return !!(screensCfg && Array.isArray(screensCfg.screens) && screensCfg.screens.some((s) => s && s.id === sid));
+}
+function opScreenSize(sid) {
+  const s = screensCfg && Array.isArray(screensCfg.screens) ? screensCfg.screens.find((z) => z && z.id === sid) : null;
+  const W = Number(s && s.w) || (sid === 'main' && rmState.size.W) || 1920;
+  const H = Number(s && s.h) || (sid === 'main' && rmState.size.H) || 1080;
+  return { W, H };
+}
+function opMirror(sid) {
+  if (!opScreenOk(sid)) sid = 'main';
+  let m = opMirrors.get(sid);
+  if (!m) { m = { sid, win: null, used: Date.now(), cast: 0, seq: 0, img: null, sig: '', q: new Set(), enc: new Map() }; opMirrors.set(sid, m); }
+  m.used = Date.now();
+  if (m.win && !m.win.isDestroyed()) return m;
+  // Больше трёх зеркал не держим: самое давнее — закрыть
+  const open = [...opMirrors.values()].filter((x) => x.win && !x.win.isDestroyed());
+  if (open.length >= 3) opMirrorClose(open.sort((a, b) => a.used - b.used)[0]);
+  const { W, H } = opScreenSize(sid);
+  const w = 960;
+  m.win = new BrowserWindow({ width: w, height: Math.round((w * H) / W) || 540, show: false, frame: false, useContentSize: true, webPreferences: { ...webPreferences, offscreen: true } });
+  m.win.webContents.setAudioMuted(true);
+  m.win.webContents.setFrameRate(10);
+  m.win.webContents.on('paint', (_e, _d, img) => opPaint(m, img));
+  m.win.webContents.on('did-finish-load', () => {
+    if (!m.win || m.win.isDestroyed()) return;
+    if (sid === 'main') m.win.webContents.send('output:settings', { resW: W, resH: H });
+    replayTo(m.win);
+  });
+  m.win.on('closed', () => { m.win = null; });
+  m.win.loadFile('output.html', { query: { screen: sid } });
+  return m;
+}
+function opMirrorClose(m) {
+  for (const wt of m.q) { clearTimeout(wt.timer); wt.ok(null); }
+  m.q.clear();
+  if (m.win && !m.win.isDestroyed()) m.win.destroy();
+  m.win = null;
+  m.img = null;
+  m.sig = '';
+  m.enc.clear();
+  opMirrors.delete(m.sid);
+}
+// Никто не смотрит 15 с — закрыть (видео окно оператора подтверждает раз в секунду)
+setInterval(() => {
+  const now = Date.now();
+  for (const m of [...opMirrors.values()]) if (!m.q.size && now - m.used > 15000 && now - m.cast > 5000) opMirrorClose(m);
+}, 5000);
+function opEncode(m, w, q) {
+  const k = `${m.seq}:${w}:${q}`;
+  let buf = m.enc.get(k);
+  if (!buf) {
+    let img = m.img;
+    if (w < img.getSize().width) img = img.resize({ width: w, quality: w >= 640 ? 'better' : 'good' });
+    buf = img.toJPEG(q);
+    m.enc.set(k, buf); // несколько планшетов с одной шириной — кодируем один раз
+    opTrim(m.enc, 12);
+  }
+  return { seq: m.seq, buf };
+}
+function opLive({ sid, after, w, q }) {
+  const m = opMirror(String(sid || 'main'));
+  const t0 = Date.now();
+  return new Promise((done) => {
+    // wait — сколько кадр ждали здесь: телефон вычтет его и узнает, сколько шла сама картинка по сети
+    const ok = (f) => done(f ? { ...f, wait: Date.now() - t0 } : null);
+    if (m.img && m.seq > after) { ok(opEncode(m, w, q)); return; }
+    const wt = { after, w, q, ok, timer: 0 };
+    wt.timer = setTimeout(() => { m.q.delete(wt); m.used = Date.now(); ok(null); }, 8000);
+    m.q.add(wt);
+  });
+}
+// Кадр окну оператора для видео (холст → поток)
+function opCastSend(m) {
+  if (!control || control.isDestroyed() || !m.img) return;
+  try { control.webContents.send('team:castFrame', { sid: m.sid, seq: m.seq, jpg: m.img.toJPEG(82) }); } catch { /* окно закрывается */ }
+}
+// Новый кадр зеркала: тот же (по маленькой копии) — не считается; другой — ждущим планшетам и в видео
+function opPaint(m, img) {
+  if (!img || img.isEmpty()) return;
+  const sig = crypto.createHash('sha1').update(img.resize({ width: 64 }).toBitmap()).digest('base64');
+  if (sig === m.sig) return;
+  m.seq++;
+  m.img = img;
+  m.sig = sig;
+  m.enc.clear();
+  for (const wt of m.q) { clearTimeout(wt.timer); try { wt.ok(opEncode(m, wt.w, wt.q)); } catch { wt.ok(null); } }
+  m.q.clear();
+  if (Date.now() - m.cast < 3000) opCastSend(m);
+}
+function opLiveIdle() {
+  for (const m of [...opMirrors.values()]) if (Date.now() - m.cast > 3000) opMirrorClose(m);
+}
 
 // Окно оператора: доступы и их презентации (сервер включён, пока есть хоть один доступ)
 ipcMain.handle('remote:state', (_e, st) => {

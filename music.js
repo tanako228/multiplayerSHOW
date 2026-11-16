@@ -12,6 +12,7 @@ let fadeTimer = null;
 let playToken = 0;        // каждое новое переключение отменяет прежние плавности
 let endingFade = false;   // песня уже затухает перед следующей
 let dragSrc = null;       // { list, i, songs } — какие песни тянут мышью внутри программы
+let auLoaded = false;     // слой «Аудио» занят: песня включена (играет или на паузе); «Стоп» и конец списка его освобождают
 const SONGS = 'text/x-cp-songs';
 
 function loadMusicLists() {
@@ -58,6 +59,7 @@ function editList(list, fn) {
     playToken += 1;
     audio.pause(); audio.removeAttribute('src'); audio.load();
     playList = null;
+    auLoaded = false;
   }
 }
 function listChanged() { saveMusicLists(); renderMusic(); }
@@ -321,8 +323,12 @@ $('muFilter').addEventListener('input', renderMuSongs);
 
 /* ----- Воспроизведение и плавные переходы ----- */
 
-// Громкость = ползунок × плавность (в квадрате — на слух ровнее)
-function applyVol() { audio.volume = settings.musicMute ? 0 : Math.max(0, Math.min(1, settings.musicVol * gain * gain)); }
+// Громкость = ползунок × плавность (в квадрате — на слух ровнее) × громкость слоя «Аудио»; слой скрыт — тишина
+function applyVol() {
+  const au = typeof auLayer === 'function' ? auLayer() : {};
+  const lv = au.volume != null ? au.volume : 1;
+  audio.volume = settings.musicMute || au.hidden ? 0 : Math.max(0, Math.min(1, settings.musicVol * gain * gain * lv));
+}
 
 // Плавно довести громкость до target за ms (если уже почти там — быстрее)
 function fadeTo(target, ms) {
@@ -354,6 +360,7 @@ async function playTrack(i, list = playList || tracks) {
   playList = list;
   curTrack = i;
   endingFade = false;
+  auLoaded = true;
   audio.src = song.url;
   gain = settings.fadeIn > 0 ? 0 : 1;
   applyVol();
@@ -375,9 +382,16 @@ async function stopMusic() {
   }
   audio.pause();
   if (audio.src) audio.currentTime = 0;
+  auLoaded = false; // «Стоп» — музыка выключена, слой «Аудио» пуст
   gain = 1;
   applyVol();
   updateAudioUi();
+}
+
+// Пауза ↔ дальше (кнопка проигрывателя и слоя «Аудио»); ничего не включено — первая песня списка
+function musicToggle() {
+  if (!audio.src || !curSong()) { musicStep(1); return; }
+  if (audio.paused) { auLoaded = true; gain = 1; applyVol(); audio.play().catch(() => {}); } else pauseMusic();
 }
 
 function pauseMusic() {
@@ -415,7 +429,7 @@ audio.addEventListener('timeupdate', () => {
 audio.addEventListener('ended', () => {
   if (endingFade) return; // переход уже идёт
   if (settings.autoNext && hasNext()) playTrack(curTrack + 1);
-  else updateAudioUi();
+  else { auLoaded = false; updateAudioUi(); } // песня кончилась — слой «Аудио» пуст
 });
 
 /* ----- Fade In / Fade Out: кнопки под проигрывателем, у каждой своя шкала ----- */
@@ -501,6 +515,19 @@ function updateAudioUi() {
   $('muteBtn').title = (mode === 'audio' ? 'Музыка' : 'Видео') + (muted ? ': звук выключен — включить' : ': выключить звук (Mute)');
   $('player').classList.toggle('muted', !!muted);
   updateVideoPlayer();
+  auSync();
+}
+
+// Слой «Аудио» (layers.js): в нём — включённая песня; панель слоёв перерисовываем, только когда это меняется
+const auState = () => { const s = curSong(); return auLoaded && s && audio.src ? { label: s.name, paused: audio.paused } : null; };
+let auKey = null;
+function auSync() {
+  const x = auState();
+  const k = x ? x.label + (x.paused ? '|p' : '|') : '';
+  if (k === auKey) return;
+  const was = auKey;
+  auKey = k;
+  if (was !== null && typeof renderLayers === 'function') renderLayers();
 }
 
 // Второй проигрыватель — только видео
@@ -551,9 +578,8 @@ $('muteBtn').addEventListener('click', () => {
 $('playPause').addEventListener('click', () => {
   const mode = playerMode();
   if (mode === 'video') videoCtl(pv.paused ? 'play' : 'pause');
-  else if (mode === 'audio') {
-    if (audio.paused) { gain = 1; applyVol(); audio.play().catch(() => {}); } else pauseMusic();
-  } else musicStep(1);
+  else if (mode === 'audio') musicToggle();
+  else musicStep(1);
 });
 $('stop').addEventListener('click', () => {
   if (playerMode() === 'video') { videoCtl('pause'); videoCtl('seek', 0); return; }

@@ -182,6 +182,7 @@ function paintConn() {
   $('bannerBtn').textContent = upd ? 'Перезапустить' : 'Попросить доступ снова';
   if ($('sheet').open) paintSheet();
   paintBar();
+  if (typeof Op !== 'undefined' && Op.opened) Op.paintConn();
 }
 
 let syncAgain = false;
@@ -259,6 +260,7 @@ function connect() {
     if (ws !== s) return;
     ws = null;
     clearInterval(wsPing);
+    if (typeof Op !== 'undefined') Op.onLost();
     if (bye === 'auth') return; // ключ отозван — не стучаться
     lost(bye);
   };
@@ -304,8 +306,10 @@ function wake() {
 }
 
 function onMsg(m) {
+  if (typeof Op !== 'undefined' && Op.onMsg(m)) return; // пульт оператора (op.js): ops, opr
   switch (m.t) {
     case 'welcome':
+      if (typeof Op !== 'undefined') setTimeout(() => Op.onWelcome(), 0);
       wsTry = 0;
       conn = 'ok';
       clearInterval(wsPing);
@@ -327,7 +331,14 @@ function onMsg(m) {
     case 'live': applyLive(m.live); break;
     case 'lib': syncIf({ lib: m.lib, seq: m.seq, lh: m.lh }); break;
     case 'sets': setSets(m.sets); break;
-    case 'me': Store.saveMe(m.me).catch(() => {}); toast(m.me.perms.control ? 'Оператор разрешил листать слайды' : 'Права изменились'); paintBar(); $('addSong').hidden = !canChords(); if (screen === 'Song') paintPick(); break;
+    case 'me': {
+      const wasOp = !!(Store.me && Store.me.perms && Store.me.perms.op);
+      Store.saveMe(m.me).catch(() => {});
+      toast(m.me.perms.op && !wasOp ? 'Оператор дал полное управление — вкладка «Пульт»' : m.me.perms.control ? 'Оператор разрешил листать слайды' : 'Права изменились');
+      paintBar(); $('addSong').hidden = !canChords(); if (screen === 'Song') paintPick();
+      if (typeof Op !== 'undefined') Op.perms();
+      break;
+    }
     case 'err': toast(m.text || 'Ошибка'); break;
     case 'bye':
       conn = BAD.includes(m.code) ? m.code : 'net';
@@ -1516,7 +1527,8 @@ function registerSW() {
   navigator.serviceWorker.addEventListener('controllerchange', () => {
     if (!had) return;
     updated = true;
-    if (screen === 'Lib' || screen === 'Song') paintConn(); else location.reload();
+    if (screen === 'Op') toast('Приложение обновилось — перезапустится, когда выйдете из пульта');
+    else if (screen === 'Lib' || screen === 'Song') paintConn(); else location.reload();
   });
 }
 

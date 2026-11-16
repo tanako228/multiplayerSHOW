@@ -206,7 +206,16 @@ function grGrpPaint() {
     cb2.addEventListener('change', () => grDo({ act: 'person', id: p.id, chd: cb2.checked }, cb2.checked ? `«${p.name}» может добавлять и править песни, аккорды и ноты с телефона` : 'Править песни, аккорды и ноты с телефона больше нельзя'));
     chd.append(cb2, document.createTextNode(' Может править песни, аккорды и ноты'));
     chd.title = 'С телефона или планшета: добавлять новые песни, менять текст, разметку частей и аранжировки, вписывать аккорды, добавлять и убирать листы нот, делиться ими файлом. Ctrl+Z в программе возвращает прежнее';
-    head.append(grEl('b', '', p.name), role, ctl, chd, ...(p.pw ? [grEl('span', 'tm-pw', 'с паролем')] : []), grEl('span', 'spacer'),
+    // Полное управление: пульт оператора на планшете (opctl.js ↔ app/op.js) — всё, что делает оператор мышью
+    const opc = grEl('label', 'check');
+    const cb3 = Object.assign(grEl('input'), { type: 'checkbox', checked: !!p.op });
+    cb3.addEventListener('change', async () => {
+      if (cb3.checked && !(await askYes(`Дать «${p.name}» полное управление? С планшета можно будет показывать и убирать всё на экранах, включать и выключать выходы, запускать макросы, менять таймеры и текст слайдов.`, 'Дать управление'))) { cb3.checked = false; return; }
+      grDo({ act: 'person', id: p.id, op: cb3.checked }, cb3.checked ? `«${p.name}» может управлять программой с планшета (вкладка «Пульт»)` : 'Пульт оператора с планшета больше недоступен');
+    });
+    opc.append(cb3, document.createTextNode(' Полное управление'));
+    opc.title = 'Вкладка «Пульт» в приложении: плейлисты, слайды, Библия, медиапул, слои, «Зал» и «Сцена», таймеры, сообщение сцене, плашки, макросы и картинка того, что на экране';
+    head.append(grEl('b', '', p.name), role, ctl, chd, opc, ...(p.pw ? [grEl('span', 'tm-pw', 'с паролем')] : []), grEl('span', 'spacer'),
       grBtn(p.pw ? 'Сменить пароль' : 'Пароль', async () => {
         const pw = await askName(`Пароль для «${p.name}» (не короче 4 знаков) — скажите его человеку`, '');
         if (pw) grDo({ act: 'password', id: p.id, pw }, `Пароль для «${p.name}» задан`);

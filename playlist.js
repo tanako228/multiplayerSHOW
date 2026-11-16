@@ -1247,6 +1247,9 @@ $('fxDialog').addEventListener('close', () => {
 
 // Музыкальный слайд: песня встаёт в быструю очередь (если её там нет) и играет
 function playAudioItem(a) {
+  // Эта песня уже в слое «Аудио» — не начинать сначала (как видео в «Медиа»); на паузе — продолжить
+  const s = curSong();
+  if (s && s.url === a.url && auState()) { if (audio.paused) musicToggle(); return; }
   let i = tracks.findIndex((t) => t.url === a.url);
   if (i < 0) {
     queueAdd([{ type: 'audio', name: a.name || 'Музыка', path: a.path, url: a.url }]);

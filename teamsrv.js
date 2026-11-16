@@ -574,6 +574,7 @@ function init(o) {
   load();
   loadCert();
   api.init({ dir, libFile: o.libFile || path.join(dir, 'library.json'), ver: o.ver || '', on: () => cfg.on, notify, cmd: o.cmd, chords: o.chords, sheets: o.sheets, edit: o.edit, song: o.song,
+    op: o.op, opWant: o.opWant, opThumb: o.opThumb, opPoolThumb: o.opPoolThumb, opLive: o.opLive, opRtc: o.opRtc, // пульт оператора (main.js)
     store: { read: readFile, write: writeFile } });
   start();
   if (opt.want) opt.want();
@@ -605,6 +606,9 @@ function setup(ipcMain, o) {
   ipcMain.handle('team:do', wrap(async (_e, a) => { const res = await api.act(a); return { ...info(), res }; }));
   // Что на экране — телефонам (team.js шлёт, когда поменялось)
   ipcMain.handle('team:live', (_e, l) => api.setLive(l));
+  // Пульт оператора: состояние разделами (opctl.js), только пока пульт кто-то открыл
+  ipcMain.handle('team:opState', (_e, st) => api.setOp(st));
+  ipcMain.handle('team:rtcOut', (_e, r) => (r ? api.rtcSend(Number(r.peer), r.m) : false));
 }
 
 module.exports = { setup, init, shutdown, route, upgrade, info, set, setToken, issue, check, dnsNow, port: () => cfg.port, on: () => cfg.on, changed: notify,

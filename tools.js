@@ -1011,7 +1011,7 @@ function drawPoolGrid(msg) {
   }
   for (const f of poolData.files.filter((x) => match(x.name))) {
     const vis = f.type === 'image' || f.type === 'video';
-    const t = Object.assign(document.createElement('div'), { className: 'pf' + (poolSel.has(f.path) ? ' sel' : ''), title: `${f.name}\n${vis ? 'Щелчок — на экран (слой «Медиа», под текстом)' : f.type === 'audio' ? 'Enter — включить' : 'Enter — в открытый список'}, правая кнопка — меню и «Предпросмотр», перетащите — в плейлист или библиотеку\nCtrl/Shift+щелчок, Ctrl+A или рамка мышью — выделить несколько и перетащить все сразу`, draggable: true, tabIndex: 0 });
+    const t = Object.assign(document.createElement('div'), { className: 'pf' + (poolSel.has(f.path) ? ' sel' : ''), title: `${f.name}\n${vis ? 'Щелчок — на экран (слой «Медиа», под текстом)' : f.type === 'audio' ? 'Щелчок — включить (слой «Аудио»)' : 'Enter — в открытый список'}, правая кнопка — меню и «Предпросмотр», перетащите — в плейлист или библиотеку\nCtrl/Shift+щелчок, Ctrl+A или рамка мышью — выделить несколько и перетащить все сразу`, draggable: true, tabIndex: 0 });
     // Превью в настоящих пропорциях: высота одна, ширина — как у самого файла
     const pv = Object.assign(document.createElement('div'), { className: 'pv' + (f.type === 'video' ? ' vid' : '') });
     // Лёгкая миниатюра; на экран и в плейлист идёт сам файл в полном качестве
@@ -1031,7 +1031,7 @@ function drawPoolGrid(msg) {
       poolDrag = { paths, until: Date.now() + 120000 };
       window.api.startDrag(paths.length > 1 ? paths : f.path);
     });
-    // Щелчок — фото и видео сразу на экран (слой «Медиа»); музыка и прочее — только выбор.
+    // Щелчок — фото и видео сразу на экран (слой «Медиа»), аудио — в слой «Аудио» (играет); прочее — только выбор.
     // Ctrl+щелчок — добавить/убрать из выделения, Shift+щелчок — выделить подряд (на экран не идёт)
     t.addEventListener('click', (e) => poolClick(f, t, e));
     t.addEventListener('contextmenu', (e) => {
@@ -1074,7 +1074,7 @@ function poolClick(f, tile, e) {
   }
   poolAnchor = f.path;
   poolSelSet([f.path]);
-  if (f.type === 'image' || f.type === 'video') poolShow(f);
+  if (f.type === 'image' || f.type === 'video' || f.type === 'audio') poolShow(f); // видео — в «Медиа», аудио — в слой «Аудио»
 }
 
 // Несколько файлов сразу — в открытый список (как «＋» у одного)

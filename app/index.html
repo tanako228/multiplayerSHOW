@@ -14,6 +14,7 @@
 <link rel="apple-touch-icon" href="icon-192.png">
 <link rel="stylesheet" href="app.css">
 <link rel="stylesheet" href="pen.css">
+<link rel="stylesheet" href="op.css">
 <title>MP Show — группа</title>
 <!-- Приложение для телефонов группы (ТЗ-8-Группа.md). Этап 1: вход по QR с подтверждением оператора, все песни
      на телефоне (IndexedDB), поиск, работа без сети. Этап 2: WebSocket — что на экране («Следовать» / «Листать самому»),
@@ -61,6 +62,7 @@
     <nav class="tabs grow" role="tablist" aria-label="Разделы">
       <button id="tabSongs" role="tab" aria-selected="true">Песни <span class="count" id="libCount"></span></button>
       <button id="tabSets" role="tab" aria-selected="false">Сетлист <span class="count" id="setCount"></span></button>
+      <button id="tabOp" role="tab" aria-selected="false" hidden>Пульт</button>
     </nav>
     <button class="conn" id="conn" aria-label="Связь с программой"><i class="dot"></i><span id="connText">…</span></button>
     <button class="icon" id="menuBtn" aria-label="Сведения и настройки">
@@ -104,6 +106,97 @@
   </header>
   <main class="song" id="songBody"></main>
 </div>
+
+<!-- Пульт оператора (op.js, право «Полное управление»): широко — списки | слайды | экран; узко — вкладки и полоса снизу -->
+<div class="scr" id="scrOp" hidden data-tab="sl">
+  <header class="bar">
+    <button class="icon" id="opBack" aria-label="Назад к песням">
+      <svg viewBox="0 0 24 24"><path d="M15 5 8 12l7 7" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </button>
+    <nav class="tabs grow" id="opTabs" role="tablist" aria-label="Пульт">
+      <button data-t="sl" role="tab">Слайды</button>
+      <button data-t="bi" role="tab">Библия</button>
+      <button data-t="md" role="tab">Медиа</button>
+      <button data-t="mo" role="tab">Ещё</button>
+      <button data-t="sc" role="tab" class="op-narrow">Экран</button>
+    </nav>
+    <div class="op-hd">
+      <button class="icon" id="opFind" aria-label="Поиск" title="Поиск: песни, презентации, файлы, место Писания (Ctrl+F)"><svg viewBox="0 0 24 24"><path d="M10.5 4a6.5 6.5 0 1 1 0 13 6.5 6.5 0 0 1 0-13zM20 20l-4.8-4.8" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+      <button class="op-out" id="opHall" aria-pressed="false" title="Вывод в зал: включить / выключить">Зал</button>
+      <button class="op-out" id="opStage" aria-pressed="false" title="Сценические экраны: включить / выключить">Сцена</button>
+      <button class="conn" id="opConn" aria-label="Связь с программой"><i class="dot"></i><span id="opConnText">…</span></button>
+    </div>
+  </header>
+  <div class="op-wrap">
+    <main class="op-main">
+      <section class="op-pane op-slp" id="opSl">
+        <nav class="op-lists" id="opLists" aria-label="Плейлисты и библиотеки"></nav>
+        <div class="op-feed" id="opFeed"></div>
+      </section>
+      <section class="op-pane" id="opBi" hidden>
+        <div class="op-brow">
+          <select id="opBiSel" class="field" aria-label="Перевод"></select>
+          <input id="opBiRef" class="field" placeholder="Ин 3:16" autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="go" aria-label="Место Писания">
+          <button class="primary" id="opBiGo">Показать</button>
+        </div>
+        <div class="op-brow">
+          <button id="opBiPrev">‹ Стих</button>
+          <div class="search grow"><input id="opBiQ" type="search" placeholder="Найти слова" enterkeyhint="search" autocomplete="off" aria-label="Поиск в Библии"></div>
+          <button id="opBiNext">Стих ›</button>
+        </div>
+        <div id="opBiBody"></div>
+      </section>
+      <section class="op-pane" id="opMd" hidden>
+        <div class="op-folders" id="opMdFolders"></div>
+        <div class="op-path"><button class="icon" id="opMdUp" aria-label="Папка выше">
+          <svg viewBox="0 0 24 24"><path d="M15 5 8 12l7 7" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg></button><b id="opMdPath" data-noi18n></b></div>
+        <div class="op-grid" id="opMdGrid"></div>
+      </section>
+      <section class="op-pane" id="opMo" hidden><div id="opMoBody"></div></section>
+    </main>
+    <aside class="op-side" id="opSide" aria-label="Что на экране">
+      <div class="op-pv" id="opPv"><img id="opPvImg" alt="Что сейчас на экране"><video id="opVid" muted playsinline autoplay disablepictureinpicture></video><button class="op-pv-scr" id="opPvScr" title="Какой экран смотреть"></button><span class="op-pv-q" id="opPvQ"></span><p class="op-pv-off" id="opPvOff" hidden>Трансляция выключена (Ещё → «Трансляция экрана»)</p></div>
+      <div class="op-now" id="opNow" data-noi18n></div>
+      <div class="op-ctl">
+        <button id="opPrev"><svg viewBox="0 0 24 24"><path d="M15 5 8 12l7 7" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>Назад</button>
+        <button id="opNext" class="primary">Дальше<svg viewBox="0 0 24 24"><path d="M9 5l7 7-7 7" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+      </div>
+      <div id="opNextBox"></div>
+      <div class="op-player" id="opPlayer" aria-label="Проигрыватель"></div>
+      <nav class="op-stabs" id="opStabs" role="tablist" aria-label="Под экраном">
+        <button data-s="ly" role="tab">Слои</button><button data-s="tm" role="tab">Таймеры</button><button data-s="pl" role="tab">Плашки</button><button data-s="mc" role="tab">Макросы</button>
+      </nav>
+      <div id="opSbody"><div id="opLayers"></div><div id="opSother" hidden></div></div>
+    </aside>
+  </div>
+  <!-- Узкий экран: всегда под рукой — маленькая картинка экрана и листание -->
+  <div class="op-dock" id="opDock">
+    <button class="op-dpv" id="opDockPv" aria-label="Что на экране — открыть"><img id="opDockImg" alt=""></button>
+    <span class="op-dtx" id="opDockText" data-noi18n></span>
+    <button id="opDPrev" aria-label="Предыдущий слайд"><svg viewBox="0 0 24 24"><path d="M15 5 8 12l7 7" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+    <button id="opDClr" title="Убрать текст (долгое нажатие — всё)">Убрать</button>
+    <button id="opDNext" class="primary" aria-label="Следующий слайд"><svg viewBox="0 0 24 24"><path d="M9 5l7 7-7 7" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+  </div>
+</div>
+<dialog class="sheet op-find" id="opFindDlg">
+  <div class="sheet-head">
+    <div class="search grow"><input id="opFindQ" type="search" placeholder="Песня, презентация, файл или место (Ин 3:16)" enterkeyhint="search" autocomplete="off" autocapitalize="off" spellcheck="false" aria-label="Поиск"></div>
+    <button class="icon" id="opFindX" aria-label="Закрыть"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+  </div>
+  <div class="sheet-body" id="opFindBody"></div>
+</dialog>
+<dialog class="sheet" id="opPickDlg">
+  <div class="sheet-head"><h2 id="opPickTitle" data-noi18n></h2><button class="icon" id="opPickX" aria-label="Закрыть"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg></button></div>
+  <div class="sheet-body" id="opPickBody"></div>
+</dialog>
+<dialog class="sheet" id="opEdDlg">
+  <div class="sheet-head"><h2 id="opEdTitle" data-noi18n>Текст слайда</h2><button class="icon" id="opEdX" aria-label="Закрыть">
+    <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg></button></div>
+  <div class="sheet-body">
+    <textarea class="ch-ta op-ta" id="opEdTa" spellcheck="true"></textarea>
+    <div class="btns"><button class="primary" id="opEdOk">Сохранить в программу</button></div>
+  </div>
+</dialog>
 
 <!-- Что на экране: следовать / листать самому; с правом «Может листать» — кнопки -->
 <div class="livebar" id="liveBar" hidden>
@@ -463,5 +556,6 @@
 <script src="sheets.js"></script>
 <script src="songed.js"></script>
 <script src="app.js"></script>
+<script src="op.js"></script>
 </body>
 </html>

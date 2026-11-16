@@ -594,6 +594,10 @@
     .ly-row button.ly-ico { width: 24px; height: 24px; border: 1px solid transparent; background: none; display: grid; place-items: center; }
     .ly-row button.ly-ico:hover { border-color: var(--line); background: var(--field); }
     .ly-row button.ly-x:not(:disabled) { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 55%, transparent); }
+    /* Слой «Аудио» — самый верхний, отделён чертой от экранных */
+    .ly-row.ly-au { position: relative; margin-bottom: 7px; }
+    .ly-row.ly-au::after { content: ''; position: absolute; left: 4px; right: 4px; bottom: -5px; border-top: 1px solid var(--line); pointer-events: none; }
+    .ly-rb.ly-rau { margin-bottom: 5px; }
     #lyClearAll.ask, .ly-rb.ask { background: var(--warn); border-color: var(--warn); color: #fff; }
     /* Колонка кнопок слоёв справа от предпросмотра — высотой с предпросмотр, лишнее прокручивается */
     .prev-row { display: flex; gap: 4px; }
@@ -3601,6 +3605,8 @@
   <script src="remote.js"></script>
   <script src="team.js"></script>
   <script src="service.js"></script>
+  <script src="opctl.js"></script>
+  <script src="opcast.js"></script>
   <script src="voice.js"></script>
   <script src="voicepack.js"></script>
   <script src="splash.js"></script>

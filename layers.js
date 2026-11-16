@@ -6,7 +6,24 @@
 const lyIcon = (name) => { const s = document.createElement('span'); s.dataset.icon = name; return s; };
 
 /* ----- Иконка слоя: своя (l.icon — имя значка из icons.js или картинка data:) или по виду слоя ----- */
-const layerIconOf = (l) => l.icon || LAYER_KINDS[l.kind].icon;
+const layerIconOf = (l) => l.icon || (LAYER_KINDS[l.kind] || AU_KIND).icon;
+
+/* ----- Слой «Аудио» (значок — нотки): сюда идёт музыка — из проигрывателя, медиапула, плейлиста и музыкальных слайдов.
+   Видео идёт в слой «Медиа», аудиозапись — сюда. Это не экранный слой: в settings.layers и окна вывода не входит
+   (звук играет здесь, music.js), поэтому «Очистить всё» музыку не трогает — её выключает ✕ этого слоя или «Стоп».
+   Настройки — settings.auLayer { name, icon, hidden (тишина), volume (× громкость проигрывателя) }. */
+const AU_KIND = { name: 'Аудио', icon: 'music', takes: ['audio'], sound: true };
+function auLayer() {
+  if (!settings.auLayer || typeof settings.auLayer !== 'object') settings.auLayer = {};
+  const l = settings.auLayer;
+  l.id = 'audio';
+  l.kind = 'audio';
+  return l;
+}
+const auName = () => auLayer().name || AU_KIND.name;
+const lyName = (l) => (l.kind === 'audio' ? auName() : layerName(l));
+// ✕ слоя «Аудио» — выключить музыку (плавно, как «Стоп»)
+function auClear() { if (auState()) { stopMusic(); flashStatus('Музыка выключена'); } }
 function lyIconEl(l) {
   const ic = layerIconOf(l);
   if (!/^data:image\//.test(ic)) return Icons.el(ic);
@@ -38,7 +55,7 @@ function lyButton(text, title, fn, cls) {
 function renderLayers() {
   const box = $('lyRows');
   const defs = layerDefs();
-  box.replaceChildren(...defs.slice().reverse().map((l) => {
+  box.replaceChildren(auRow(), ...defs.slice().reverse().map((l) => {
     const k = LAYER_KINDS[l.kind];
     const x = layerOn[l.id];
     const row = Object.assign(document.createElement('div'), { className: 'ly-row' + (x ? ' on' : '') + (l.hidden ? ' off' : '') + (x && x.paused ? ' paused' : '') });
@@ -68,10 +85,31 @@ function renderLayers() {
   renderLyRail();
 }
 
+// Строка слоя «Аудио» — самая верхняя, над экранными слоями, отделена чертой
+function auRow() {
+  const l = auLayer();
+  const x = auState();
+  const row = Object.assign(document.createElement('div'), { className: 'ly-row ly-au' + (x ? ' on' : '') + (l.hidden ? ' off' : '') + (x && x.paused ? ' paused' : '') });
+  const txt = Object.assign(document.createElement('div'), { className: 'ly-txt' });
+  txt.append(Object.assign(document.createElement('span'), { className: 'ly-name', textContent: auName() }),
+    Object.assign(document.createElement('span'), { className: 'ly-what', textContent: x ? (x.paused ? '❚❚ ' : '') + x.label : 'Пусто' }));
+  txt.title = x ? `${auName()}: ${x.label}${x.paused ? ' (пауза)' : ''}` : `${auName()}: пусто. Сюда само попадает: музыка из проигрывателя, медиапула и плейлиста`;
+  const eye = lyButton(l.hidden ? '◌' : '◉', l.hidden ? 'Слой без звука — включить звук' : 'Заглушить слой (музыка продолжает идти)', () => lySet(l, { hidden: !l.hidden }), l.hidden ? '' : 'lit');
+  const play = lyButton(x && !x.paused ? '❚❚' : '▶', x ? (x.paused ? 'Продолжить' : 'Пауза') : 'Играть', () => musicToggle());
+  play.disabled = !curSong() && !(playList || tracks).length;
+  const clr = lyButton('✕', 'Выключить музыку (очистить слой «Аудио»)', auClear, 'ly-x');
+  clr.disabled = !x;
+  const set = lyButton('⋯', 'Настройки слоя: громкость, название, иконка', (e) => lyOpenPop(l, e.currentTarget));
+  const ico = lyButton('', 'Сменить иконку слоя', (e) => lyIconPick(l, e.currentTarget), 'ly-ico');
+  ico.append(lyIconEl(l));
+  row.append(ico, Object.assign(document.createElement('span'), { className: 'ly-dot' }), txt, eye, play, set, clr);
+  return row;
+}
+
 /* ----- Свернуть/развернуть панель «Слои» (settings.lyFold — помнится и между разделами, и после перезапуска) ----- */
 function lyFoldUi() {
   const fold = !!settings.lyFold;
-  const n = layerDefs().filter((l) => layerOn[l.id]).length;
+  const n = layerDefs().filter((l) => layerOn[l.id]).length + (auState() ? 1 : 0);
   $('layersBox').classList.toggle('fold', fold);
   $('lyFold').setAttribute('aria-expanded', String(!fold));
   $('lyFold').title = fold ? 'Развернуть панель слоёв: все слои, их состояние и очистка' : 'Свернуть панель слоёв';
@@ -100,7 +138,16 @@ function renderLyRail() {
     b.addEventListener('contextmenu', (e) => { e.preventDefault(); lyIconPick(l, b); });
     return b;
   });
-  const all = lyButton('', lyAsk === 'rail' ? 'Нажмите ещё раз — очистить все слои' : 'Очистить всё: убрать вывод со всех экранов (нажать два раза)',
+  // Слой «Аудио» — самый верхний: горит, пока включена музыка; щелчок — выключить её
+  const al = auLayer();
+  const ax = auState();
+  const ab = lyButton('', '', () => { if (ax) auClear(); else flashStatus(`Слой «${auName()}» и так пуст`); }, 'ly-rb ly-rau' + (ax ? ' on' : '') + (al.hidden ? ' off' : ''));
+  ab.title = (ax ? `${auName()}: ${ax.label}${ax.paused ? ' (пауза)' : ''} — щелчок выключит музыку` : `${auName()}: пусто`)
+    + (al.hidden ? ' (без звука)' : '') + '. Правая кнопка — сменить иконку';
+  ab.append(lyIconEl(al));
+  ab.addEventListener('contextmenu', (e) => { e.preventDefault(); lyIconPick(al, ab); });
+  btns.unshift(ab);
+  const all = lyButton('', lyAsk === 'rail' ? 'Нажмите ещё раз — очистить все слои' : 'Очистить всё: убрать вывод со всех экранов (нажать два раза; музыку в слое «Аудио» не трогает)',
     () => lyClearAllAsk('rail'), 'ly-rb ly-rall' + (lyAsk === 'rail' ? ' ask' : ''));
   all.append(Icons.el('close'));
   all.disabled = !Object.keys(layerOn).length;
@@ -132,7 +179,7 @@ function lyIconPick(l, anchor) {
   if (again) return;
   const pop = Object.assign(document.createElement('div'), { className: 'ly-pop ly-icpop' });
   pop.dataset.id = 'ic:' + l.id;
-  pop.append(Object.assign(document.createElement('div'), { className: 't', textContent: `Иконка слоя «${layerName(l)}»` }));
+  pop.append(Object.assign(document.createElement('div'), { className: 't', textContent: `Иконка слоя «${lyName(l)}»` }));
   const cur = layerIconOf(l);
   for (const [name, list] of LY_ICON_CATS) {
     const ics = Object.assign(document.createElement('div'), { className: 'ics' });
@@ -145,7 +192,7 @@ function lyIconPick(l, anchor) {
   }
   const acts = Object.assign(document.createElement('div'), { className: 'acts' });
   acts.append(lyButton('Свой файл…', 'Своя картинка: PNG, SVG, JPG (сохраняется в настройках слоя)', () => lyIconFile(l)));
-  const def = lyButton('Как у вида', `Обычная иконка слоя «${LAYER_KINDS[l.kind].name}»`, () => { lyClosePop(); lySet(l, { icon: undefined }); });
+  const def = lyButton('Как у вида', `Обычная иконка слоя «${(LAYER_KINDS[l.kind] || AU_KIND).name}»`, () => { lyClosePop(); lySet(l, { icon: undefined }); });
   def.disabled = !l.icon;
   acts.append(def);
   pop.append(acts);
@@ -167,7 +214,7 @@ async function lyIconFile(l) {
     const c = Object.assign(document.createElement('canvas'), { width: S, height: S });
     c.getContext('2d').drawImage(img, (S - w0 * k) / 2, (S - h0 * k) / 2, w0 * k, h0 * k);
     lySet(l, { icon: c.toDataURL('image/png') });
-    flashStatus(`Слой «${layerName(l)}»: своя иконка`);
+    flashStatus(`Слой «${lyName(l)}»: своя иконка`);
   };
   img.onerror = () => showNotice('Не удалось открыть картинку для иконки', true);
   img.src = src;
@@ -179,6 +226,7 @@ const lyTakes = (k) => (k.over ? 'ничего (только то, чему вы
 function lySet(l, patch) {
   Object.assign(l, patch);
   saveSettings();
+  if (l.kind === 'audio') { applyVol(); renderLayers(); return; } // слой «Аудио» — только здесь, окнам вывода не нужен
   sendLayers();
   if ('hidden' in patch) layersChanged(); else renderLayers();
 }
@@ -192,20 +240,21 @@ function lyOpenPop(l, anchor) {
   const again = lyPop && lyPop.dataset.id === l.id;
   lyClosePop();
   if (again) return;
-  const k = LAYER_KINDS[l.kind];
+  const k = LAYER_KINDS[l.kind] || AU_KIND;
   const pop = Object.assign(document.createElement('div'), { className: 'ly-pop' });
   pop.dataset.id = l.id;
-  pop.append(Object.assign(document.createElement('div'), { className: 't', textContent: layerName(l) }));
+  pop.append(Object.assign(document.createElement('div'), { className: 't', textContent: lyName(l) }));
   const slider = (name, key, def) => {
     const lab = document.createElement('label');
     const r = Object.assign(document.createElement('input'), { type: 'range', min: 0, max: 100, value: Math.round((l[key] != null ? l[key] : def) * 100) });
     r.dataset.def = Math.round(def * 100); // двойной щелчок — по умолчанию
     const o = Object.assign(document.createElement('output'), { textContent: r.value + '%' });
-    r.addEventListener('input', () => { o.textContent = r.value + '%'; l[key] = r.value / 100; sendLayers(); });
+    r.addEventListener('input', () => { o.textContent = r.value + '%'; l[key] = r.value / 100; if (l.kind === 'audio') applyVol(); else sendLayers(); });
     r.addEventListener('change', saveSettings);
     lab.append(document.createTextNode(name), r, o);
     pop.append(lab);
   };
+  if (l.kind === 'audio') return auOpenPop(l, pop, slider, anchor);
   slider('Прозрачность', 'opacity', 1);
   if (k.sound) slider('Громкость', 'volume', 1);
   const defs = layerDefs();
@@ -226,6 +275,19 @@ function lyOpenPop(l, anchor) {
   del.disabled = defs.filter((x) => x.kind === l.kind).length < 2;
   pop.append(items);
   pop.append(Object.assign(document.createElement('div'), { className: 'hint', textContent: `Сюда само попадает: ${lyTakes(k)}. Любой пункт можно отправить в другой слой: кнопка «Авто» у пункта в «Содержании» или в ленте.` }));
+  lyPlacePop(pop, anchor);
+}
+
+// Настройки слоя «Аудио»: громкость (поверх громкости проигрывателя), название, иконка; порядка и копий у него нет
+function auOpenPop(l, pop, slider, anchor) {
+  slider('Громкость', 'volume', 1);
+  const items = Object.assign(document.createElement('div'), { className: 'ly-items' });
+  const item = (icon, text, title, fn) => { const b = lyButton('', title, fn); b.append(lyIcon(icon), document.createTextNode(text)); items.append(b); return b; };
+  item('editor', 'Переименовать…', 'Своё название слоя', () => lyRename(l));
+  item('theme', 'Иконка…', 'Выбрать значок слоя или свою картинку', () => lyIconPick(l, anchor));
+  item('music', 'Открыть «Музыку»', 'Папки и плейлисты музыки', () => { lyClosePop(); if (typeof setTab === 'function') setTab('music'); });
+  pop.append(items);
+  pop.append(Object.assign(document.createElement('div'), { className: 'hint', textContent: 'Сюда само попадает: музыка из проигрывателя, медиапула (щелчок по аудиофайлу), плейлиста и музыкальных слайдов. Видео идёт в слой «Медиа». «Очистить всё» музыку не выключает — для этого ✕ у этого слоя или «Стоп» в проигрывателе.' }));
   lyPlacePop(pop, anchor);
 }
 
@@ -267,7 +329,7 @@ function lyAdd(l, kind) {
 
 async function lyRename(l) {
   lyClosePop();
-  const name = await askName('Название слоя', layerName(l));
+  const name = await askName('Название слоя', lyName(l));
   if (!name) return;
   lySet(l, { name });
   if (typeof renderService === 'function') renderService(); // имя слоя на кнопках пунктов
@@ -296,4 +358,5 @@ $('lyClearAll').addEventListener('click', () => lyClearAllAsk('head'));
 window.addEventListener('pointerdown', (e) => { if (lyPop && !lyPop.contains(e.target) && !e.target.closest('.ly-row, .ly-rail')) lyClosePop(); }, true);
 window.addEventListener('keydown', (e) => { if (e.key === 'Escape' && lyPop) { lyClosePop(); e.stopPropagation(); } }, true);
 
+applyVol(); // громкость и «без звука» слоя «Аудио» (music.js грузится раньше и их ещё не знал)
 renderLayers();

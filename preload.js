@@ -199,6 +199,16 @@ contextBridge.exposeInMainWorld('api', {
   onTeamSong: (cb) => on('team:song', cb), // песня с планшета: { id ('' — новая), lib, name, text, arrangements, arr, key, tempo, time, who, rid }
   onTeamEdit: (cb) => on('team:edit', cb), // правка без связи: { id, chords, key, sheets: null | [листы], who, via, rid }
   teamChordsDone: (r) => ipcRenderer.invoke('team:chordsDone', r), // ответ: { rid, err? }
+  // Пульт оператора на планшете (opctl.js): состояние разделами, команды { rid, a, x, who } и ответ { rid, res }
+  teamOpState: (st) => ipcRenderer.invoke('team:opState', st),
+  onTeamOp: (cb) => on('team:op', cb),
+  onTeamOpWant: (cb) => on('team:opWant', cb), // true — пульт открыт хотя бы на одном планшете
+  teamOpDone: (r) => ipcRenderer.invoke('team:opDone', r),
+  // Трансляция экрана видео (opcast.js): сообщения WebRTC планшета { peer, m }, ответ ему, кадры зеркала { sid, seq, jpg }
+  onTeamRtc: (cb) => on('team:rtc', cb),
+  teamRtcOut: (r) => ipcRenderer.invoke('team:rtcOut', r),
+  onTeamCastFrame: (cb) => on('team:castFrame', cb),
+  teamCastKeep: (sids) => ipcRenderer.invoke('team:castKeep', sids), // какие экраны сейчас идут видео (раз в секунду)
   onTeamInfo: (cb) => on('team:info', cb),
   // Библия по голосу (voice.js, voicesrv.js): модели Vosk, скрытое окно распознавания
   voiceState: () => ipcRenderer.invoke('voice:state'),

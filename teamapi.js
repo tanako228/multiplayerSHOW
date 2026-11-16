@@ -32,8 +32,9 @@ const ROLES = [
   { id: 'sound', name: 'Звук' },
   { id: 'tech', name: 'Техник' },
 ];
-// Право → у каких ролей есть; «управлять показом» (control) и «править аккорды» (chords) — не по роли, а галочкой у человека (ctl, chd)
-const PERMS = { songs: ROLES.map((r) => r.id), control: [], chords: [], msg: ['leader', 'sound'], metro: ['leader', 'sound'] };
+// Право → у каких ролей есть; «управлять показом» (control), «править аккорды» (chords) и «полное управление» (op — пульт
+// оператора на планшете: плейлисты, Библия, медиапул, слои, таймеры, макросы, трансляция экрана) — не по роли, а галочкой у человека (ctl, chd, op)
+const PERMS = { songs: ROLES.map((r) => r.id), control: [], chords: [], op: [], msg: ['leader', 'sound'], metro: ['leader', 'sound'] };
 const MODES = ['qr', 'qrpass', 'pass'];
 const LOCK_N = 5;            // неверных паролей подряд …
 const LOCK_MS = 10 * 60e3;   // … — вход закрыт на 10 минут
@@ -58,7 +59,8 @@ const newKey = () => crypto.randomBytes(24).toString('base64url');
 const clean = (s, n) => String(s == null ? '' : s).replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, n);
 const roleOk = (r) => ROLES.some((x) => x.id === r);
 const roleName = (r) => (ROLES.find((x) => x.id === r) || ROLES[0]).name;
-const can = (person, perm) => !!person && (perm === 'control' ? !!person.ctl : perm === 'chords' ? !!person.chd : (PERMS[perm] || []).includes(person.role));
+// «Полное управление» включает и «листать» (кнопки ◀ ▶ в полосе песни)
+const can = (person, perm) => !!person && (perm === 'control' ? !!(person.ctl || person.op) : perm === 'chords' ? !!person.chd : perm === 'op' ? !!person.op : (PERMS[perm] || []).includes(person.role));
 const personOf = (d) => people.find((p) => p.id === d.person) || null;
 
 /* ----- Люди и устройства: team.json ----- */
@@ -66,7 +68,7 @@ const personOf = (d) => people.find((p) => p.id === d.person) || null;
 function load() {
   const j = o.store.read();
   people = (Array.isArray(j.people) ? j.people : []).filter((p) => p && p.id && p.name)
-    .map((p) => ({ id: String(p.id), name: clean(p.name, 40), role: roleOk(p.role) ? p.role : 'musician', at: Number(p.at) || 0, ctl: !!p.ctl, chd: !!p.chd,
+    .map((p) => ({ id: String(p.id), name: clean(p.name, 40), role: roleOk(p.role) ? p.role : 'musician', at: Number(p.at) || 0, ctl: !!p.ctl, chd: !!p.chd, op: !!p.op,
       ...(/^[0-9a-f]{64}$/.test(p.ek || '') ? { ek: p.ek } : {}),
       ...(p.pw && /^[0-9a-f]{32}$/.test(p.pw.s) && /^[0-9a-f]{64}$/.test(p.pw.h) ? { pw: { s: p.pw.s, h: p.pw.h } } : {}) }));
   auth = { mode: j.auth && MODES.includes(j.auth.mode) ? j.auth.mode : 'qr' };
@@ -255,7 +257,7 @@ function flush(r) {
 function admit(r) {
   pending.delete(r.id);
   let p = people.find((x) => x.name.toLowerCase() === r.name.toLowerCase());
-  if (!p) { p = { id: newId(), name: r.name, role: r.role, at: Date.now(), ctl: false, chd: false }; people.push(p); }
+  if (!p) { p = { id: newId(), name: r.name, role: r.role, at: Date.now(), ctl: false, chd: false, op: false }; people.push(p); }
   const key = newKey();
   const d = { id: newId(), person: p.id, name: r.dev, hash: sha(key), at: Date.now(), seen: Date.now(), ip: r.ip, off: false, synced: 0 };
   devices.push(d);
@@ -482,6 +484,46 @@ function handle(req, res, u) {
   if (p === '/songs/edit' && req.method === 'POST') { putEdit(req, res, d, person); return; }
   // Новая песня или текст и аранжировки песни — с планшета (то же право, что аккорды)
   if (p === '/songs/put' && req.method === 'POST') { putSong(req, res, d, person); return; }
+  // Пульт оператора (право «Полное управление»): картинки слайдов, миниатюры медиапула, кадры экрана
+  if (p.startsWith('/op/')) {
+    if (!can(person, 'op')) return send(req, res, 403, { error: 'perm', text: 'Пульт оператора разрешает оператор в окне «Группа» («Полное управление»)' });
+    return opHttp(req, res, u, p.slice(3));
+  }
+  send(req, res, 404, { error: 'nf' });
+}
+
+/* ----- Пульт оператора: картинки по http (их проще кэшировать телефону), команды и состояние — по WebSocket -----
+   /op/thumb/<v> — картинка слайда (v — отпечаток содержимого, не меняется: телефон хранит её у себя навсегда);
+   /op/pthumb/<id> — миниатюра файла медиапула; /op/live?after=N&w=&q= — кадр «что на экране» новее N
+   (ждём до 8 с; нового нет — 204): телефон сам подбирает ширину и качество под скорость сети */
+const V_RE = /^[0-9a-f]{12}$/;
+function img(res, buf, cache, extra) {
+  if (res.headersSent || res.writableEnded) return;
+  res.writeHead(200, { 'Content-Type': 'image/jpeg', 'Content-Length': buf.length, 'Cache-Control': cache, ...(extra || {}) });
+  res.end(buf);
+}
+function opHttp(req, res, u, p) {
+  const thumb = /^\/(p?thumb)\/([\w-]{6,40})$/.exec(p);
+  if (thumb && req.method === 'GET') {
+    const [, kind, v] = thumb;
+    if (kind === 'thumb' && !V_RE.test(v)) return send(req, res, 404, { error: 'nf' });
+    const fn = kind === 'thumb' ? o.opThumb : o.opPoolThumb;
+    if (!fn) return send(req, res, 503, { error: 'off' });
+    Promise.resolve(fn(v)).then((buf) => (buf ? img(res, buf, 'private, max-age=31536000, immutable') : send(req, res, 404, { error: 'nf' })), () => send(req, res, 404, { error: 'nf' }));
+    return;
+  }
+  if (p === '/live' && req.method === 'GET') {
+    if (!o.opLive) return send(req, res, 503, { error: 'off' });
+    const q = (k, d, lo, hi) => Math.max(lo, Math.min(hi, Math.round(Number(u.searchParams.get(k)) || d)));
+    let gone = false;
+    res.on('close', () => { gone = true; });
+    o.opLive({ sid: clean(u.searchParams.get('s'), 60) || 'main', after: q('after', 0, 0, Number.MAX_SAFE_INTEGER), w: q('w', 480, 160, 1920), q: q('q', 60, 20, 90), gone: () => gone }).then((f) => {
+      if (gone) return;
+      if (!f) { res.writeHead(204, { 'Cache-Control': 'no-store' }); res.end(); return; }
+      img(res, f.buf, 'no-store', { 'X-Frame': String(f.seq), 'X-Wait': String(Math.round(f.wait || 0)) });
+    }, () => { if (!gone) send(req, res, 503, { error: 'off' }); });
+    return;
+  }
   send(req, res, 404, { error: 'nf' });
 }
 
@@ -678,7 +720,7 @@ function state() {
     pending: [...pending.values()].filter((r) => !r.ok && !r.no).map((r) => ({ id: r.id, name: r.name, role: r.role, dev: r.dev, ip: r.ip, at: r.at })),
     people: people.map((p) => ({
       id: p.id, name: p.name, role: p.role, at: p.at,
-      ctl: !!p.ctl, chd: !!p.chd, pw: !!p.pw,
+      ctl: !!p.ctl, chd: !!p.chd, op: !!p.op, pw: !!p.pw,
       devices: devices.filter((d) => d.person === p.id).map((d) => ({ id: d.id, name: d.name, ip: d.ip, at: d.at, seen: d.seen, off: d.off, synced: d.synced, online: isOn(d, now) })),
     })),
     online: devices.filter((d) => isOn(d, now)).length,
@@ -717,8 +759,10 @@ function act(a) {
       if (roleOk(a.role)) p.role = a.role;
       if (typeof a.ctl === 'boolean' && a.ctl !== p.ctl) { p.ctl = a.ctl; log(p.ctl ? 'ctlOn' : 'ctlOff', { name: p.name }); }
       if (typeof a.chd === 'boolean' && a.chd !== !!p.chd) { p.chd = a.chd; log(p.chd ? 'chdOn' : 'chdOff', { name: p.name }); }
+      if (typeof a.op === 'boolean' && a.op !== !!p.op) { p.op = a.op; log(p.op ? 'opOn' : 'opOff', { name: p.name }); }
       saveTeam();
-      for (const c of socks) if (c.d.person === p.id) wsSend(c, { t: 'me', me: me(c.d, p) }); // роль и права — телефону сразу
+      for (const c of socks) if (c.d.person === p.id) { if (!p.op) c.opSub = false; wsSend(c, { t: 'me', me: me(c.d, p) }); } // роль и права — телефону сразу
+      opCount();
       break;
     }
     case 'delPerson': {
@@ -833,6 +877,7 @@ function kick(test, code) {
     socks.delete(c);
     try { c.ws.close(code === 'off' ? 4003 : code === 'closed' ? 4004 : 4001, code); } catch { /* уже */ }
   }
+  opCount();
   o.notify();
 }
 const closeAll = () => kick(() => true, 'closed');
@@ -840,11 +885,14 @@ const closeAll = () => kick(() => true, 'closed');
 // Из teamsrv.js: запрос на /ws (адрес и Origin уже проверены)
 function upgrade(req, sock, head) {
   if (!o.on()) { sock.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n'); return; }
-  if (!WSS) WSS = new (require('ws').WebSocketServer)({ noServer: true, maxPayload: 64 * 1024, perMessageDeflate: false });
+  if (!WSS) WSS = new (require('ws').WebSocketServer)({ noServer: true, maxPayload: 64 * 1024,
+    // Сжатие больших сообщений (слайды презентаций для пульта, сетлисты) — меньше трафика по Wi-Fi; мелкие — как есть
+    perMessageDeflate: { threshold: 2048, zlibDeflateOptions: { level: 3 }, concurrencyLimit: 4 } });
   WSS.handleUpgrade(req, sock, head, (ws) => attach(ws, ipOf(req)));
 }
+let rtcSeq = 0; // номер соединения: адрес для WebRTC-сообщений (трансляция экрана видео)
 function attach(ws, ip) {
-  const c = { ws, d: null, ip, last: Date.now() };
+  const c = { ws, d: null, ip, last: Date.now(), rid: ++rtcSeq };
   const t = setTimeout(() => { if (!c.d) try { ws.close(4001, 'hello'); } catch { /* уже */ } }, 10000);
   ws.on('message', (buf) => {
     c.last = Date.now();
@@ -852,7 +900,11 @@ function attach(ws, ip) {
     try { m = JSON.parse(String(buf)); } catch { return; }
     if (m && typeof m === 'object') onMsg(c, m);
   });
-  ws.on('close', () => { clearTimeout(t); if (socks.delete(c)) o.notify(); });
+  ws.on('close', () => {
+    clearTimeout(t);
+    if (c.rtc && o.opRtc) { c.rtc = false; o.opRtc({ peer: c.rid, m: { k: 'bye' } }); }
+    if (socks.delete(c)) { o.notify(); if (c.opSub) opCount(); }
+  });
   ws.on('error', () => { /* оборвалось — close придёт */ });
 }
 function onMsg(c, m) {
@@ -883,6 +935,47 @@ function onMsg(c, m) {
   if (m.t === 'metro') {
     if (!can(p, 'metro')) { wsSend(c, { t: 'err', text: 'Общий метроном включают Лидер и Звук' }); return; }
     try { setMetro(m, p.name); } catch (e) { wsSend(c, { t: 'err', text: e.message }); }
+    return;
+  }
+  if (m.t === 'opsub') {
+    // Открыли / закрыли пульт: окну оператора — считать ли состояние для пульта; открывшему — всё состояние сразу
+    const on = !!m.on && can(p, 'op');
+    if (m.on && !on) wsSend(c, { t: 'err', text: 'Пульт оператора разрешает оператор в окне «Группа» («Полное управление»)' });
+    c.opSub = on;
+    opCount();
+    if (on) wsSend(c, { t: 'ops', s: opSt, full: true, time: Date.now() });
+    return;
+  }
+  if (m.t === 'rtc') {
+    // Трансляция экрана видеопотоком (WebRTC): договорённость планшета с окном оператора (opcast.js) идёт через нас
+    if (!can(p, 'op') || !o.opRtc) { wsSend(c, { t: 'rtc', k: 'fail' }); return; }
+    const now = Date.now();
+    if (!c.rtcWin || now - c.rtcWin > 2000) { c.rtcWin = now; c.rtcN = 0; }
+    if (++c.rtcN > 80) return;
+    const k = String(m.k || '');
+    if (!['start', 'answer', 'ice', 'mode', 'bye'].includes(k)) return;
+    const x = { k };
+    if (k === 'start' || k === 'mode') { x.sid = clean(m.sid, 60) || 'main'; x.mode = ['auto', 'eco', 'hq'].includes(m.mode) ? m.mode : 'auto'; x.w = Math.max(160, Math.min(1920, Number(m.w) || 640)); }
+    if (k === 'answer') { if (typeof m.sdp !== 'string' || m.sdp.length > 30000) return; x.sdp = m.sdp; }
+    if (k === 'ice') { const ca = m.c; if (ca && (typeof ca.candidate !== 'string' || ca.candidate.length > 600)) return; x.c = ca ? { candidate: ca.candidate, sdpMid: ca.sdpMid == null ? null : String(ca.sdpMid).slice(0, 20), sdpMLineIndex: Number(ca.sdpMLineIndex) || 0 } : null; }
+    c.rtc = k !== 'bye';
+    o.opRtc({ peer: c.rid, m: x, who: p.name });
+    return;
+  }
+  if (m.t === 'op') {
+    const id = Number(m.id) || 0;
+    if (!can(p, 'op')) { wsSend(c, { t: 'opr', id, ok: false, text: 'Нет права «Полное управление» — его даёт оператор в окне «Группа»' }); return; }
+    // Защита от залипшей кнопки: не больше 40 команд за 2 с с одного телефона
+    const now = Date.now();
+    if (!c.opWin || now - c.opWin > 2000) { c.opWin = now; c.opN = 0; }
+    if (++c.opN > 40) { wsSend(c, { t: 'opr', id, ok: false, text: 'Слишком часто — подождите секунду' }); return; }
+    const a = String(m.a || '').slice(0, 30);
+    if (!/^[a-z][\w.]*$/i.test(a) || !o.op) { wsSend(c, { t: 'opr', id, ok: false, text: 'Неизвестная команда' }); return; }
+    const args = m.x && typeof m.x === 'object' ? m.x : {};
+    Promise.resolve(o.op({ a, x: args, who: p.name })).then(
+      (res) => wsSend(c, { t: 'opr', id, ok: !(res && res.err), res: res || null, text: (res && res.err) || '' }),
+      (e) => wsSend(c, { t: 'opr', id, ok: false, text: (e && e.message) || 'Окно программы не ответило' }));
+    if (!['view', 'item', 'items', 'bible.books', 'bible.chapter', 'bible.search', 'pool.list', 'search', 'player.list'].includes(a)) log('op', { name: p.name, a });
     return;
   }
   if (m.t === 'cmd') {
@@ -920,6 +1013,44 @@ function setLive(l) {
   return true;
 }
 
+/* ----- Пульт: состояние от окна оператора (opctl.js) — разделами; телефонам уходят только изменившиеся -----
+   Разделы: lists (плейлисты и библиотеки), live (что на экране, слои, выходы), bible, macros, timers, stage, plates, pool */
+let opSt = {};          // раздел → данные
+const opSig = {};       // раздел → JSON (сравнить)
+let opSubs = 0;
+function opCount() {
+  let n = 0;
+  for (const c of socks) if (c.opSub && can(personOf(c.d), 'op')) n++;
+  if (n !== opSubs) { opSubs = n; if (o.opWant) o.opWant(n); }
+}
+function setOp(st) {
+  if (!st || typeof st !== 'object') return false;
+  const ch = {};
+  let any = false;
+  for (const [k, v] of Object.entries(st)) {
+    if (!/^[a-z]{2,12}$/.test(k)) continue;
+    const s = JSON.stringify(v === undefined ? null : v);
+    if (s.length > 2e6 || opSig[k] === s) continue;
+    opSig[k] = s;
+    opSt[k] = v;
+    ch[k] = v;
+    any = true;
+  }
+  if (!any) return false;
+  const msg = JSON.stringify({ t: 'ops', s: ch, time: Date.now() });
+  for (const c of socks) {
+    if (!c.opSub) continue;
+    try { if (c.ws.readyState === 1) c.ws.send(msg); } catch { /* закрылся */ }
+  }
+  return true;
+}
+// Окну оператора есть что сказать планшету по WebRTC (предложение, кандидаты)
+function rtcSend(peer, m) {
+  for (const c of socks) if (c.rid === peer) { if (m && typeof m === 'object') wsSend(c, { ...m, t: 'rtc' }); return true; }
+  return false;
+}
+const opReset = () => { opSt = {}; for (const k of Object.keys(opSig)) delete opSig[k]; };
+
 // Библиотека поменялась — телефонам: докачать песни, новые сетлисты
 function pushLib() {
   if (!socks.size) return;
@@ -951,7 +1082,7 @@ function init(opt) {
   // Телефон пропал без «до свидания» (ушёл из Wi-Fi) — закрыть
   t(() => {
     const now = Date.now();
-    for (const c of [...socks]) if (now - c.last > PING_MS) { socks.delete(c); try { c.ws.terminate(); } catch { /* уже */ } o.notify(); }
+    for (const c of [...socks]) if (now - c.last > PING_MS) { socks.delete(c); try { c.ws.terminate(); } catch { /* уже */ } o.notify(); opCount(); }
   }, 10e3);
 }
 function shutdown() {
@@ -964,5 +1095,5 @@ function shutdown() {
   socks.clear();
 }
 
-module.exports = { init, shutdown, handle, state, act, libSaved, upgrade, setLive, closeAll, ROLES,
+module.exports = { init, shutdown, handle, state, act, libSaved, upgrade, setLive, setOp, opReset, rtcSend, closeAll, ROLES,
   _test: { refresh, apply, editMsg, edits: () => edits, pending, sync: () => sync, pay: () => pay, socks, sets: () => sets, live: () => live, fails } };
