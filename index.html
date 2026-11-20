@@ -663,6 +663,18 @@
     .out-toggle .mp-icon { filter: saturate(.55); opacity: .5; }
     .out-toggle.on { border-color: #22c55e; box-shadow: 0 0 0 1px #22c55e, 0 0 8px rgba(34, 197, 94, .45); }
     .out-toggle.on .mp-icon { filter: none; opacity: 1; }
+    /* Стоп-кадр: включён — акцент темы и мигающая рамка, чтобы не забыть отменить */
+    .out-toggle.frz-toggle { white-space: nowrap; flex: none; }
+    /* Голубой — цвет стоп-кадра (просьба владельца: голубая рамка вокруг «Предпросмотра»), одинаковый во всех темах */
+    :root { --frz: #38b6ff; }
+    .out-toggle.frz-toggle.on { border-color: var(--frz); color: var(--text); background: color-mix(in srgb, var(--frz) 22%, var(--field)); box-shadow: 0 0 0 1px var(--frz); animation: frzPulse 1.6s ease-in-out infinite; }
+    @keyframes frzPulse { 50% { box-shadow: 0 0 0 1px var(--frz), 0 0 10px color-mix(in srgb, var(--frz) 60%, transparent); } }
+    #frzTag { position: absolute; left: 8px; top: 8px; z-index: 6; padding: 2px 8px; border-radius: calc(5px * var(--rk, 1)); font-size: 11px; font-weight: 600; background: var(--frz); color: #04263a; pointer-events: none; }
+    /* «Предпросмотр» во время стоп-кадра: снимок поверх (renderer.js: frzPrev) и голубая рамка */
+    #frzPrev { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: fill; z-index: 2; display: none; pointer-events: none; }
+    #frzPrev.on { display: block; }
+    #previewWrap.frozen::after { content: ''; position: absolute; inset: 0; z-index: 7; border: 3px solid var(--frz); border-radius: inherit; box-shadow: inset 0 0 14px color-mix(in srgb, var(--frz) 45%, transparent); pointer-events: none; }
+    #frzTag[hidden] { display: none; }
     #inkOpen.on { border-color: var(--live); box-shadow: 0 0 0 1px var(--live); }
     .prev-head .ink-x .mp-icon { width: 16px; height: 16px; }
     /* NEXT — крупная, заметная: есть шаги — горит цветом эфира */
@@ -2615,6 +2627,8 @@
           <!-- Только иконки: галочка — вывод на внешний экран, карандаш — рисование, крестик — выйти из рисования -->
           <button id="outToggle" class="out-toggle" data-icon="done" aria-pressed="false" title="Зал: включить вывод на монитор «Основного» (монитор — в Редакторе сцен)">Зал</button>
           <button id="stageToggle" class="out-toggle" data-icon="done" aria-pressed="false" title="Сцена: включить вывод сцен с выходами">Сцена</button>
+          <!-- Стоп-кадр в зале (renderer.js: frzSync): экраны «Зала» замирают, листать можно дальше; включают и отменяют ещё телефон (QR) и планшет -->
+          <button id="frzToggle" class="out-toggle frz-toggle" data-icon="freeze" aria-pressed="false" title="Стоп-кадр: экраны зала замрут на том, что сейчас видно, — листайте дальше, после отмены покажется текущий слайд">Стоп-кадр</button>
           <button id="inkOpen" class="icon-only" data-icon="draw" aria-label="Быстрая анимация" title="Быстрая анимация: крупный план, рисование и маркер поверх слайда (Ctrl+E)"></button>
           <button id="inkClear" class="icon-only ink-x" data-icon="close" aria-label="Выйти из быстрой анимации" title="Выйти из быстрой анимации: убрать рисунок и вернуть весь слайд" hidden></button>
           <!-- NEXT: пошаговая анимация — каждый щелчок проигрывает следующий подготовленный шаг (tools.js: animNext) -->
@@ -2626,6 +2640,8 @@
         </div>
         <div class="prev-row">
         <div id="previewWrap"><div id="previewStage"></div>
+          <!-- Стоп-кадр: «Предпросмотр» и зал замерли, слайды листаются в ленте (renderer.js: frzSync, frzPrev) -->
+          <span id="frzTag" hidden title="Зал и «Предпросмотр» замерли. Листайте слайды в ленте — после отмены стоп-кадра покажется текущий">Стоп-кадр</span>
           <!-- Просмотр без вывода (renderer.js: peekShow/peekClose) -->
           <div id="peek" hidden>
             <div id="peekStage"></div>

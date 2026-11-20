@@ -199,6 +199,7 @@ function scSceneScreen(sc, main) {
   return scNewScreen({
     id: scSceneSid(sc), name: sc.name || 'Сцена', w: sc.w || main.w, h: sc.h || main.h, hz: sc.hz || 0, enabled: !!sc.on, bg: sc.bg || '#000000',
     outputs: scClone(sc.outputs || []), mode: 'scene', scene: scLayoutOf(sc), ink: false, sound: !!sc.outSound, alpha: !!sc.alpha, outFit: sc.outFit || 'fit',
+    group: sc.group || 'stage', // стоп-кадр в зале (output.js: frzHall) — только группа «Зал»
   });
 }
 // Тема экрана: все тексты программы (песни, Библия, текстовые слайды) на этом экране — в её оформлении

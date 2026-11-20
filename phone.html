@@ -10,7 +10,7 @@
 <title>MP Show — пульт</title>
 <!-- Пульт с телефона (main.js: rmHandle). Своя страница, без внешних файлов: телефон видит одну презентацию -->
 <style>
-  :root { --ink: #0e1014; --panel: #181b21; --field: #232831; --line: #2e3540; --text: #e8ebf0; --muted: #8b94a3; --live: #e5484d; --ok: #3fb950; }
+  :root { --ink: #0e1014; --panel: #181b21; --field: #232831; --line: #2e3540; --text: #e8ebf0; --muted: #8b94a3; --live: #e5484d; --ok: #3fb950; --frz: #4cc3ff; }
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   html, body { margin: 0; background: var(--ink); color: var(--text); font: 15px/1.35 -apple-system, "Segoe UI", Roboto, sans-serif; }
   body { padding: env(safe-area-inset-top) 0 calc(env(safe-area-inset-bottom) + 90px); }
@@ -42,6 +42,19 @@
   .bar button { flex: 1; height: 58px; border: 0; border-radius: 12px; background: var(--field); color: var(--text); font-size: 18px; font-weight: 600; }
   .bar button.go { background: #2f6fde; }
   .bar button.clr { flex: .6; font-size: 14px; }
+  /* Стоп-кадр в зале: кнопка-переключатель и пометка над картинкой */
+  .bar button.frz { flex: .7; font-size: 14px; line-height: 1.15; }
+  @media (max-width: 440px) {
+    .bar { gap: 7px; padding-left: 10px; padding-right: 10px; }
+    .bar button { padding: 0 4px; font-size: 16px; white-space: nowrap; }
+    .bar button.clr, .bar button.frz { font-size: 13px; }
+  }
+  .bar button.frz.on { background: var(--frz); color: #06202e; animation: frzPulse 1.6s ease-in-out infinite; }
+  @keyframes frzPulse { 50% { box-shadow: 0 0 0 3px rgba(76, 195, 255, .45); } }
+  .cap.frz { color: var(--frz); }
+  .pic.frz { border-color: var(--frz); box-shadow: 0 0 0 1px var(--frz); }
+  #frzNote { display: none; margin: 8px 14px 0; padding: 8px 10px; border-radius: 8px; background: rgba(76, 195, 255, .14); border: 1px solid var(--frz); font-size: 13px; }
+  body.frozen #frzNote { display: block; }
   .bar button:active, .sl:active { filter: brightness(1.3); }
   button:disabled { opacity: .4; }
   #sheet { position: fixed; inset: 0; z-index: 10; background: rgba(0,0,0,.6); display: none; align-items: flex-end; }
@@ -60,15 +73,17 @@
 <div id="app">
   <header><img src="/icon.png" alt=""><h1 id="name">Загрузка…</h1><span id="dot" title="Связь с программой"></span></header>
   <div class="now">
-    <div><div class="cap red">● Сейчас на экране</div><div class="pic" id="livePic"><div class="empty">…</div></div></div>
+    <div><div class="cap red" id="liveCap">● Сейчас на экране</div><div class="pic" id="livePic"><div class="empty">…</div></div></div>
     <div class="nx"><div class="cap">Далее</div><div class="pic" id="nextPic"><div class="empty">—</div></div></div>
   </div>
+  <div id="frzNote">❄ Стоп-кадр: в зале замер кадр. Листайте дальше — красная рамка в слайдах показывает, что появится в зале после отмены.</div>
   <div id="note"></div>
   <h2>Слайды</h2>
   <div id="grid"></div>
   <div class="bar" id="bar">
     <button id="prev">◀ Назад</button>
     <button id="clr" class="clr">Убрать</button>
+    <button id="frz" class="frz" aria-pressed="false">❄ Стоп-<br>кадр</button>
     <button id="next" class="go">Вперёд ▶</button>
   </div>
 </div>
@@ -111,6 +126,15 @@ function render() {
   if (!st.show) $('note').textContent += ' Листать нельзя — только смотреть.';
   $('bar').style.display = st.show ? '' : 'none';
   $('clr').disabled = !st.live;
+  // Стоп-кадр в зале: включён — картинка «Сейчас на экране» замерла вместе с залом
+  const fz = !!st.frozen;
+  document.body.classList.toggle('frozen', fz);
+  $('frz').classList.toggle('on', fz);
+  $('frz').setAttribute('aria-pressed', String(fz));
+  $('frz').innerHTML = fz ? 'Отменить<br>стоп-кадр' : '❄ Стоп-<br>кадр';
+  $('liveCap').className = 'cap ' + (fz ? 'frz' : 'red');
+  $('liveCap').textContent = fz ? '❄ Стоп-кадр в зале' : '● Сейчас на экране';
+  $('livePic').classList.toggle('frz', fz);
   const grid = $('grid');
   grid.replaceChildren();
   st.slides.forEach((s, i) => {
@@ -153,6 +177,7 @@ async function cmd(m) {
 $('prev').onclick = () => cmd({ cmd: 'prev' });
 $('next').onclick = () => cmd({ cmd: 'next' });
 $('clr').onclick = () => cmd({ cmd: 'clear' });
+$('frz').onclick = () => cmd({ cmd: 'freeze', on: !(st && st.frozen) });
 
 // Состояние: долгий опрос — ответ приходит сразу, как что-то поменялось
 async function poll() {

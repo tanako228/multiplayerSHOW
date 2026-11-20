@@ -675,7 +675,24 @@ I18n.add({
 "Проигрыватель":["Player","Mängija"],
 "Под экраном":["Under the screen","Ekraani all"],
 "Песня, презентация, файл или место (Ин 3:16)":["Song, presentation, file or passage (John 3:16)","Laul, esitlus, fail või kirjakoht (Jh 3:16)"],
-"Видео · {0}px · {1} кбит/с":["Video · {0}px · {1} kbit/s","Video · {0}px · {1} kbit/s"]
+"Видео · {0}px · {1} кбит/с":["Video · {0}px · {1} kbit/s","Video · {0}px · {1} kbit/s"],
+// Стоп-кадр в зале (op.js)
+"Стоп-кадр":["Freeze","Stoppkaader"],
+"❄ Стоп-кадр в зале":["❄ Hall frozen","❄ Saal on peatatud"],
+"Стоп-кадр: экраны зала замрут, листать можно дальше; ещё раз — отменить":["Freeze: the hall screens hold the picture, you can keep flipping; press again to cancel","Stoppkaader: saali ekraanid jäävad pildile, lehitseda saab edasi; uuesti — tühista"],
+"Стоп-кадр включён: в зале замер кадр. Нажмите — отменить, в зале покажется текущий слайд":["Freeze is on: the hall sees a frozen frame. Tap to cancel — the current slide appears","Stoppkaader on sees: saalis on pilt peatatud. Vajuta — tühista, saalis ilmub praegune slaid"],
+// Пульт на телефоне (op.js: вид op-ph)
+"Вид пульта":["Remote layout","Puldi vaade"],
+"Телефон":["Phone","Telefon"],
+"Планшет":["Tablet","Tahvel"],
+"Слайды на телефоне":["Slides on the phone","Slaidid telefonis"],
+"Строками":["As rows","Ridadena"],
+"Плитками":["As tiles","Ruutudena"],
+"в ленте":["in the feed","voos"],
+"Картинка":["Picture","Pilt"],
+"♪ Музыка":["♪ Music","♪ Muusika"],
+"❄ Стоп-кадр":["❄ Freeze","❄ Stoppkaader"],
+"Зал выкл.":["Hall off","Saal väljas"]
 });
 // Куски фраз, которые код склеивает из частей
 I18n.add({

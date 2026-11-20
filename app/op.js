@@ -25,8 +25,13 @@ const Op = (() => {
   let scr = ls.get(LS + 'scr', 'main');                // какой экран смотреть (Основной, другой экран, сцена 'scene:id')
   let stab = ls.get(LS + 'stab', 'ly');                // вкладка под экраном: ly слои, tm таймеры, pl плашки, mc макросы
   let playerAt = 0;                                     // когда пришло состояние проигрывателя (время между — считаем сами)
+  let phMode = ls.get(LS + 'ph', 'auto');             // вид: auto (телефон — по ширине) | ph (всегда телефон) | tab (как на планшете)
+  let rows = ls.get(LS + 'rows', '1') === '1';         // на телефоне слайды строками (картинка + текст), иначе плитками
   const can = () => !!(Store.me && Store.me.perms && Store.me.perms.op);
   const wide = () => matchMedia('(min-width: 900px)').matches;
+  const phMq = matchMedia('(max-width: 600px)');
+  // Телефон: стоя, узко — вкладки внизу, листание над ними, плейлист выбирается в шапке (на широком экране — всегда три колонки)
+  const phone = () => !wide() && (phMode === 'ph' || (phMode === 'auto' && phMq.matches));
   const haptic = () => { try { if (navigator.vibrate) navigator.vibrate(8); } catch { /* нет */ } };
   const noi = (e) => { e.dataset.noi18n = ''; return e; };
   const wrap = (tag, cls, ...kids) => { const e = el(tag, cls); e.append(...kids); return e; }; // el() из app.js — только текст
@@ -141,8 +146,10 @@ const Op = (() => {
     if (push) history.pushState({ op: 1 }, '');
     document.body.classList.add('op-on');
     sub(true);
+    applyPh();
     setTab(tab, true);
     paintConn();
+    wakeOn();
     applyState(Object.keys(S), true);
     loadView();
     liveKick();
@@ -153,9 +160,92 @@ const Op = (() => {
     sub(false);
     liveStop();
     rtcStop();
-    document.body.classList.remove('op-on');
+    wakeOff();
+    document.body.classList.remove('op-on', 'op-ph-on');
     if (screen === 'Op') show('Lib');
   }
+
+  /* ----- Телефон: свой вид ----- */
+  let isPh = false;
+  function applyPh() {
+    const p = phone();
+    const changed = p !== isPh;
+    isPh = p;
+    $('scrOp').classList.toggle('op-ph', p);
+    $('scrOp').classList.toggle('op-rows', p && rows);
+    document.body.classList.toggle('op-ph-on', p && opened);
+    // «Зал», «Сцена», «Стоп-кадр»: на телефоне — крупным рядом на вкладке «Экран» (в шапке им тесно, и мимо не нажмёшь)
+    const host = p ? $('opOuts') : document.querySelector('#scrOp .op-hd');
+    const conn = $('opConn');
+    for (const id of ['opHall', 'opStage', 'opFreeze']) { const b = $(id); if (b.parentElement !== host) host.insertBefore(b, p ? null : conn); }
+    paintPhHead();
+    if (changed && opened) { const v = views.get(vk); if (v) renderView(v); liveKick(); }
+    barH();
+  }
+  // Высота шапки — для закреплённых заголовков песен
+  function barH() { const b = $('scrOp').querySelector('.bar'); if (b) $('scrOp').style.setProperty('--opbar', b.offsetHeight + 'px'); }
+  const TAB_T = { sl: 'Слайды', bi: 'Библия', md: 'Медиа', mo: 'Ещё', sc: 'Экран' };
+  function paintPhHead() {
+    if (!isPh) return;
+    const L = S.lists;
+    let t = TAB_T[tab];
+    if (tab === 'sl' && L) {
+      const p = vk.startsWith('pl:') ? L.pl.find((x) => 'pl:' + x.id === vk) : L.lib.find((x) => 'lib:' + x.id === vk);
+      if (p) t = p.name;
+    }
+    $('opPhTitleT').textContent = t;
+    $('opPhTitle').disabled = tab !== 'sl';
+    $('opPhTitle').classList.toggle('work', tab === 'sl' && !!L && L.work === vk);
+    for (const b of $('opNav').children) b.setAttribute('aria-selected', String(b.dataset.t === tab));
+    // Что не так с выходами — видно из любой вкладки
+    const lv = S.live;
+    const st = $('opPhSt');
+    const hallOff = !!lv && lv.hall && lv.hall.n > 0 && !lv.hall.on;
+    st.hidden = !lv || (!lv.frozen && !hallOff);
+    st.className = 'op-phst' + (lv && lv.frozen ? ' frz' : ' off');
+    st.textContent = lv && lv.frozen ? '❄ Стоп-кадр' : 'Зал выкл.';
+  }
+  // Плейлисты и библиотеки — листом снизу
+  function listPick() {
+    const L = S.lists;
+    if (!L) return;
+    const row = (key, name, n, sub) => {
+      const b = el('button', 'item op-tr op-lp' + (key === vk ? ' on' : ''));
+      b.append(noi(el('span', 't', name)), el('span', 'n', String(n)));
+      if (key === L.work) b.append(el('span', 'w', 'в ленте'));
+      else if (sub) b.append(noi(el('span', 'w', sub)));
+      b.onclick = () => { $('opPickDlg').close(); if (vk === key) return; vk = key; ls.set(LS + 'vk', vk); libPick = ''; libQ = ''; paintLists(); loadView(); window.scrollTo(0, 0); };
+      return b;
+    };
+    pickOpen('Плейлисты и библиотеки', [
+      el('h3', 'op-h', 'Плейлисты'), ...L.pl.map((p) => row('pl:' + p.id, p.name, p.n, p.date ? dayName(p.date) : '')),
+      el('h3', 'op-h', 'Библиотеки'), ...L.lib.map((l) => row('lib:' + l.id, l.name, l.n)),
+    ]);
+    const on = $('opPickBody').querySelector('.on');
+    if (on) on.scrollIntoView({ block: 'center' });
+  }
+  // Пальцем по полосе снизу: влево — дальше, вправо — назад
+  function swipe(node, fn) {
+    let x0 = 0;
+    let y0 = 0;
+    let on = false;
+    node.addEventListener('pointerdown', (e) => { if (e.target.closest('button:not(.op-dpv)')) return; on = true; x0 = e.clientX; y0 = e.clientY; });
+    node.addEventListener('pointerup', (e) => {
+      if (!on) return;
+      on = false;
+      const dx = e.clientX - x0;
+      if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(e.clientY - y0) * 1.5) { node.dataset.sw = '1'; fn(dx < 0 ? 1 : -1); }
+    });
+    node.addEventListener('pointercancel', () => { on = false; });
+    node.addEventListener('click', (e) => { if (node.dataset.sw) { delete node.dataset.sw; e.stopPropagation(); e.preventDefault(); } }, true);
+  }
+  // Экран телефона не гаснет, пока открыт пульт (браузер даёт это только по https и на localhost)
+  let wake = null;
+  async function wakeOn() {
+    if (!opened || document.hidden || wake || !('wakeLock' in navigator)) return;
+    try { wake = await navigator.wakeLock.request('screen'); wake.addEventListener('release', () => { wake = null; }); } catch { wake = null; }
+  }
+  function wakeOff() { if (wake) { try { wake.release(); } catch { /* уже */ } wake = null; } }
 
   function setTab(t, quiet) {
     if (!['sl', 'bi', 'md', 'mo', 'sc'].includes(t)) t = 'sl';
@@ -163,6 +253,7 @@ const Op = (() => {
     tab = t;
     ls.set(LS + 'tab', t);
     for (const b of $('opTabs').children) b.setAttribute('aria-selected', String(b.dataset.t === t));
+    paintPhHead();
     for (const [id, k] of [['opSl', 'sl'], ['opBi', 'bi'], ['opMd', 'md'], ['opMo', 'mo']]) $(id).hidden = k !== t;
     $('scrOp').dataset.tab = t;
     if (t === 'bi') bibleOpen();
@@ -188,6 +279,7 @@ const Op = (() => {
     if (has('bible') && tab === 'bi') bibleOpen();
     if (has('pool') && tab === 'md') paintFolders();
     if ((has('macros') || has('plates') || has('timers') || has('stage')) && tab === 'mo') paintMore();
+    if (has('lists') || has('live')) paintPhHead();
     paintConn();
   }
 
@@ -274,14 +366,15 @@ const Op = (() => {
       b.dataset.vk = key;
       b.append(noi(el('span', 't', name)), el('span', 'n', String(n)));
       if (sub) b.append(el('span', 's', sub));
-      b.onclick = () => { if (vk === key) return; vk = key; ls.set(LS + 'vk', vk); libPick = ''; libQ = ''; paintLists(); loadView(); };
+      b.onclick = () => { if (vk === key) return; vk = key; ls.set(LS + 'vk', vk); libPick = ''; libQ = ''; paintLists(); paintPhHead(); loadView(); };
       return b;
     };
     box.replaceChildren(
       el('h4', '', 'Плейлисты'), ...L.pl.map((p) => row('pl:' + p.id, p.name, p.n, p.date ? dayName(p.date) : '')),
       el('h4', '', 'Библиотеки'), ...L.lib.map((l) => row('lib:' + l.id, l.name, l.n)));
     const on = box.querySelector('.op-li.on');
-    if (on && !wide()) on.scrollIntoView({ block: 'nearest', inline: 'center' });
+    if (on && !wide() && !isPh) on.scrollIntoView({ block: 'nearest', inline: 'center' });
+    paintPhHead();
   }
 
   let viewTok = 0;
@@ -410,11 +503,15 @@ const Op = (() => {
       const tx = noi(el('span', 'op-tx', s.text || (s.k === 'audio' ? '♪ ' + (s.label || 'Музыка') : s.k === 'live' ? '● ' + (s.label || 'Источник') : s.label || '')));
       box.append(tx);
       box.classList.add('txt');
+      b.classList.add('ni');
     }
     const lb = el('span', 'op-lb');
     lb.append(el('i', 'n', String(i + 1)), noi(el('span', '', s.label || '')));
     if (s.c) lb.style.setProperty('--c', s.c);
     b.append(box, lb);
+    // Телефон строками: рядом с картинкой — текст слайда крупно (картинку в 110 px не прочитать)
+    const st = s.text || (s.k === 'image' ? 'Картинка' : s.k === 'video' ? 'Видео' : s.k === 'audio' ? '♪ Музыка' : '');
+    if (st) { const x = el('span', 'op-st', st); b.append(s.text ? noi(x) : x); }
     b.onclick = () => {
       b.classList.add('pend');
       setTimeout(() => b.classList.remove('pend'), 1500);
@@ -501,7 +598,7 @@ const Op = (() => {
     }
     if (scroll && hit && sig !== lastLiveSig && tab === 'sl') {
       const r = hit.getBoundingClientRect();
-      if (r.top < 60 || r.bottom > innerHeight - 90) hit.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      if (r.top < (isPh ? 100 : 60) || r.bottom > innerHeight - (isPh ? 200 : 90)) hit.scrollIntoView({ block: 'center', behavior: 'smooth' });
     }
     if (scroll) lastLiveSig = sig;
   }
@@ -512,7 +609,7 @@ const Op = (() => {
     if (!L) return;
     $('opNow').textContent = L.label ? L.label : 'Экран пуст';
     paintScr();
-    $('opDockText').textContent = L.label || 'Экран пуст';
+    $('opDockText').textContent = L.frozen ? '❄ ' + (L.label || 'Экран пуст') : L.label || 'Экран пуст';
     for (const [id, g] of [['opHall', 'hall'], ['opStage', 'stage']]) {
       const b = $(id);
       const x = L[g] || { on: false, n: 0 };
@@ -520,6 +617,12 @@ const Op = (() => {
       b.classList.toggle('on', !!x.on);
       b.setAttribute('aria-pressed', String(!!x.on));
     }
+    // Стоп-кадр в зале (включить и отменить — в том числе включённый с телефона по QR)
+    const fz = !!L.frozen;
+    $('opFreeze').classList.toggle('on', fz);
+    $('opFreeze').setAttribute('aria-pressed', String(fz));
+    $('opFreeze').title = fz ? 'Стоп-кадр включён: в зале замер кадр. Нажмите — отменить, в зале покажется текущий слайд' : 'Стоп-кадр: экраны зала замрут, листать можно дальше; ещё раз — отменить';
+    $('opPvFrz').hidden = !fz;
     const box = $('opLayers');
     box.replaceChildren(...(L.layers || []).filter((l) => !l.hidden || l.on).map((l) => {
       const row = el('div', 'op-ly' + (l.on ? ' on' : ''));
@@ -551,12 +654,16 @@ const Op = (() => {
     const at = S.live && S.live.at;
     const v = views.get(at ? at.vk : vk);
     box.replaceChildren();
+    $('opDockNx').textContent = '';
     if (!at || !v) return;
     const flat = [];
     for (const e of v.entries) { const it = items.get(e.id); if (it) for (const s of it.slides) flat.push({ e, it, s }); }
     const i = flat.findIndex((x) => x.e.key === at.key && x.s.id === at.sid);
     const nx = i >= 0 ? flat[i + 1] : null;
     if (!nx) return;
+    // В полосе снизу — что будет по «Дальше» (своя песня — только часть, другая — название)
+    const nl = nx.s.label || (nx.s.text || '').split('\n')[0];
+    $('opDockNx').textContent = '› ' + (nx.e.key === at.key ? nl : nx.it.name + (nl ? ' · ' + nl : ''));
     const b = el('button', 'op-nx');
     b.type = 'button';
     const im = el('span', 'op-im');
@@ -849,7 +956,7 @@ const Op = (() => {
       if (y) { b.classList.remove('pend'); hit = hit || b; }
       if (bRange > 0) b.classList.toggle('pick', v === bRange);
     }
-    if (hit && (scroll || Date.now() - bTouched > 15000)) { const r = hit.getBoundingClientRect(); if (r.top < 120 || r.bottom > innerHeight - 90) hit.scrollIntoView({ block: 'center', behavior: scroll ? 'auto' : 'smooth' }); }
+    if (hit && (scroll || Date.now() - bTouched > 15000)) { const r = hit.getBoundingClientRect(); if (r.top < 120 || r.bottom > innerHeight - (isPh ? 200 : 90)) hit.scrollIntoView({ block: 'center', behavior: scroll ? 'auto' : 'smooth' }); }
   }
   async function bibleRef() {
     const t = $('opBiRef').value.trim();
@@ -978,6 +1085,10 @@ const Op = (() => {
       r.append(g);
       return r;
     };
+    if (!wide()) {
+      sv.append(seg('Вид пульта', phMode, [['auto', 'Авто'], ['ph', 'Телефон'], ['tab', 'Планшет']], (v) => { phMode = v; ls.set(LS + 'ph', v); applyPh(); }));
+      if (isPh) sv.append(seg('Слайды на телефоне', rows ? '1' : '0', [['1', 'Строками'], ['0', 'Плитками']], (v) => { rows = v === '1'; ls.set(LS + 'rows', v); applyPh(); }));
+    }
     sv.append(
       seg('Трансляция экрана', lvMode, [['auto', 'Авто'], ['eco', 'Экономно'], ['hq', 'Чётко'], ['off', 'Выкл']], (v) => { lvMode = v; ls.set(LS + 'lv', v); liveKick(); }),
       seg('Слайды', imgMode ? '1' : '0', [['1', 'Картинки'], ['0', 'Текст']], (v) => { imgMode = v === '1'; ls.set(LS + 'img', v); const vv = views.get(vk); if (vv) renderView(vv); }),
@@ -1314,6 +1425,12 @@ const Op = (() => {
     $('opBack').onclick = () => { if (history.state && history.state.op) history.back(); else close(); };
     window.addEventListener('popstate', () => { if (screen === 'Op') close(); });
     for (const b of $('opTabs').children) b.onclick = () => setTab(b.dataset.t);
+    for (const b of $('opNav').children) b.onclick = () => { if (b.dataset.t === tab) { window.scrollTo({ top: 0, behavior: 'smooth' }); return; } haptic(); setTab(b.dataset.t); };
+    $('opPhTitle').onclick = listPick;
+    $('opPhSt').onclick = () => setTab('sc');
+    swipe($('opDock'), (d) => act('step', { d }));
+    phMq.addEventListener('change', () => { applyPh(); if (opened && tab === 'mo') paintMore(); });
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) wakeOn(); });
     const step = (d) => act('step', { d });
     for (const id of ['opPrev', 'opDPrev']) $(id).onclick = () => step(-1);
     for (const id of ['opNext', 'opDNext']) $(id).onclick = () => step(1);
@@ -1328,6 +1445,7 @@ const Op = (() => {
     longPress($('opDClr'), () => act('clear', { what: 'all' }, 'Экран очищен'));
     $('opHall').onclick = () => act('out', { g: 'hall', on: !(S.live && S.live.hall && S.live.hall.on) });
     $('opStage').onclick = () => act('out', { g: 'stage', on: !(S.live && S.live.stage && S.live.stage.on) });
+    $('opFreeze').onclick = () => act('freeze', { on: !(S.live && S.live.frozen) });
     $('opDockPv').onclick = () => setTab('sc');
     $('opBiGo').onclick = bibleRef;
     $('opBiRef').onkeydown = (e) => { if (e.key === 'Enter') bibleRef(); };
@@ -1337,10 +1455,10 @@ const Op = (() => {
     $('opBiQ').oninput = bibleSearch;
     $('opEdX').onclick = () => $('opEdDlg').close();
     document.addEventListener('visibilitychange', liveKick);
-    matchMedia('(min-width: 900px)').addEventListener('change', () => { if (tab === 'sc' && wide()) setTab('sl'); liveKick(); });
+    matchMedia('(min-width: 900px)').addEventListener('change', () => { applyPh(); if (tab === 'sc' && wide()) setTab('sl'); liveKick(); });
     // Повернули планшет — картинка экрана могла стать крупнее
     let rzT = 0;
-    addEventListener('resize', () => { clearTimeout(rzT); rzT = setTimeout(() => { if (opened) liveKick(); }, 300); });
+    addEventListener('resize', () => { clearTimeout(rzT); rzT = setTimeout(() => { if (opened) { barH(); liveKick(); } }, 300); });
     // Клавиатура (планшет с клавиатурой, пульт-кликер): стрелки, пробел, PageUp/Down — листать, Esc — убрать текст
     document.addEventListener('keydown', (e) => {
       // Ctrl+F / F3 — лупа, как на компьютере

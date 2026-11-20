@@ -677,8 +677,46 @@ function replayTo(win) {
   if (currentView) wc.send('output:view', { view: currentView, ms: 0 });
   // Громкость и устройство звука видео — новому окну вывода тоже
   for (const m of Object.values(videoAudio)) wc.send('output:video', m);
+  if (frozen) wc.send('output:freeze', { on: true, fresh: false }); // стоп-кадр: новое окно берёт уже снятый кадр
 }
 const videoAudio = {}; // последние команды 'volume' и 'sink' проигрывателя
+
+/* ---------- Стоп-кадр (freeze), как на проекторе ----------
+   Экраны группы «Зал» замирают на том, что сейчас видно: окно вывода снимает само себя (capturePage) и кладёт снимок
+   поверх, под снимком всё идёт как обычно — оператор или телефон листают дальше. Отмена — снимок плавно уходит,
+   видно то, что на самом деле сейчас. Включают и отменяют: телефон с доступом к презентации по QR (phone.html,
+   право «Листать»), пульт на планшете (app/op.js → opctl.js) и сама программа (кнопка над «Предпросмотром»). */
+let frozen = null; // { at, by } — когда и кто включил
+const frozenImgs = new Map(); // экран → { url, w }: снимок для окон, открытых уже во время стоп-кадра (зеркала телефонов)
+function freezeSet(on, by) {
+  on = !!on;
+  if (on === !!frozen) return frozen;
+  frozen = on ? { at: Date.now(), by: String(by || '') } : null;
+  frozenImgs.clear();
+  toOutputs('output:freeze', { on, fresh: true });
+  if (control && !control.isDestroyed()) control.webContents.send('output:frozen', { frozen, by: String(by || '') });
+  rmFlush(); // телефонам — сразу
+  return frozen;
+}
+// Окно вывода просит свой кадр: fresh — снять себя (стоп-кадр только что включили); иначе (окно открыли во время
+// стоп-кадра) — кадр, снятый тогда с этого экрана (самый крупный). Его нет — экран тогда не показывался, окно не замирает:
+// снимок «сейчас» был бы уже не тем кадром
+async function freezeSnap(e, sid, fresh, alpha) {
+  if (!frozen) return null;
+  const key = String(sid || 'main');
+  const old = frozenImgs.get(key);
+  if (!fresh) return old ? old.url : null;
+  const at = frozen.at;
+  let img = null;
+  try { img = await e.sender.capturePage(); } catch { img = null; }
+  if (!frozen || frozen.at !== at) return null; // пока снимали — отменили
+  if (!img || img.isEmpty()) return old ? old.url : null;
+  const w = img.getSize().width;
+  // Прозрачный выход (NDI с альфа-каналом) — PNG, иначе JPEG почти без потерь
+  const url = alpha ? img.toDataURL() : 'data:image/jpeg;base64,' + img.toJPEG(93).toString('base64');
+  if (!old || w > old.w) frozenImgs.set(key, { url, w });
+  return url;
+}
 
 /* ---------- Экраны (Screens): у каждого экрана свои выходы — монитор, окно, NDI ----------
    Экран «Основной» выводится как раньше (Настройки → Экран вывода, окно output), его дополнительные выходы и все
@@ -1277,6 +1315,18 @@ app.whenReady().then(() => {
   ipcMain.handle('output:view', (_e, view, ms) => {
     currentView = view && view.z > 1 ? { x: +view.x, y: +view.y, z: +view.z } : null;
     toOutputs('output:view', { view: currentView, ms: Math.max(0, Number(ms) || 0) });
+  });
+
+  // Стоп-кадр: on — включить/отменить (null — только узнать), by — кто ('' — сама программа, 'op' — пульт на планшете)
+  ipcMain.handle('output:freeze', (_e, on, by) => (on == null ? frozen : freezeSet(on, by)));
+  ipcMain.handle('output:freezeSnap', (e, sid, fresh, alpha) => freezeSnap(e, sid, fresh, alpha));
+  // «Предпросмотр» в окне оператора тоже замирает: снимок его места в окне (r — прямоугольник в CSS-пикселях)
+  ipcMain.handle('output:freezePrev', async (e, r) => {
+    if (!r || !(r.width > 0) || !(r.height > 0)) return null;
+    try {
+      const img = await e.sender.capturePage({ x: Math.round(r.x), y: Math.round(r.y), width: Math.round(r.width), height: Math.round(r.height) });
+      return img.isEmpty() ? null : 'data:image/jpeg;base64,' + img.toJPEG(92).toString('base64');
+    } catch { return null; }
   });
 
   /* ---------- Экраны и сцены ---------- */
@@ -2840,7 +2890,7 @@ const rmWant = () => { if (rmState.grants.length || team.on()) rmStart(); else r
 // Что видит телефон: только своя презентация
 function rmView(g) {
   return {
-    rev: rmRev, name: g.name, show: !!g.show, edit: !!g.edit, live: g.live || null, other: !!g.other,
+    rev: rmRev, name: g.name, show: !!g.show, edit: !!g.edit, live: g.live || null, other: !!g.other, frozen: !!frozen,
     aspect: rmState.size.W / rmState.size.H || 16 / 9,
     slides: g.slides.map((s) => ({ id: s.id, k: s.k, label: s.label || '', text: s.text || '', v: s.v })),
   };
@@ -2898,6 +2948,12 @@ function rmHandle(req, res) {
       let msg = {};
       try { msg = JSON.parse(body) || {}; } catch {}
       const cmd = String(msg.cmd || '');
+      // Стоп-кадр в зале: включить и отменить — с правом «Листать»
+      if (cmd === 'freeze') {
+        if (!g.show) return rmJson(res, { ok: false, error: 'Нет доступа' });
+        freezeSet(!!msg.on, 'phone:' + g.name);
+        return rmJson(res, { ok: true, frozen: !!frozen });
+      }
       const okShow = g.show && ['show', 'next', 'prev', 'clear'].includes(cmd);
       const okEdit = g.edit && cmd === 'edit' && typeof msg.text === 'string';
       if (!okShow && !okEdit) return rmJson(res, { ok: false, error: 'Нет доступа' });
@@ -3170,17 +3226,20 @@ ipcMain.handle('remote:state', (_e, st) => {
     for (const s of g.slides) s.v = s.content ? rmHash([s.content, st.size]) : '';
   }
   rmState = { grants, size: st && st.size && st.size.W > 0 && st.size.H > 0 ? st.size : { W: 1920, H: 1080 } };
+  rmFlush();
+  rmWant();
+  return rmInfo();
+});
+// Ждущим телефонам — новое состояние; доступ убрали — «закрыто»
+function rmFlush() {
   rmRev++;
-  // Ждущим телефонам — новое состояние; доступ убрали — «закрыто»
   for (const w of [...rmWait]) {
     clearTimeout(w.timer);
     rmWait.delete(w);
     const g = rmGrant(w.t);
     try { if (g) rmJson(w.res, rmView(g)); else rmSend(w.res, 403, 'application/json', '{"gone":true}'); } catch {}
   }
-  rmWant();
-  return rmInfo();
-});
+}
 ipcMain.handle('remote:info', () => rmInfo());
 // Брандмауэр Windows: без правила телефон не достучится (особенно в «общественной» сети Wi-Fi).
 // Правило по портам пульта (8090–8110) и порту HTTPS группы (teamsrv.js, обычно 443), для любых сетей;

@@ -83,7 +83,7 @@ function opLiveSec() {
   });
   const grp = (g) => { const m = outGroupMembers(g); return { on: m.some((x) => x.on), n: m.length }; };
   const b = bShown && bible && bShown.bid === bible.id ? { bi: bShown.bi, ci: bShown.ci, v1: bShown.v1, v2: bShown.v2 } : null;
-  return { at, bible: b, label: liveLabel || '', layers, hall: grp('hall'), stage: grp('stage'), size: outputSize(), auto: !!autoT, screens: opScreens() };
+  return { at, bible: b, label: liveLabel || '', layers, hall: grp('hall'), stage: grp('stage'), frozen: !!outFrozen, size: outputSize(), auto: !!autoT, screens: opScreens() };
 }
 // Что можно смотреть на пульте: экраны и сцены (как выбор в «Предпросмотре»)
 function opScreens() {
@@ -296,6 +296,8 @@ async function opDo(a, x, who) {
       outGroupSet(g, !!x.on);
       return { ok: true };
     }
+    // Стоп-кадр в зале (renderer.js: frzSet) — включить и отменить, в том числе включённый с телефона по QR
+    case 'freeze': await frzSet(!!x.on, 'op'); return { ok: true };
     case 'bible.set': {
       if (!bibleIndex.some((b) => b.id === x.id)) return opErr('Такого перевода нет');
       await selectBible(String(x.id));

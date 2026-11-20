@@ -89,6 +89,12 @@ contextBridge.exposeInMainWorld('api', {
   setInk: (shapes, opts) => ipcRenderer.invoke('output:ink', shapes, opts),
   setView: (view, ms) => ipcRenderer.invoke('output:view', view, ms),
   videoCtl: (msg) => ipcRenderer.invoke('output:video', msg),
+  // Стоп-кадр в зале (main.js: freezeSet): on — включить/отменить, null — узнать; окну вывода — свой кадр
+  freeze: (on, by) => ipcRenderer.invoke('output:freeze', on == null ? null : !!on, by || ''),
+  onFrozen: (cb) => on('output:frozen', cb),
+  onFreeze: (cb) => on('output:freeze', cb),
+  freezeSnap: (sid, fresh, alpha) => ipcRenderer.invoke('output:freezeSnap', sid, !!fresh, !!alpha),
+  freezePrev: (r) => ipcRenderer.invoke('output:freezePrev', r),
 
   openEditor: (payload) => ipcRenderer.invoke('editor:open', payload),
   editorSave: (msg) => ipcRenderer.invoke('editor:save', msg),

@@ -844,6 +844,60 @@ function outGroupsSync() {
 $('outToggle').addEventListener('click', () => outGroupSet('hall', !outGroupMembers('hall').some((x) => x.on)));
 $('stageToggle').addEventListener('click', () => outGroupSet('stage', !outGroupMembers('stage').some((x) => x.on)));
 
+/* ----- Стоп-кадр в зале (main.js: freezeSet), как на проекторе -----
+   Экраны группы «Зал» замирают на том, что видно; здесь, в «Предпросмотре», всё идёт дальше — можно листать.
+   Отмена — в зале сразу то, что показано сейчас. Включают и отменяют: эта кнопка, телефон с доступом по QR (remote.js)
+   и пульт на планшете (opctl.js: 'freeze'). outFrozen = { at, by } или null; by: '' — здесь, 'op' — планшет, 'phone:имя' */
+let outFrozen = null;
+// «Предпросмотр» замирает вместе с залом (просьба владельца): снимок его места поверх, голубая рамка; слайды в ленте
+// листаются как обычно, после отмены «Предпросмотр» и зал показывают текущий слайд
+const frzPrev = Object.assign(document.createElement('img'), { id: 'frzPrev', alt: '' });
+$('previewStage').after(frzPrev); // ниже «Просмотра без вывода» (#peek) — его видно и во время стоп-кадра
+let frzPrevAt = 0; // для какого включения снят кадр (outFrozen.at)
+async function frzPrevSnap(at) {
+  if (frzPrevAt === at) return;
+  frzPrevAt = at;
+  const r = $('previewWrap').getBoundingClientRect();
+  let url = null;
+  try { url = await window.api.freezePrev({ x: r.left, y: r.top, width: r.width, height: r.height }); } catch { url = null; }
+  if (frzPrevAt !== at) return;
+  if (url) frzPrev.src = url;
+  frzSync();
+}
+function frzSync() {
+  const b = $('frzToggle');
+  const on = !!outFrozen;
+  b.classList.toggle('on', on);
+  b.setAttribute('aria-pressed', String(on));
+  b.title = on ? 'Стоп-кадр включён: зал и «Предпросмотр» замерли. Щелчок — отменить, покажется текущий слайд'
+    : 'Стоп-кадр: зал и «Предпросмотр» замрут на том, что сейчас видно, — листайте дальше, после отмены покажется текущий слайд';
+  $('frzTag').hidden = !on;
+  $('previewWrap').classList.toggle('frozen', on);
+  frzPrev.classList.toggle('on', on && !!frzPrev.getAttribute('src'));
+  if (!on) { frzPrevAt = 0; frzPrev.removeAttribute('src'); }
+}
+// Кнопкой здесь — сначала снять «Предпросмотр», потом включить (до любого следующего слайда)
+async function frzSet(on, by) {
+  if (on && !outFrozen) await frzPrevSnap(-1);
+  try { const f = await window.api.freeze(on, by); outFrozen = f || null; } catch { /* как было */ }
+  if (outFrozen && frzPrevAt === -1) frzPrevAt = outFrozen.at;
+  frzSync();
+}
+$('frzToggle').addEventListener('click', () => frzSet(!outFrozen));
+window.api.onFrozen(({ frozen, by }) => {
+  outFrozen = frozen || null;
+  // Включили с телефона или планшета: сначала снять «Предпросмотр» (без рамки и метки), frzPrevSnap сам вызовет frzSync
+  if (outFrozen && frzPrevAt !== -1 && frzPrevAt !== outFrozen.at) frzPrevSnap(outFrozen.at);
+  else frzSync();
+  // Включили или отменили не здесь — сказать оператору (островок)
+  by = String(by || '');
+  const tail = outFrozen ? '. Отменить — кнопка «Стоп-кадр» над «Предпросмотром»' : '';
+  const what = outFrozen ? 'Стоп-кадр в зале включён' : 'Стоп-кадр в зале отменён';
+  if (by === 'op') flashStatus(`${what} с планшета${tail}`, true);
+  else if (by.startsWith('phone:')) flashStatus(`${what} с телефона («${by.slice(6)}»)${tail}`, true);
+});
+window.api.freeze(null).then((f) => { outFrozen = f || null; frzSync(); }).catch(() => {});
+
 /* ---------- Что сейчас на экране ---------- */
 
 let liveBuild = null;   // функция, собирающая содержимое экрана (чтобы обновлять при смене настроек)

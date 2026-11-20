@@ -481,11 +481,10 @@ function route(req, res, u) {
   }
   let rel = '';
   try { rel = decodeURIComponent(u.pathname.slice(5)) || 'index.html'; } catch { rel = ''; }
-  // Значки 256 и 512 — из brand/ (тот же значок, что у программы); аккорды — общий chords.js программы
-  const icon = /^icon-(256|512)\.png$/.exec(rel);
+  // Значки у приложения свои (app/icon-*.png, исходник app/icon.svg); аккорды — общий chords.js программы
   const SHARED = ['chords.js', 'i18n.js']; // общие с программой файлы из корня
-  const shared = icon || SHARED.includes(rel);
-  const file = icon ? path.join(appDir, '..', 'brand', `icon-${icon[1]}.png`) : SHARED.includes(rel) ? path.join(appDir, '..', rel) : path.normalize(path.join(appDir, rel));
+  const shared = SHARED.includes(rel);
+  const file = shared ? path.join(appDir, '..', rel) : path.normalize(path.join(appDir, rel));
   if (!rel || rel.includes('\0') || (!shared && !file.startsWith(appDir + path.sep))) { res.writeHead(404); res.end(); return true; }
   fs.readFile(file, (err, buf) => {
     if (err) { res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' }); res.end('нет такой страницы'); return; }

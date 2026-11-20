@@ -48,14 +48,49 @@ window.api.onScreenConfig((cfg) => {
   Compose.setConfig(cfg);
   layout();
 });
-window.api.onScreenStage((info) => Compose.progInfo(info));
+// Стоп-кадр (ниже): пока снимается кадр, новое на экран не идёт — иначе снимок поймал бы начало перехода
+let frzHold = null;
+const held = (fn) => (m) => { if (frzHold) frzHold.push(() => fn(m)); else fn(m); };
+window.api.onScreenStage(held((info) => Compose.progInfo(info)));
 // Слои (Media Layers): каждый показ и очистка — только в своём слое
-window.api.onShow(({ content, transition, layer }) => Compose.progShow(content, transition, layer));
-window.api.onClear(({ transition, layer }) => Compose.progClear(transition, layer));
-window.api.onLayers((m) => Compose.progLayers(m));
+window.api.onShow(held(({ content, transition, layer }) => Compose.progShow(content, transition, layer)));
+window.api.onClear(held(({ transition, layer }) => Compose.progClear(transition, layer)));
+window.api.onLayers(held((m) => Compose.progLayers(m)));
 // Рисунок: просто список фигур или { shapes, animFrom } — новое прорисовывается анимацией
-window.api.onInk((d) => Compose.progInk(d));
+window.api.onInk(held((d) => Compose.progInk(d)));
 // Крупный план (Быстрая анимация): плавный наплыв на часть слайда
-window.api.onView((m) => Compose.progView(m));
+window.api.onView(held((m) => Compose.progView(m)));
 // Команды проигрывателя оператора — для видео, которое сейчас на экране
 window.api.onVideo((m) => Compose.progVideo(m));
+
+/* Стоп-кадр, как на проекторе (main.js: freezeSet) — только экраны группы «Зал» (как галочка «Зал» над «Предпросмотром»:
+   экраны — «Зал», сцены — «Сцена», если в Редакторе сцен не выбрано другое). Снимок окна лежит поверх всего,
+   под ним экран живёт дальше; отмена — снимок плавно уходит и видно то, что показано сейчас */
+const frz = document.createElement('img');
+frz.id = 'freeze';
+frz.alt = '';
+document.body.append(frz);
+let frzSeq = 0;
+const frzHall = () => { const d = Compose.screenDef(SID) || {}; return (d.group || (d.mode === 'scene' ? 'stage' : 'hall')) === 'hall'; };
+const frzFlush = () => { const q = frzHold || []; frzHold = null; q.forEach((f) => f()); };
+window.api.onFreeze(async ({ on, fresh }) => {
+  const seq = ++frzSeq;
+  if (!on) {
+    frzFlush();
+    frz.classList.remove('on');
+    setTimeout(() => { if (seq === frzSeq) frz.removeAttribute('src'); }, 400);
+    return;
+  }
+  if (!frzHall()) return;
+  frzHold = frzHold || [];
+  let url = null;
+  try { url = await Promise.race([window.api.freezeSnap(SID, fresh, ALPHA), new Promise((ok) => setTimeout(() => ok(null), 1500))]); } catch { url = null; }
+  if (seq !== frzSeq) return;
+  if (url) {
+    frz.src = url;
+    try { await frz.decode(); } catch { /* покажется как есть */ }
+    if (seq !== frzSeq) return;
+    frz.classList.add('on');
+  }
+  frzFlush();
+});
