@@ -205,9 +205,11 @@ const Scene = (() => {
     layer.style.background = st.bg || '#000000';
     layer._bg = JSON.stringify([st.bg || '#000000', st.bgUrl || '', !!st.bgVideo, st.blur || 0, st.dim || 0]); // тот же фон — при смене меняется только текст
     if (st.bgUrl) {
-      const m = make(st.bgVideo ? 'video' : 'img', 'bgm');
-      m.src = st.bgUrl;
-      if (st.bgVideo) { m.autoplay = true; m.loop = true; m.muted = true; }
+      const still = st.bgVideo && st.still; // миниатюра — кадр видео, а не само видео
+      const m = still ? stillFrame(st.bgUrl) : make(st.bgVideo ? 'video' : 'img');
+      m.classList.add('bgm');
+      if (!still) m.src = st.bgUrl;
+      if (st.bgVideo && !still) { m.autoplay = true; m.loop = true; m.muted = true; }
       if (st.blur > 0) m.style.filter = `blur(${(st.blur / 10.8).toFixed(3)}cqh)`;
       layer.append(m);
     }
@@ -690,8 +692,103 @@ const Scene = (() => {
     }
   }
 
-  // still — миниатюра: видео не играет, показывает первый кадр
+  /* ----- Кадр видео для миниатюр: один на файл, общий для всех слайдов, списков и окон -----
+     Раньше каждая миниатюра заводила своё <video> (66 слайдов с видеофоном — 66 декодеров одного файла, лента
+     открывалась секундами). Теперь кадр снимается один раз — по очереди, не больше двух видео разом, —
+     лежит в памяти картинкой (JPEG ≤ 640 px) и раздаётся всем <img>. Не вышло (чужой источник, ошибка) —
+     миниатюра, как раньше, показывает само видео. */
+  const vFrames = new Map(); // url → { url, src, fail, wait: Set<img> }; порядок — давность использования
+  const FRAMES_MAX = 300;
+  const frameQ = [];
+  let frameBusy = 0;
+  // Запасной путь: видео, которое не играет и показывает начало
+  function stillVideo(url) {
+    const v = make('video');
+    v.src = url + (url.includes('#') ? '' : '#t=0.1');
+    v.muted = true;
+    v.playsInline = true;
+    v.preload = 'metadata';
+    return v;
+  }
+  function frameSet(img, f) {
+    if (f.src) { img.src = f.src; return; }
+    const v = stillVideo(f.url);
+    v.className = img.className;
+    v.style.cssText = img.style.cssText;
+    img.replaceWith(v);
+  }
+  function frameNext() {
+    while (frameBusy < 2 && frameQ.length) grabFrame(frameQ.shift());
+  }
+  function grabFrame(f) {
+    frameBusy++;
+    const v = document.createElement('video');
+    v.muted = true;
+    v.playsInline = true;
+    v.preload = 'auto';
+    let fin = false;
+    const end = (src) => {
+      if (fin) return;
+      fin = true;
+      clearTimeout(timer);
+      v.removeAttribute('src');
+      v.load(); // декодер освобождается сразу, а не когда соберётся мусор
+      frameBusy--;
+      f.src = src || '';
+      f.fail = !src;
+      for (const img of f.wait) frameSet(img, f);
+      f.wait.clear();
+      frameNext();
+    };
+    const timer = setTimeout(() => end(''), 20000);
+    v.addEventListener('loadedmetadata', () => { v.currentTime = Math.min(0.1, (v.duration || 0.2) / 2); }, { once: true });
+    v.addEventListener('seeked', () => {
+      try {
+        const w0 = v.videoWidth || 640;
+        const h0 = v.videoHeight || 360;
+        const k = Math.min(1, 640 / w0);
+        const c = document.createElement('canvas');
+        c.width = Math.max(2, Math.round(w0 * k));
+        c.height = Math.max(2, Math.round(h0 * k));
+        c.getContext('2d').drawImage(v, 0, 0, c.width, c.height);
+        // data:, а не blob: — CSP окон (img-src 'self' file: data:) blob-картинки не пускает
+        end(c.toDataURL('image/jpeg', 0.82));
+      } catch { end(''); }
+    }, { once: true });
+    v.addEventListener('error', () => end(''), { once: true });
+    v.src = f.url;
+  }
+  // <img> с кадром видео url (кадр ещё снимается — появится сам)
+  function stillFrame(url) {
+    let f = vFrames.get(url);
+    if (f && f.fail) return stillVideo(url);
+    if (f) { vFrames.delete(url); vFrames.set(url, f); } // свежий — в конец очереди на вытеснение
+    else {
+      if (vFrames.size >= FRAMES_MAX) {
+        for (const [k, o] of vFrames) {
+          if (o.wait.size || (!o.src && !o.fail)) continue; // ещё снимается
+          vFrames.delete(k);
+          break;
+        }
+      }
+      f = { url, src: '', fail: false, wait: new Set() };
+      vFrames.set(url, f);
+      frameQ.push(f);
+      frameNext();
+    }
+    const img = make('img');
+    img.alt = '';
+    img.draggable = false;
+    img.decoding = 'async';
+    // Кадр не открылся (правила окна, повреждён) — вместо «битой» картинки само видео, как раньше
+    img.addEventListener('error', () => { if (img.getAttribute('src')) { f.fail = true; frameSet(img, { url, src: '' }); } }, { once: true });
+    if (f.src) img.src = f.src; else f.wait.add(img);
+    return img;
+  }
+
+  // still — миниатюра: видео не играет, вместо него — общий кадр (stillFrame)
   function mediaEl(type, url, still, loop, mute) {
+    if (type === 'video' && still) return stillFrame(url);
     const m = make(type === 'video' ? 'video' : 'img');
     m.src = url;
     if (type === 'video') {
@@ -1445,6 +1542,75 @@ const Scene = (() => {
     s.querySelectorAll('video').forEach((v) => { if (play) v.play().catch(() => {}); else v.pause(); });
   }
 
+  /* ----- Предзагрузка: медиа соседних слайдов готовы заранее -----
+     Программа после показа слайда присылает адреса медиа нескольких следующих и предыдущего слайдов (playlist.js plPreload →
+     окна вывода через layers { cmd: 'preload' }). Видео ждёт скрытым <video preload=auto> (буфер и первый кадр есть),
+     картинка — декодированной в памяти. Показали слайд — сцена берёт уже готовое видео вместо нового (adoptPre).
+     Держим немного (по памяти устройства), лишнее и давнее сразу освобождаем. Уже играющее на сцене не дублируем. */
+  const pre = new Map(); // абсолютный url → { el, kind, t }
+  const mem = (typeof navigator !== 'undefined' && navigator.deviceMemory) || 4; // ГБ (браузер сообщает не больше 8)
+  const PRE_MAX = { video: mem >= 8 ? 3 : mem >= 4 ? 2 : 1, image: mem >= 4 ? 8 : 4 };
+  const absUrl = (u) => { try { return new URL(u, location.href).href; } catch { return u; } };
+  function preDrop(url) {
+    const p = pre.get(url);
+    if (!p) return;
+    pre.delete(url);
+    if (p.kind === 'video') { p.el.removeAttribute('src'); p.el.load(); }
+  }
+  function preload(list) {
+    const want = new Set();
+    const playing = new Set([...document.querySelectorAll('.layer video')].map((v) => v.src).filter(Boolean));
+    const items = Array.isArray(list) ? list : [];
+    const now = performance.now();
+    items.forEach((x, i) => {
+      if (!x || !x.url || (x.kind !== 'video' && x.kind !== 'image')) return;
+      const url = absUrl(x.url);
+      if (want.has(url) || (x.kind === 'video' && playing.has(url))) return; // фон, который уже идёт, останется тем же
+      want.add(url);
+      const t = now + items.length - i; // раньше в списке (следующий слайд) — важнее: вытесняется последним
+      const p = pre.get(url);
+      if (p) { p.t = t; return; }
+      let el;
+      if (x.kind === 'video') {
+        el = make('video');
+        el.muted = true;
+        el.playsInline = true;
+        el.preload = 'auto';
+        el.src = url;
+      } else {
+        el = new Image();
+        el.decoding = 'async';
+        el.src = url;
+        if (el.decode) el.decode().catch(() => {});
+      }
+      pre.set(url, { el, kind: x.kind, t });
+    });
+    // Сверх меры — освободить: сначала то, что сейчас не нужно, потом самое давнее
+    for (const kind of ['video', 'image']) {
+      const mine = [...pre.entries()].filter(([, p]) => p.kind === kind)
+        .sort((a, b) => Number(want.has(a[0])) - Number(want.has(b[0])) || a[1].t - b[1].t);
+      while (mine.length > PRE_MAX[kind]) preDrop(mine.shift()[0]);
+    }
+  }
+  function adoptPre(layer) {
+    layer.querySelectorAll('video').forEach((nv) => {
+      if (!nv.autoplay || nv.srcObject || !nv.src) return;
+      const p = pre.get(nv.src);
+      if (!p || p.kind !== 'video') return;
+      pre.delete(nv.src);
+      const v = p.el;
+      v.className = nv.className;
+      v.style.cssText = nv.style.cssText;
+      v.loop = nv.loop;
+      v.muted = nv.muted;
+      v.autoplay = true;
+      nv.replaceWith(v);
+      nv.removeAttribute('src');
+      nv.load();
+      v.play().catch(() => {});
+    });
+  }
+
   // layerId — в какой слой; без него — как раньше, одна картинка на всю сцену (редактор, окошки источников)
   function show(stage, content, tr, layerId) {
     tr = tr || { type: 'none', ms: 0 };
@@ -1472,9 +1638,17 @@ const Scene = (() => {
         const sel = ob ? `:scope > .ob[data-oid="${ob.dataset.oid}"] > video` : plain ? ':scope > video.bgm' : ':scope > .tbg > video';
         const ov = prev.querySelector(sel);
         if (!ov || ov.src !== nv.src) return;
-        if (textSwap) { ov.className = nv.className; ov.style.cssText = nv.style.cssText; nv.replaceWith(ov); } else syncVideo(nv, ov);
+        if (textSwap) {
+          ov.className = nv.className;
+          ov.style.cssText = nv.style.cssText;
+          nv.replaceWith(ov);
+          // Лишнее видео того же файла — сразу в ноль: не грузится и не держит декодер (раньше копилось на каждом слайде)
+          nv.removeAttribute('src');
+          nv.load();
+        } else syncVideo(nv, ov);
       });
     }
+    adoptPre(layer); // видео, загруженное заранее (preload), — вместо нового: стартует без ожидания
     fitLayer(layer);
     if (layerId) applyVolume(stage);
     if (!content.edit) startBuilds(layer, same);
@@ -1670,5 +1844,5 @@ const Scene = (() => {
     for (const el of stage.querySelectorAll(':scope > .slot, :scope > .layer, :scope > svg.ink')) viewOn(stage, el, Math.max(0, Number(ms) || 0));
   }
 
-  return { TRANS, animIn, animOut, animSwap, setTimers, setView, viewCss, show, clear, refit, build, fitText, setInk, shapeNode, liveStream, liveRelease, setLayers, applyVolume, layerPlay, pickTpl, textLabels, buildNext, useFonts, fontsList, family, LIVE, FONTS, FONT_NAMES };
+  return { TRANS, animIn, animOut, animSwap, setTimers, setView, viewCss, show, clear, refit, build, fitText, stillFrame, preload, track: (layer) => sizer.observe(layer), setInk, shapeNode, liveStream, liveRelease, setLayers, applyVolume, layerPlay, pickTpl, textLabels, buildNext, useFonts, fontsList, family, LIVE, FONTS, FONT_NAMES };
 })();

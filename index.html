@@ -431,6 +431,7 @@
     .svc-ihead .bref:empty { display: none; }
     .svc-ihead .bref select { max-width: 150px; padding: 2px 4px; font-size: 12px; }
     .svc-ihead .bref .bref-step { padding: 2px 7px; font-size: 14px; line-height: 1; }
+    .svc-ihead .bref .bref-go { padding: 2px 5px; line-height: 0; } /* иконка Библии — открыть место в «Библии» (brefReveal) */
     .svc-ihead .bref .bref-ref { max-width: 220px; padding: 0 3px; font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
     .svc-slides { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(var(--svc-tile, 170px), 100%), 1fr)); gap: 10px; padding: 0 2px; }
     /* Слайд: картинка 16:9 и полоска с номером и подписью; на экране — оранжевая рамка и полоска */
@@ -440,12 +441,19 @@
     .sl.sel { border-color: color-mix(in srgb, var(--text) 22%, transparent); }
     .sl.sel .cap { background: color-mix(in srgb, var(--text) 14%, var(--field)); }
     .sl.live { border-color: var(--live); }
-    .sl.live-ov:not(.live) { border-color: var(--warn); } /* слайд в слое Overlay */
+    /* Слайд пункта на слое поверх основного (Overlay, «Плашки») — как обычный показанный, цветом темы (решение владельца, 20.11.2026: не красным) */
+    .sl.live-ov:not(.live) { border-color: var(--live); }
+    .sl.live-ov:not(.live) .cap, .sl.live-ov:not(.live) .cap .lbl { background: var(--live); color: var(--live-ink); font-weight: 600; }
     .sl img, .sl video { width: 100%; height: 100%; object-fit: contain; display: block; }
     .sl .cap { display: flex; gap: 6px; padding: 3px 7px; font-size: 11px; color: var(--muted); background: var(--field); }
     .sl .cap .no { font-variant-numeric: tabular-nums; }
     .sl .cap .lbl { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--text); }
     .sl.live .cap, .sl.live .cap .lbl { background: var(--live); color: var(--live-ink); font-weight: 600; }
+    /* Показанный слайд уже другой в ленте (сменили перевод), а на экране — прежний (playlist.js: plStale):
+       цвет, обратный цвету «на экране» (--live) любой темы, — противоположный оттенок, не серый, не слишком тёмный и не светлый.
+       Щелчок по слайду выводит его, и рамка снова обычная. #svcFeed — сильнее рамок тем «Жар», «Янтарь», «Закат», «Лазурь» */
+    #svcFeed .sl.live.stale { --live-alt: hsl(from var(--live) calc(h + 180) max(s, 60) clamp(40, l, 60)); border-color: var(--live-alt); box-shadow: 0 0 0 1px var(--live-alt); }
+    #svcFeed .sl.live.stale .cap, #svcFeed .sl.live.stale .cap .lbl { background: var(--live-alt); color: oklch(from var(--live-alt) clamp(0, (0.68 - l) * 1000, 1) 0 0); } /* светлая на вид плашка — чёрный текст, тёмная — белый */
     /* Слайд музыки: виден в ряду со всеми, но свой вид */
     .sl .pic.audio-pic { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; background: var(--panel); color: var(--live); padding: 8px; }
     .sl .audio-pic .note { font-size: 28px; line-height: 1; }
@@ -465,6 +473,8 @@
     .ctx-menu button { display: flex; width: 100%; justify-content: space-between; gap: 18px; background: none; border: 0; border-radius: calc(5px * var(--rk, 1)); padding: 7px 10px; text-align: left; }
     .ctx-menu button:hover:not(:disabled) { background: var(--live-soft); color: var(--live); }
     .ctx-menu .ctx-ic { display: inline-flex; align-items: center; gap: 9px; }
+    .ctx-menu .ctx-head { padding: 8px 10px 3px; font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+    .ctx-menu .ctx-head:not(:first-child) { margin-top: 4px; border-top: 1px solid var(--line); }
     .ctx-menu button:disabled { opacity: .45; cursor: default; }
     .ctx-key { color: var(--muted); font-size: 12px; }
     .ctx-sep { height: 1px; background: var(--line); margin: 4px 6px; }

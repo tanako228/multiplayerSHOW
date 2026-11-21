@@ -9,6 +9,10 @@ I18n.add({
 "Остался один стих — меньше некуда":["Only one verse left — cannot shrink further","Alles on üks salm — väiksemaks ei saa"],
 "Это последний стих книги":["This is the last verse of the book","See on raamatu viimane salm"],
 "Это первый стих книги":["This is the first verse of the book","See on raamatu esimene salm"],
+"Открыть это место в «Библии»: тот же перевод, глава и стихи. На экран ничего не выводится":["Open this passage in the Bible: same translation, chapter and verses. Nothing goes to the screen","Ava see koht Piiblis: sama tõlge, peatükk ja salmid. Ekraanile midagi ei lähe"],
+"Не удалось понять, из какого места Писания эта презентация":["Could not tell which Scripture passage this presentation comes from","Ei õnnestunud aru saada, millisest Pühakirja kohast see esitlus on"],
+"Перевода этой презентации нет — место открыто в текущем переводе":["This presentation's translation is not installed — the passage is opened in the current translation","Selle esitluse tõlget ei ole — koht avati praeguses tõlkes"],
+"На экране — прежний перевод этого слайда. Щёлкните, чтобы показать новый":["The screen still shows the previous translation of this slide. Click to show the new one","Ekraanil on selle slaidi eelmine tõlge. Klõpsa, et näidata uut"],
 "В переводе «{0}» нет этого места":["The translation “{0}” does not have this passage","Tõlkes „{0}“ seda kohta ei ole"],
 "Места Писания":["Scripture references","Pühakirjakohad"],
 "Места Писания: {0}":["Scripture references: {0}","Pühakirjakohad: {0}"],
@@ -5339,3 +5343,26 @@ I18n.add({
 "Стоп-кадр в зале отменён с планшета":["Freeze cancelled from the tablet","Stoppkaader tühistati tahvlist"],
 "Стоп-кадр в зале отменён с телефона («{0}»)":["Freeze cancelled from a phone (“{0}”)","Stoppkaader tühistati telefonist („{0}“)"],
 });
+/* Меню «＋»: единое «Добавить…», разделы «Добавить» и «Создать» (20.11) */
+I18n.add({
+"Добавить":["Add","Lisa"],
+"Создать":["Create","Loo"],
+"Одно окно для всего: фото, видео, музыка, PowerPoint, песни (текст, ChordPro, OpenLP, EasyWorship, ProPresenter, SongSelect), презентации и темы multiplayerSHOW. Всё — в открытую библиотеку, темы — в свои темы":["One window for everything: photos, video, music, PowerPoint, songs (text, ChordPro, OpenLP, EasyWorship, ProPresenter, SongSelect), multiplayerSHOW presentations and themes. Everything goes to the open library, themes — to your themes","Üks aken kõigele: fotod, video, muusika, PowerPoint, laulud (tekst, ChordPro, OpenLP, EasyWorship, ProPresenter, SongSelect), multiplayerSHOW esitlused ja teemad. Kõik läheb avatud kogusse, teemad — sinu teemadesse"],
+"Одно окно для всего: фото, видео, музыка, PowerPoint, песни (текст, ChordPro, OpenLP, EasyWorship, ProPresenter, SongSelect), презентации и темы multiplayerSHOW. Всё — в открытую библиотеку «{0}», темы — в свои темы":["One window for everything: photos, video, music, PowerPoint, songs (text, ChordPro, OpenLP, EasyWorship, ProPresenter, SongSelect), multiplayerSHOW presentations and themes. Everything goes to the open library “{0}”, themes — to your themes","Üks aken kõigele: fotod, video, muusika, PowerPoint, laulud (tekst, ChordPro, OpenLP, EasyWorship, ProPresenter, SongSelect), multiplayerSHOW esitlused ja teemad. Kõik läheb avatud kogusse „{0}“, teemad — sinu teemadesse"],
+"Live-источник":["Live source","Otseallikas"],
+"Песню":["Song","Laul"],
+"Презентацию":["Presentation","Esitlus"],
+"Слайд — в открытую презентацию":["Slide — into the open presentation","Slaid — avatud esitlusse"],
+"Тему":["Theme","Teema"],
+"Библиотеку":["Library","Kogu"],
+"Плейлист":["Playlist","Esitusloend"],
+"Импорт темы…":["Import theme…","Impordi teema…"],
+"Всё, что можно добавить":["Everything that can be added","Kõik, mida saab lisada"],
+"Презентации PowerPoint":["PowerPoint presentations","PowerPointi esitlused"],
+"Презентация или тема multiplayerSHOW":["multiplayerSHOW presentation or theme","multiplayerSHOW esitlus või teema"],
+"Добавлено — {0}":["Added — {0}","Lisatud — {0}"],
+"Добавлено — {0} · темы — в редакторе тем":["Added — {0} · themes are in the Theme editor","Lisatud — {0} · teemad on teemaredaktoris"],
+"Добавлено — {0}. Не получилось: {1}":["Added — {0}. Failed: {1}","Lisatud — {0}. Ei õnnestunud: {1}"],
+"Не получилось: {0}":["Failed: {0}","Ei õnnestunud: {0}"],
+});
+I18n.add({ "песен:":["songs:","laule:"], "файлов:":["files:","faile:"], "презентаций:":["presentations:","esitlusi:"], "тем:":["themes:","teemasid:"], "тем из презентаций:":["themes from presentations:","teemasid esitlustest:"] }, true);

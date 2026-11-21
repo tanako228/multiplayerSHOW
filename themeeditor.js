@@ -714,13 +714,18 @@ async function teImport() {
   if (!res) return;
   const list = res.ok ? Themes.importData(res.data) : null;
   if (!list || !list.length) { showNotice('В файле нет тем', true); return; }
+  teAddThemes(list);
+  flashStatus(`Добавлено тем: ${list.length}`);
+}
+// Готовые темы (Themes.importData) — в свои; первая откроется в редакторе тем
+function teAddThemes(list) {
   lib.themes.push(...list);
+  if (teSlide) teSlideLeave();
   teThemeId = list[0].id;
   teTplId = '';
   teSel = [];
   teSave();
-  teOpen();
-  flashStatus(`Добавлено тем: ${list.length}`);
+  if (tab === 'themes') teOpen();
 }
 
 $('teAddTheme').addEventListener('click', () => { teSlideLeave(); teNewTheme(); });

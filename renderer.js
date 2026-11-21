@@ -1480,7 +1480,7 @@ let bOpen = false;    // глава выбрана (до этого справа
 let bShown = null;    // что из Библии показано на экране: { bid, bi, ci, v1, v2, pane }
 let anchor = null;    // откуда тянется выделение стихов с Shift: { pane, bi, ci, v }
 let bmView = null;    // что открыто во второй половине: { id, bi, ci, v1, v2 }
-let refSel = null;    // место, найденное по мере набора в поле «Место» (ещё не на экране): { v1, v2 }
+let refSel = null;    // место, найденное по мере набора в поле «Место» (ещё не на экране): { v1, v2, keys? — Set ключей стихов }
 let chSel = [];       // открытые главы [[bi, ci], …] по порядку книг; обычно одна, с Ctrl/Shift — несколько
 let chAnchor = null;  // откуда тянется диапазон глав с Shift: [bi, ci]
 const vsel = { main: [], bm: [] };       // режим «Слайды»: выделенные слайды-стихи, ключи «bi:ci:v»
@@ -1810,12 +1810,35 @@ function chapterStep(bi, ci, d) {
 
 /* Стихи: одинаково в основной половине и в половине закладки */
 
+// «Слайды» в Библии: картинка стиха строится, когда до неё докрутили (запас — пара экранов), а не вся глава
+// (или 200 глав) сразу. Один наблюдатель на половину окна; новая глава — старые наблюдения сброшены
+const vsIO = new Map(); // контейнер стихов → IntersectionObserver
+function vsLater(container, row, fill) {
+  let io = vsIO.get(container);
+  if (!io && typeof IntersectionObserver === 'function') {
+    io = new IntersectionObserver((list) => {
+      for (const e of list) {
+        if (!e.isIntersecting || !e.target._fill) continue;
+        io.unobserve(e.target);
+        const f = e.target._fill;
+        e.target._fill = null;
+        f();
+      }
+    }, { root: container, rootMargin: '1200px 0px' });
+    vsIO.set(container, io);
+  }
+  if (!io) { fill(); return; }
+  row._fill = fill;
+  io.observe(row);
+}
+
 function fillVerses(container, pane, chapters) {
+  if (vsIO.has(container)) vsIO.get(container).disconnect();
   container.replaceChildren();
-  // Слайдами — каждый стих квадратиком, как он будет выглядеть на экране (с темой Библии)
+  // Слайдами — каждый стих квадратиком, как он будет выглядеть на экране (с темой Библии; видеофон — общим кадром)
   const asSlides = slidesMode();
   container.classList.toggle('as-slides', asSlides);
-  const style = asSlides ? { ...styleOf('bible'), bgVideo: false, still: true } : null;
+  const style = asSlides ? { ...styleOf('bible'), still: true } : null;
   for (const [bi, ci] of chapters) {
     const chapter = bible.books[bi].chapters[ci] || [];
     const book = bible.books[bi].name;
@@ -1829,10 +1852,10 @@ function fillVerses(container, pane, chapters) {
       parts.forEach((_, pi) => {
         let row;
         if (asSlides) {
-          const d = bibleData([k], pi, parts);
-          row = Object.assign(document.createElement('div'), { className: 'vslide', tabIndex: 0, title: d.ref });
-          row.append(Scene.build({ type: 'text', ...d, style }),
-            Object.assign(document.createElement('span'), { className: 'vn', textContent: n + (parts.length > 1 ? partTag(pi) : '') }));
+          row = Object.assign(document.createElement('div'), { className: 'vslide', tabIndex: 0, title: `${book} ${ci + 1}:${n}${parts.length > 1 ? partTag(pi) : ''}` });
+          row.append(Object.assign(document.createElement('span'), { className: 'vn', textContent: n + (parts.length > 1 ? partTag(pi) : '') }));
+          const at = row;
+          vsLater(container, row, () => { if (bible && bible.books[bi]) at.prepend(Scene.build({ type: 'text', ...bibleData([k], pi, parts), style })); });
           row.addEventListener('pointerdown', (e) => slideDragStart(e, pane, container, row));
           row.addEventListener('dragstart', (e) => bibleDragStart(e, pane));
           if (parts.length > 1) row.dataset.part = String(pi);
@@ -2167,7 +2190,8 @@ function updateBibleHighlight() {
       row.classList.toggle('live', isShown(bi, ci, v) && partOk);
       row.classList.toggle('picked', picked.has(rowKey(row)));
       if (extra) row.classList.toggle('marked', extra(v));
-      else row.classList.toggle('sel', !!refSel && bi === bBi && ci === bCi && v >= refSel.v1 && v <= refSel.v2);
+      // refSel.keys — место из нескольких глав или с пропусками (иконка Библии у презентации, brefReveal)
+      else row.classList.toggle('sel', !!refSel && (refSel.keys ? refSel.keys.has(rowKey(row)) : bi === bBi && ci === bCi && v >= refSel.v1 && v <= refSel.v2));
     });
   };
   mark(versesEl, 'main', null);

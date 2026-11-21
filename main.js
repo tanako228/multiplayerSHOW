@@ -2131,18 +2131,47 @@ app.whenReady().then(() => {
         : [{ name: 'Песни (текст, ChordPro, JSON)', extensions: SONG_EXT }, { name: 'Все файлы', extensions: ['*'] }],
     });
     if (res.canceled) return [];
-    return res.filePaths.map((p) => {
-      const name = path.basename(p, path.extname(p));
-      const ext = path.extname(p).slice(1).toLowerCase();
-      try {
-        const bytes = fs.readFileSync(p);
-        if (bytes.toString('latin1', 0, 15) === 'SQLite format 3') {
-          try { return { name, ext, db: songsFromDb(p, bytes) }; } catch (err) { return { name, ext, error: err.message }; }
-        }
-        return { name, ext, bytes };
-      } catch { return { name, ext, error: true }; }
-    });
+    return res.filePaths.map(readSongFileAt);
   });
+  function readSongFileAt(p) {
+    const name = path.basename(p, path.extname(p));
+    const ext = path.extname(p).slice(1).toLowerCase();
+    try {
+      const bytes = fs.readFileSync(p);
+      if (bytes.toString('latin1', 0, 15) === 'SQLite format 3') {
+        try { return { name, ext, db: songsFromDb(p, bytes) }; } catch (err) { return { name, ext, error: err.message }; }
+      }
+      return { name, ext, bytes };
+    } catch { return { name, ext, error: true }; }
+  }
+
+  /* «Добавить…» (меню «＋», перетаскивание из Проводника): одно окно для всего. Фото, видео, музыка, PowerPoint —
+     как файлы (describeFiles); остальное (песни любых форматов, файлы презентаций и тем multiplayerSHOW — JSON)
+     читается байтами, а что это — решает окно (playlist.js: addAnything) */
+  async function addRead(paths, opts) {
+    const media = paths.filter((p) => kindOf(p));
+    const other = paths.filter((p) => !kindOf(p));
+    return { media: media.length ? await describeFiles(media, opts) : { items: [], errors: [] }, files: other.map(readSongFileAt) };
+  }
+  ipcMain.handle('add:pick', async (e, opts) => {
+    const songs = [...new Set([...SONG_EXT, ...OTHER_EXT])];
+    const res = await dialog.showOpenDialog(BrowserWindow.fromWebContents(e.sender), {
+      title: 'Добавить', properties: ['openFile', 'multiSelections'],
+      filters: [
+        { name: 'Всё, что можно добавить', extensions: [...new Set([...ALL_EXT, ...songs])] },
+        { name: 'Фото и SVG', extensions: EXT.image },
+        { name: 'Видео', extensions: EXT.video },
+        { name: 'Музыка', extensions: EXT.audio },
+        { name: 'Презентации PowerPoint', extensions: EXT.presentation },
+        { name: 'Песни (текст, ChordPro, JSON)', extensions: SONG_EXT },
+        { name: 'OpenLP, EasyWorship, ProPresenter, SongSelect', extensions: [...OTHER_EXT, 'txt'] },
+        { name: 'Презентация или тема multiplayerSHOW', extensions: ['json'] },
+        { name: 'Все файлы', extensions: ['*'] },
+      ],
+    });
+    return res.canceled ? null : addRead(res.filePaths, opts);
+  });
+  ipcMain.handle('add:read', (_e, paths, opts) => addRead(Array.isArray(paths) ? paths.map(String) : [], opts));
 
   // Проверка перед служением (service.js): есть ли файлы на диске
   ipcMain.handle('files:check', (_e, paths) => (Array.isArray(paths) ? paths.map((p) => { try { return !!p && fs.existsSync(String(p)); } catch { return false; } }) : []));

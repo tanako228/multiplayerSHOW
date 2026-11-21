@@ -12,6 +12,9 @@ let lib = null;
 // можно листать свободно: лента не меняется, пока пункт не открыли (щелчок, Enter).
 let work = null;             // рабочий список { kind, id }
 let openKey = null;          // пункт рабочего списка, открытый в ленте, когда «одной лентой» выключено (settings.plFeed)
+// Показанный слайд в ленте уже другой (сменили перевод у пункта «Библия»), а на экране — прежний: тот же объект,
+// что plShown, пока на экран ничего не выводили. Рамка такого слайда — обратного цвета (.sl.live.stale); щелчок — вывести
+let plStale = null;
 // Одной лентой — только плейлист; в библиотеке песен много, открывается один пункт
 const feedAll = () => !!settings.plFeed && !!work && work.kind === 'pl';
 
@@ -343,7 +346,56 @@ function touched(item) {
 
 /* ----- Миниатюры слайдов ----- */
 
-function slideThumb(item, slide) {
+/* Сцена миниатюры (тема, подгонка текста) — самое дорогое в ленте. Поэтому:
+   - в ленте слайды получают картинку, когда до них докрутили (thumbIO; запас — пара экранов), а не все сразу;
+   - готовые сцены лежат в кэше по содержимому: перерисовка ленты (правка, другой перевод, новый стих)
+     берёт для неизменных слайдов уже собранную сцену, а не строит её заново.
+   Видео в миниатюрах — общий кадр (Scene.stillFrame), а не <video> на каждый слайд. */
+const slThumbs = new Map(); // JSON содержимого → слой сцены; порядок — давность использования
+const SL_THUMBS_MAX = 600;
+if (document.fonts) document.fonts.addEventListener('loadingdone', () => slThumbs.clear()); // шрифт догрузился — подогнать заново
+function thumbScene(content) {
+  const key = JSON.stringify(content);
+  const hit = slThumbs.get(key);
+  if (hit && !hit.isConnected) {
+    slThumbs.delete(key);
+    slThumbs.set(key, hit);
+    Scene.track(hit); // подгонка текста снова следит за размером (миниатюры могли стать крупнее)
+    return hit;
+  }
+  const layer = Scene.build(content);
+  if (!hit) {
+    slThumbs.set(key, layer);
+    if (slThumbs.size > SL_THUMBS_MAX) slThumbs.delete(slThumbs.keys().next().value);
+  }
+  return layer; // такой же слайд уже виден рядом — у этого своя сцена
+}
+function thumbContent(item, slide) {
+  const content = contentOf(item, slide);
+  if (content.style) content.style = { ...content.style, still: true };
+  return content;
+}
+let thumbIO = null;
+function thumbLater(pic, fill) {
+  const root = $('svcFeed');
+  if (!thumbIO && root && typeof IntersectionObserver === 'function') {
+    thumbIO = new IntersectionObserver((list) => {
+      for (const e of list) {
+        if (!e.isIntersecting || !e.target._fill) continue;
+        thumbIO.unobserve(e.target);
+        const f = e.target._fill;
+        e.target._fill = null;
+        f();
+      }
+    }, { root, rootMargin: '1200px 0px' });
+  }
+  if (!thumbIO) { fill(); return; }
+  pic._fill = fill;
+  thumbIO.observe(pic);
+}
+
+// lazy — для ленты: сцену строить, когда миниатюра станет видна
+function slideThumb(item, slide, lazy) {
   // Картинка слайда, под ней полоска с номером и подписью
   const el = Object.assign(document.createElement('div'), { className: 'sl k-' + slide.k + (slide.extra ? ' extra' : '') });
   if (slide.extra) el.title = 'Дополнительный стих — загружен заранее, показывается по щелчку или стрелкой';
@@ -358,16 +410,15 @@ function slideThumb(item, slide) {
     pic.append(Object.assign(document.createElement('span'), { className: 'note', textContent: '● LIVE' }),
       Object.assign(document.createElement('span'), { className: 'aname', textContent: slide.name || 'Источник' }));
   } else if (slide.k === 'image' || slide.k === 'video') {
-    const m = document.createElement(slide.k === 'video' ? 'video' : 'img');
-    if (slide.k === 'video') { m.src = slide.url + '#t=0.1'; m.muted = true; m.preload = 'metadata'; } else { m.src = slide.url; m.loading = 'lazy'; }
+    // Видео — общим кадром (Scene.stillFrame): у ленты нет своего декодера на каждый ролик
+    const m = slide.k === 'video' ? Scene.stillFrame(slide.url) : Object.assign(document.createElement('img'), { src: slide.url, loading: 'lazy' });
     m.draggable = false;
     pic.append(m);
     if (slide.k === 'video') pic.append(Object.assign(document.createElement('span'), { className: 'vbadge', textContent: '▶' }));
   } else {
-    // Текст, Библия и свои слайды рисуем той же сценой, что и экран, — с темой
-    const content = contentOf(item, slide);
-    if (content.style) content.style = { ...content.style, bgVideo: false, bgUrl: content.style.bgVideo ? '' : content.style.bgUrl, still: true };
-    pic.append(Scene.build(content));
+    // Текст, Библия и свои слайды рисуем той же сценой, что и экран, — с темой (видеофон — кадром)
+    const fill = () => pic.prepend(thumbScene(thumbContent(item, slide))); // под значками макросов (mcBadge)
+    if (lazy) thumbLater(pic, fill); else fill();
   }
   const cap = Object.assign(document.createElement('div'), { className: 'cap' });
   cap.append(Object.assign(document.createElement('span'), { className: 'no', textContent: item.slides.indexOf(slide) + 1 }),
@@ -802,6 +853,7 @@ function renderFeed() {
   const keepScroll = feed.dataset.view === workKey() && (!single || feed.dataset.open === openKey) ? feed.scrollTop : 0;
   feed.dataset.open = single ? openKey || '' : '';
   feed.dataset.view = workKey();
+  if (thumbIO) thumbIO.disconnect(); // миниатюры прежней ленты больше не ждут показа
   feed.replaceChildren();
   const v = findView(work);
   const isPl = !!v && work.kind === 'pl';
@@ -927,7 +979,7 @@ function renderFeed() {
 
     if (!item.slides.length) grid.append(Object.assign(document.createElement('div'), { className: 'svc-noslides', textContent: 'Слайдов нет — вставьте (Ctrl+V) или перетащите сюда' }));
     item.slides.forEach((slide) => {
-      const el = slideThumb(item, slide);
+      const el = slideThumb(item, slide, true);
       el.dataset.key = key;
       el.dataset.sid = slide.id;
       el.draggable = true;
@@ -977,8 +1029,12 @@ function updatePlaylistLive() {
   if (!lib) return;
   const on = plShown && plShown.view === workKey();      // лента — рабочий список
   const same = workIsView();
+  const stale = !!on && plStale === plShown; // на экране — прежний вид этого слайда (сменили перевод)
   document.querySelectorAll('#svcFeed .sl').forEach((el) => {
-    el.classList.toggle('live', !!on && el.dataset.key === plShown.key && el.dataset.sid === plShown.sid);
+    const isLive = !!on && el.dataset.key === plShown.key && el.dataset.sid === plShown.sid;
+    el.classList.toggle('live', isLive);
+    if (el.classList.toggle('stale', isLive && stale)) el.title = 'На экране — прежний перевод этого слайда. Щёлкните, чтобы показать новый';
+    else if (el.title.startsWith('На экране — прежний')) el.title = Slides.SLIDE_NAMES.bible;
     el.classList.toggle('live-ov', Object.values(ovShown).some((o) => o.view === workKey() && o.key === el.dataset.key && o.sid === el.dataset.sid));
     el.classList.toggle('sel', isSelected(el.dataset.key, el.dataset.sid));
   });
@@ -1066,7 +1122,14 @@ function slideOnScreen(key, sid, vk = workKey()) {
   try { content = contentOf(entry.item, slide); } catch { return false; }
   const id = ly && layerById(ly) ? ly : autoLayer(content);
   const on = layerOn[id];
-  return !!on && JSON.stringify(on.content) === JSON.stringify(content);
+  if (!on) return false;
+  if (JSON.stringify(on.content) === JSON.stringify(content)) return true;
+  // Отличается только название пункта (‹ › у «Библии» переименовывают пункт), а поля «Название» в шаблоне нет —
+  // на экране то же самое: повторный щелчок не проигрывает переход заново
+  const noTitle = (c) => JSON.stringify({ ...c, meta: { ...(c.meta || {}), title: '' } });
+  if (noTitle(on.content) !== noTitle(content)) return false;
+  const tpl = content.style && content.style.tpls ? Scene.pickTpl(content) : null;
+  return !tpl || !(tpl.objs || []).some((o) => o && !o.hidden && o.bind === 'title');
 }
 // Повторный щелчок по слайду на экране: подсветка, прокрутка к нему; остановленную автосмену — снова запустить
 function keepShown(key, sid, vk = workKey()) {
@@ -1093,9 +1156,13 @@ function showSlide(key, sid, vk = workKey()) {
   if (slide.k !== 'audio' && isOverlay(ly)) {
     present(() => contentOf(item, slide), item.name + (item.slides.length > 1 ? ` — ${slide.label || si + 1}` : ''), false, ly, ownTransition(item, slide));
     ovShown[ly] = { view: vk, key, sid };
+    plLastOv = ly; // пробел и стрелки дальше листают этот пункт
+    if (vk === workKey()) { sel = [{ key, sid }]; selAnchor = { key, sid }; selFocus = 'slides'; } // выделение — за показом
     updatePlaylistLive(); // триггеры слайдов макросов не трогаем (на Overlay срабатывает «Слой»)
+    if (slide.k !== 'audio') plPreload(key, sid, vk);
     return;
   }
+  plLastOv = '';
   const moved = !plShown || plShown.view !== vk || plShown.key !== key || plShown.sid !== sid;
   if (slide.k === 'audio') {
     // Музыкальный слайд: экран не меняется, включается музыка
@@ -1123,12 +1190,55 @@ function showSlide(key, sid, vk = workKey()) {
   if (typeof stSlideShown === 'function') stSlideShown(entry, slide); // свой сценический макет у слайда (stage.js)
   const el = document.querySelector(`#svcFeed .sl[data-key="${key}"][data-sid="${sid}"]`);
   if (el) el.scrollIntoView({ block: 'nearest' });
+  if (slide.k !== 'audio' && !isOverlay(ly)) plPreload(key, sid, vk);
 }
 
+/* ----- Предзагрузка соседних слайдов: окна вывода и предпросмотр держат наготове медиа 2 следующих
+   и 1 предыдущего слайда (видео — буфер и первый кадр, картинки — декодированы). Показ берёт готовое (Scene.preload). */
+// Медиа слайда: файл (фото/видео), фон и видео/картинки шаблона темы
+function slideMedia(item, s) {
+  if (s.k === 'image' || s.k === 'video') return s.url ? [{ url: s.url, kind: s.k }] : [];
+  if (!['text', 'bible', 'custom'].includes(s.k)) return [];
+  let c;
+  try { c = contentOf(item, s); } catch { return []; }
+  const st = c.style || {};
+  const out = [];
+  const tpl = st.tpls ? Scene.pickTpl(c) : null;
+  if (tpl) {
+    if (tpl.bg && (tpl.bg.type === 'video' || tpl.bg.type === 'image') && tpl.bg.url) out.push({ url: tpl.bg.url, kind: tpl.bg.type });
+    for (const o of tpl.objs || []) if (o && !o.hidden && (o.kind === 'video' || o.kind === 'image') && o.url) out.push({ url: o.url, kind: o.kind });
+  } else if (st.bgUrl) out.push({ url: st.bgUrl, kind: st.bgVideo ? 'video' : 'image' });
+  return out;
+}
+let preT = 0;
+function plPreload(key, sid, vk) {
+  clearTimeout(preT);
+  // Чуть позже показа: переход начинается без помех; при быстром листании — только для последнего слайда
+  preT = setTimeout(() => {
+    if (vk !== workKey()) return;
+    const flat = flatSlides();
+    const i = flat.findIndex((x) => x.key === key && x.sid === sid);
+    if (i < 0) return;
+    const list = [];
+    for (const j of [i + 1, i + 2, i - 1]) {
+      const x = flat[j];
+      const e = x && entryByKey(x.key, keyView(vk));
+      const s = e && e.item.slides.find((y) => y.id === x.sid);
+      if (s && !isOverlay(pickedLayer(e))) list.push(...slideMedia(e.item, s));
+    }
+    if (!list.length) return;
+    window.api.layers({ cmd: 'preload', list });
+    Scene.preload(list); // предпросмотр и «Программа» в этом окне
+  }, 250);
+}
+
+// Пункт на слое поверх основного («Плашки», Overlay) показали последним — листаем его (раньше пробел шёл от основного слоя)
+let plLastOv = '';
 function plStep(d) {
   const flat = flatSlides();
   if (!flat.length) return;
-  const cur = plShown && plShown.view === workKey() ? flat.findIndex((x) => x.key === plShown.key && x.sid === plShown.sid) : -1;
+  const from = plLastOv && ovShown[plLastOv] ? ovShown[plLastOv] : plShown;
+  const cur = from && from.view === workKey() ? flat.findIndex((x) => x.key === from.key && x.sid === from.sid) : -1;
   const next = cur < 0 ? (d > 0 ? 0 : flat.length - 1) : Math.max(0, Math.min(flat.length - 1, cur + d));
   if (next === cur) return;
   sel = [flat[next]];
@@ -1461,6 +1571,7 @@ function showMenu(e, items) {
   ctxMenu = Object.assign(document.createElement('div'), { className: 'ctx-menu' });
   for (const it of items) {
     if (it === '-') { ctxMenu.append(Object.assign(document.createElement('div'), { className: 'ctx-sep' })); continue; }
+    if (it.head) { ctxMenu.append(Object.assign(document.createElement('div'), { className: 'ctx-head', textContent: it.head })); continue; } // подпись раздела
     if (it.colors) {
       // Строка-палитра: кружки цветов, первый — «без цвета»
       const row = Object.assign(document.createElement('div'), { className: 'ctx-colors' });
@@ -1813,14 +1924,15 @@ function addFileResult({ items, errors }, fromPool) {
   showNotice(errors.length ? 'Не удалось добавить: ' + errors.join('; ') : '', errors.length > 0);
 }
 
+// Ctrl+O, кнопки «Добавить файлы» — то же «Добавить…»: файлы, песни, презентации, темы
 async function svcAddFiles() {
-  if (!findView() || plNoCreate()) return;
-  addFileResult(await window.api.pickMedia({ slideWidth: slideWidth(), groupDecks: true }));
+  await addAll();
 }
 
 async function svcAddPaths(paths, fromPool) {
   if (!findView()) return;
-  if (!fromPool && plNoCreate()) return; // из Проводника в плейлист — нельзя, из медиапула — можно
+  // Из Проводника — как «Добавить…» (песни, презентации и темы тоже); в плейлист — нельзя, из медиапула — можно
+  if (!fromPool) { await addAnything(await window.api.addRead(paths, { slideWidth: slideWidth(), groupDecks: true }), true); return; }
   const res = await window.api.describeFiles(paths, { slideWidth: slideWidth(), groupDecks: true });
   if (fromPool) res.items.forEach((i) => { if (i.type === 'image' || i.type === 'video') i.fit = poolFitValue(); });
   else markPoolFit(res.items);
@@ -1890,7 +2002,11 @@ function brefKeys(b, r) {
 const brefName = (b, r) => { const keys = brefKeys(b, r); return keys.length ? withBible(b, () => bibleNameFor(keys)) : ''; };
 const brefRef = (b, r) => { const keys = brefKeys(b, r); return keys.length ? withBible(b, () => refString(keys)) : ''; };
 // В пункте только слайды Библии — иначе перестраивать его нельзя (потеряются свои слайды)
-const brefOk = (item) => item.kind === 'bible' && item.slides.length > 0 && item.slides.every((s) => s.k === 'bible');
+// и все стихи — из одной книги: в пункт могли вставить стихи из других книг, а bref помнит только исходное место —
+// тогда перевод и ‹ › в шапке не показываем (перестройка по bref стёрла бы вставленные слайды)
+const brefBookOf = (s) => String(s.ref || '').replace(/\s+\d+:\d+.*$/, '').trim();
+const brefOk = (item) => item.kind === 'bible' && item.slides.length > 0 && item.slides.every((s) => s.k === 'bible')
+  && new Set(item.slides.map(brefBookOf)).size === 1;
 
 // Старый пункт без bref: перевод — по подписи перевода на слайдах, стихи — по подписям «Книга 3:16» (или «3:16A» — часть стиха)
 const brefFailed = new WeakSet();
@@ -1955,7 +2071,8 @@ function brefStep(item, d, shrink) {
 }
 
 // Перестроить слайды пункта по новому месту/переводу. Слайды тех же стихов сохраняют id и свои настройки
-// (тему, переход, заметки…), поэтому показанный слайд остаётся на экране и обновляется
+// (тему, переход, заметки…). Экран при этом НЕ меняется (решение владельца, 20.11.2026): ни новый стих,
+// ни другой перевод сами не выводятся — только по щелчку. Показанный слайд в другом переводе помечается (plStale)
 async function brefApply(item, nr) {
   const b = await loadBible(nr.tr);
   if (!b) { showNotice('Перевод не найден', true); renderFeed(); return; }
@@ -1963,11 +2080,34 @@ async function brefApply(item, nr) {
   if (!keys.length) { showNotice(`В переводе «${b.name}» нет этого места`, true); renderFeed(); return; }
   const oldB = item.bref && (await loadBible(item.bref.tr));
   const oldName = oldB ? brefName(oldB, item.bref) : '';
-  const built = withBible(b, () => bibleSlidesFor(keys));
   const tagOf = (s) => { const m = /(\d+):(\d+)([A-Z]?)$/.exec(s.ref || ''); return m ? m.slice(1).join(':') : ''; };
+  // Тот же перевод (‹ › — стих добавили или убрали): слайды остальных стихов остаются те же самые — без пересборки,
+  // новые собираются только для добавленных стихов
+  const mine = new Map(); // «глава:стих» → слайды этого стиха (части 7A, 7B…)
+  const trChanged = !item.bref || item.bref.tr !== nr.tr;
+  if (!trChanged) {
+    for (const s of item.slides) {
+      const t = tagOf(s);
+      if (!t) continue;
+      const v = t.split(':').slice(0, 2).join(':');
+      if (!mine.has(v)) mine.set(v, []);
+      mine.get(v).push(s);
+    }
+  }
+  const kept = new Set();
+  const built = withBible(b, () => {
+    const slides = [];
+    for (const k of keys) {
+      const { ci, v } = unkey(k);
+      const same = mine.get(`${ci + 1}:${v}`);
+      if (same) { same.forEach((s) => kept.add(s)); slides.push(...same); } else slides.push(...bibleSlidesFor([k]).slides);
+    }
+    return { name: bibleNameFor(keys), slides };
+  });
   const old = new Map(item.slides.map((s) => [tagOf(s), s]));
   const CONTENT = ['k', 'label', 'ref', 'verses', 'translation', 'trs']; // extra (доп. стих) — переносится со старого слайда
   for (const s of built.slides) {
+    if (kept.has(s)) continue;
     const o = old.get(tagOf(s));
     if (!o) continue;
     old.delete(tagOf(s));
@@ -1977,11 +2117,35 @@ async function brefApply(item, nr) {
   // Название меняем вместе с местом, только если его не переименовывали
   if (!item.name || item.name === oldName) item.name = built.name;
   item.bref = nr;
+  // На экране — прежний вид показанного слайда; если в ленте он теперь другой (другой перевод) — пометить
+  const on = plShown && entryByKey(plShown.key, keyView(plShown.view));
+  if (on && on.item === item && trChanged) {
+    plStale = item.slides.some((s) => s.id === plShown.sid) && !slideOnScreen(plShown.key, plShown.sid, plShown.view) ? plShown : null;
+  }
   saveLib();
   renderService();
-  // Показанный слайд этого пункта — сразу в новом виде
-  const on = plShown && entryByKey(plShown.key, keyView(plShown.view));
-  if (on && on.item === item && item.slides.some((s) => s.id === plShown.sid)) showSlide(plShown.key, plShown.sid, plShown.view);
+}
+
+// Открыть место пункта в «Библии»: тот же перевод (если он установлен), книга, главы и стихи выделены.
+// На экран ничего не идёт, лента и выделение в ней не меняются
+async function brefReveal(item) {
+  const r = await brefEnsure(item);
+  if (!r) { showNotice('Не удалось понять, из какого места Писания эта презентация', true); return; }
+  if (bibleIndex.some((t) => t.id === r.tr) && (!bible || bible.id !== r.tr)) await selectBible(r.tr);
+  else if (!bibleIndex.some((t) => t.id === r.tr)) flashStatus('Перевода этой презентации нет — место открыто в текущем переводе');
+  if (!bible) { showNotice('Сначала добавьте перевод Библии', true); return; }
+  const keys = brefKeys(bible, r);
+  if (!keys.length) { showNotice(`В переводе «${bible.name}» нет этого места`, true); return; }
+  if (tab !== 'bible') setTab('bible');
+  const chs = [];
+  for (const k of keys) { const { bi, ci } = unkey(k); if (!chs.some((x) => x[0] === bi && x[1] === ci)) chs.push([bi, ci]); }
+  if (chs.length > 1) openChapters(chs); else openChapter(...chs[0]);
+  const vs = keys.map(unkey);
+  refSel = { v1: vs[0].v, v2: vs[vs.length - 1].v, keys: new Set(keys) }; // подсветка, как при наборе в поле «Место»
+  if (slidesMode()) { vsel.main = keys.slice(); vAnchor.main = keys[0]; }
+  $('refInput').value = refString(keys);
+  updateBibleHighlight();
+  scrollToVerse(vs[0].v, versesEl, vs[0].bi, vs[0].ci);
 }
 
 // Шапка пункта «Библия»: [перевод ▾] ‹ Иоанна 3:16-18 ›
@@ -2009,7 +2173,12 @@ function brefCtl(item) {
     const [c1, v1] = r.vs[0];
     const [c2, v2] = r.vs[r.vs.length - 1];
     const short = `${c1 + 1}:${v1}` + (c1 === c2 && v1 === v2 ? '' : `–${c2 === c1 ? '' : `${c2 + 1}:`}${v2}`);
+    // Иконка Библии — открыть это место в разделе «Библия» (перевод, главы, стихи); на экран ничего не идёт
+    const go = Object.assign(document.createElement('button'), { className: 'bref-go', title: 'Открыть это место в «Библии»: тот же перевод, глава и стихи. На экран ничего не выводится' });
+    go.append(ico('bible'));
+    go.addEventListener('click', () => brefDo(() => brefReveal(item)));
     box.append(
+      go,
       sel,
       arrow('‹', -1, 'Добавить стих перед местом (за началом главы — из предыдущей). Shift+щелчок — убрать первый стих'),
       Object.assign(document.createElement('span'), { className: 'bref-ref', textContent: ref === item.name ? short : ref, title: ref }),
@@ -2287,22 +2456,26 @@ function openAddMenu() {
   const r = $('addMenu').getBoundingClientRect();
   const isPl = !!lib && !!lib.view && lib.view.kind === 'pl';
   const noNew = isPl && listsTab(); // открыт плейлист: создавать нельзя — только перетаскивать готовое
+  const where = findView();
   showMenu({ clientX: r.left, clientY: r.bottom + 4 }, [
     ...(noNew ? [{ label: 'Открыт плейлист: новое — в библиотеке, сюда — перетащить', disabled: true, fn() {} }, '-'] : []),
-    { label: 'Добавить песню', key: 'Ctrl+N', disabled: noNew, fn: () => { setTab('service'); openSongDialog(null); } },
-    { label: 'Импортировать песни…', disabled: noNew, fn: inLists(importSongs) },
-    { label: 'Перенести песни из другой программы…', title: 'OpenLP, EasyWorship 6/7, ProPresenter (.pro), SongSelect (CCLI)', disabled: noNew, fn: inLists(() => importSongs(true)) },
-    { label: 'Добавить Live-источник', fn: () => { if (!settings.poolOpen) togglePool(); setSrcMode(true); } },
-    { label: 'Добавить файл…', key: 'Ctrl+O', disabled: noNew, fn: () => (listsTab() ? inLists(svcAddFiles)() : pickFiles()) },
-    { label: 'Добавить библиотеку', fn: () => createView('lib') },
-    '-',
-    { label: 'Свой слайд — в открытую презентацию', fn: inLists(svcAddSlide) },
-    { label: 'Новая презентация', disabled: noNew, fn: inLists(svcNewPres) },
-    { label: 'Из библиотеки в плейлист…', disabled: !isPl, fn: inLists(openLibPick) },
-    { label: 'Новый плейлист', fn: () => createView('pl') },
-    { label: 'Перевод Библии…', fn: () => pickBibles() },
+    { head: 'Добавить' },
+    { label: 'Добавить…', key: 'Ctrl+O', icon: 'add',
+      title: 'Одно окно для всего: фото, видео, музыка, PowerPoint, песни (текст, ChordPro, OpenLP, EasyWorship, ProPresenter, SongSelect), презентации и темы multiplayerSHOW. Всё — в открытую библиотеку' + (where && !isPl ? ` «${where.name}»` : '') + ', темы — в свои темы',
+      fn: () => addAll() },
+    { label: 'Live-источник', icon: 'sources', fn: () => { if (!settings.poolOpen) togglePool(); setSrcMode(true); } },
+    { label: 'Перевод Библии…', icon: 'bible', fn: () => pickBibles() },
+    ...(isPl ? [{ label: 'Из библиотеки в плейлист…', icon: 'library', fn: inLists(openLibPick) }] : []),
+    { head: 'Создать' },
+    { label: 'Песню', key: 'Ctrl+N', icon: 'music', disabled: noNew, fn: () => { setTab('service'); openSongDialog(null); } },
+    { label: 'Презентацию', icon: 'presentation', disabled: noNew, fn: inLists(svcNewPres) },
+    { label: 'Слайд — в открытую презентацию', icon: 'slides', fn: inLists(svcAddSlide) },
+    { label: 'Тему', icon: 'theme', fn: () => { openThemeTab(); teSlideLeave(); teNewTheme(); } },
+    { label: 'Библиотеку', icon: 'library', fn: () => createView('lib') },
+    { label: 'Плейлист', icon: 'playlist', fn: () => createView('pl') },
     '-',
     { label: 'Импорт презентации…', title: 'Файл презентации multiplayerSHOW (например, с другого компьютера) — вместе с её темами', disabled: noNew, fn: inLists(importPres) },
+    { label: 'Импорт темы…', fn: () => { openThemeTab(); teSlideLeave(); teImport(); } },
     ...addThemeExportItems(),
   ]);
   ctxMenu.dataset.tag = 'add';
@@ -2333,14 +2506,21 @@ async function importPres() {
   if (!res) return;
   const d = res.ok ? res.data : null;
   if (!d || d.kind !== 'presentation' || !Array.isArray(d.items)) { showNotice('Это не файл презентации multiplayerSHOW', true); return; }
-  const items = d.items.filter((it) => it && typeof it === 'object' && Array.isArray(it.slides)).map((it) => {
+  const { items, ext } = presFromData(d);
+  if (!items.length) { showNotice('В файле нет презентаций', true); return; }
+  addItems(items, true);
+  flashStatus(`Импортировано презентаций: ${items.length}` + (ext ? ` · новых тем: ${ext} — редактор тем, «Из презентаций»: правая кнопка → «Сохранить в темы»` : ''));
+}
+// Файл презентации → презентации (новые id); её темы, которых здесь нет, — в lib.extThemes (ext — сколько новых)
+function presFromData(d) {
+  const items = (Array.isArray(d.items) ? d.items : []).filter((it) => it && typeof it === 'object' && Array.isArray(it.slides)).map((it) => {
     const c = Slides.migrate(clone(it));
     c.id = newId();
     c.name = String(c.name || 'Презентация');
     for (const s of c.slides) if (!s.id) s.id = newId();
     return c;
   });
-  if (!items.length) { showNotice('В файле нет презентаций', true); return; }
+  if (!items.length) return { items, ext: 0 };
   // Темы: своя или стандартная с тем же id уже есть — презентация покажется ею; нет — тема ложится в «Из презентаций»
   // с прежним id (слайды и выбранные вручную шаблоны её находят) и не теряется, пока её не сохранят в темы
   if (!Array.isArray(lib.extThemes)) lib.extThemes = [];
@@ -2354,8 +2534,54 @@ async function importPres() {
     lib.extThemes.push(c);
     ext++;
   }
-  addItems(items, true);
-  flashStatus(`Импортировано презентаций: ${items.length}` + (ext ? ` · новых тем: ${ext} — редактор тем, «Из презентаций»: правая кнопка → «Сохранить в темы»` : ''));
+  return { items, ext };
+}
+
+/* ---------- «Добавить…»: одно окно для всего ----------
+   Фото, видео, музыка, PowerPoint, песни (текст, ChordPro, JSON, OpenLP, EasyWorship, ProPresenter, SongSelect),
+   файлы презентаций и тем multiplayerSHOW. Что это — по файлу; всё, кроме тем, — в открытую библиотеку
+   (плейлист, медиапул и т. п. не важны: открыта библиотека — туда), темы — в свои темы. */
+async function addAll() {
+  if (!listsTab()) setTab('service');
+  await addAnything(await window.api.addPick({ slideWidth: slideWidth(), groupDecks: true }));
+}
+// res — main.js add:pick / add:read: { media: { items, errors }, files: [{ name, ext, bytes | db | error }] }
+async function addAnything(res, fromDrop) {
+  if (!res) return;
+  const bad = [...(res.media.errors || [])];
+  const songFiles = [];
+  const presData = [];
+  const themes = [];
+  for (const f of res.files || []) {
+    if (f.ext === 'json' && f.bytes) {
+      let d = null;
+      try { d = JSON.parse(decodeText(f.bytes)); } catch { /* не JSON — пусть разберёт песенный импорт */ }
+      if (d && d.kind === 'presentation') { presData.push(d); continue; }
+      if (d && d.kind === 'theme') { const l = Themes.importData(d); if (l && l.length) themes.push(...l); else bad.push(f.name); continue; }
+    }
+    songFiles.push(f);
+  }
+  const media = res.media.items || [];
+  if (fromDrop) markPoolFit(media);
+  const sr = songFiles.length ? await songItemsFrom(songFiles) : { items: [], bad: [] };
+  bad.push(...sr.bad);
+  const n = { media: 0, songs: 0, pres: 0, ext: 0 };
+  if (media.length || sr.items.length || presData.length) {
+    if (!findView()) showNotice('Сначала создайте плейлист или библиотеку', true);
+    else if (!plNoCreate()) { // новое — только в библиотеку
+      const pres = [];
+      for (const d of presData) { const r = presFromData(d); pres.push(...r.items); n.ext += r.ext; }
+      addItems([...media.map(fromFileItem), ...sr.items, ...pres], true);
+      Object.assign(n, { media: media.length, songs: sr.items.length, pres: pres.length });
+    }
+  }
+  if (themes.length) teAddThemes(themes);
+  const parts = [
+    n.songs && `песен: ${n.songs}`, n.media && `файлов: ${n.media}`, n.pres && `презентаций: ${n.pres}`,
+    themes.length && `тем: ${themes.length}`, n.ext && `тем из презентаций: ${n.ext}`,
+  ].filter(Boolean);
+  if (bad.length) showNotice((parts.length ? 'Добавлено — ' + parts.join(', ') + '. ' : '') + 'Не получилось: ' + bad.join('; '), true);
+  else if (parts.length) flashStatus('Добавлено — ' + parts.join(', ') + (themes.length ? ' · темы — в редакторе тем' : ''));
 }
 
 // «Экспорт темы» в меню «＋»: то, что открыто в редакторе тем (выбирать заново не нужно). Открыт свой вид слайда

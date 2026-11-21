@@ -840,14 +840,10 @@ function readSongFile(f) {
 }
 
 // other — окно выбора с базами и файлами других программ (OpenLP, EasyWorship, ProPresenter, SongSelect)
-async function importSongs(other) {
-  if (!findView()) { showNotice('Сначала создайте плейлист или библиотеку', true); return; }
-  if (plNoCreate()) return; // песни импортируются только в библиотеку
-  const files = await window.api.songsOpen({ other: other === true });
-  if (!files.length) return;
+// Прочитанные файлы (main.js: songs:open, add:pick) → презентации-песни; bad — что не получилось
+async function songItemsFrom(files) {
   const many = files.some((f) => f.db && (f.db.songs || []).length > 50);
-  if (many) showNotice('Импорт песен…');
-  await new Promise((r) => setTimeout(r, 30)); // надпись успевает появиться
+  if (many) { showNotice('Импорт песен…'); await new Promise((r) => setTimeout(r, 30)); } // надпись успевает появиться
   const items = [];
   const bad = [];
   for (const f of files) {
@@ -857,6 +853,15 @@ async function importSongs(other) {
     for (const s of songs) items.push({ id: newId(), type: 'pres', kind: 'song', name: s.name, song: s.song, slides: Songs.build(s.song) });
   }
   if (many) showNotice('');
+  return { items, bad };
+}
+
+async function importSongs(other) {
+  if (!findView()) { showNotice('Сначала создайте плейлист или библиотеку', true); return; }
+  if (plNoCreate()) return; // песни импортируются только в библиотеку
+  const files = await window.api.songsOpen({ other: other === true });
+  if (!files.length) return;
+  const { items, bad } = await songItemsFrom(files);
   if (items.length) addItems(items, true);
   if (bad.length) showNotice((items.length ? `Импортировано песен: ${items.length}. ` : '') + 'Не получилось: ' + bad.join(', '), true);
   else flashStatus(`Импортировано песен: ${items.length}`);

@@ -49,6 +49,8 @@ contextBridge.exposeInMainWorld('api', {
   identifyDisplays: () => ipcRenderer.invoke('displays:identify'), // большие номера на мониторах на 3 с
   pickMedia: (opts) => ipcRenderer.invoke('media:pick', opts),
   describeFiles: (paths, opts) => ipcRenderer.invoke('media:describe', paths, opts),
+  addPick: (opts) => ipcRenderer.invoke('add:pick', opts), // «Добавить…»: одно окно для файлов, песен, презентаций, тем
+  addRead: (paths, opts) => ipcRenderer.invoke('add:read', paths, opts),
   pathForFile: (file) => webUtils.getPathForFile(file),
 
   openOutput: (displayId) => ipcRenderer.invoke('output:open', displayId),

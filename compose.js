@@ -160,6 +160,7 @@ const Compose = (() => {
     if (Array.isArray(m.defs)) { P.defs = m.defs; for (const p of progs) Scene.setLayers(p.el, progDefs(p)); inkRefresh(); }
     if (m.layer && (m.cmd === 'play' || m.cmd === 'pause')) for (const p of progs) Scene.layerPlay(p.el, m.layer, m.cmd === 'play');
     if (m.cmd === 'build') for (const p of progs) Scene.buildNext(p.el);
+    if (m.cmd === 'preload') Scene.preload(m.list); // медиа соседних слайдов — заранее (playlist.js plPreload)
   }
 
   /* Рисунок и крупный план — только там, где виден тот же слайд, на котором рисуют:
