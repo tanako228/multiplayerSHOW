@@ -1188,9 +1188,23 @@ function showSlide(key, sid, vk = workKey()) {
   updatePlaylistLive();
   if (typeof mcSlideShown === 'function') mcSlideShown(entry, slide, vk); // триггеры макросов (macros.js)
   if (typeof stSlideShown === 'function') stSlideShown(entry, slide); // свой сценический макет у слайда (stage.js)
-  const el = document.querySelector(`#svcFeed .sl[data-key="${key}"][data-sid="${sid}"]`);
-  if (el) el.scrollIntoView({ block: 'nearest' });
+  plScrollTo(key, sid);
   if (slide.k !== 'audio' && !isOverlay(ly)) plPreload(key, sid, vk);
+}
+
+// Прокрутить ленту к слайду перед ближайшей отрисовкой: вёрстка считается один раз вместе с новым слайдом,
+// а не лишний раз сразу (быстрое листание — только к последнему)
+let plScrollKey = null;
+function plScrollTo(key, sid) {
+  const was = plScrollKey;
+  plScrollKey = { key, sid };
+  if (was) return;
+  requestAnimationFrame(() => {
+    const k = plScrollKey;
+    plScrollKey = null;
+    const el = k && document.querySelector(`#svcFeed .sl[data-key="${k.key}"][data-sid="${k.sid}"]`);
+    if (el) el.scrollIntoView({ block: 'nearest' });
+  });
 }
 
 /* ----- Предзагрузка соседних слайдов: окна вывода и предпросмотр держат наготове медиа 2 следующих

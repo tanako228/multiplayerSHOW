@@ -437,6 +437,15 @@ function prevScreenSync() {
   }
   // Под экраном/сценой обычный предпросмотр работает дальше (звук, рисунок), но его не видно — только один экран
   prevStage.style.visibility = prevScr ? 'hidden' : '';
+  // Скрытый — облегчённый (scene.js stage._lite): без подгонки текста и беззвучных видеофонов, чтобы слайд
+  // не рисовался в окне оператора дважды. Стал виден или скрыт — перерисовать то, что в слоях
+  if (!!prevStage._lite !== !!prevScr) {
+    prevStage._lite = !!prevScr;
+    for (const [lid, x] of Object.entries(layerOn)) {
+      if (x.content.type === 'video' || x.content.type === 'live') continue; // видеофайл и источники не перезапускаем
+      Scene.show(prevStage, Compose.lookFor('main', { ...x.content, sound: false }), { type: 'none', ms: 0 }, lid);
+    }
+  }
   prevScreenFit();
 }
 // Экран своего размера — целиком в окне предпросмотра (по центру, с полями)

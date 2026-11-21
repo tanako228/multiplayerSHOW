@@ -208,7 +208,7 @@ const Scene = (() => {
       const still = st.bgVideo && st.still; // миниатюра — кадр видео, а не само видео
       const m = still ? stillFrame(st.bgUrl) : make(st.bgVideo ? 'video' : 'img');
       m.classList.add('bgm');
-      if (!still) m.src = st.bgUrl;
+      if (!still && !(liteBuild && st.bgVideo)) m.src = st.bgUrl; // скрытая сцена: видеофон (без звука) не грузим
       if (st.bgVideo && !still) { m.autoplay = true; m.loop = true; m.muted = true; }
       if (st.blur > 0) m.style.filter = `blur(${(st.blur / 10.8).toFixed(3)}cqh)`;
       layer.append(m);
@@ -570,6 +570,7 @@ const Scene = (() => {
 
   // Подбирает самый крупный размер шрифта, при котором текст помещается на экран
   function fitText(layer) {
+    if (layer._lite) return;
     const content = layer.querySelector('.content');
     const body = layer.querySelector('.body');
     const ref = layer.querySelector('.ref');
@@ -578,6 +579,9 @@ const Scene = (() => {
     const cs = getComputedStyle(content);
     const avail = content.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom);
     const scale = parseFloat(layer.dataset.scale) || 1;
+    // Тот же текст в той же рамке уже подгоняли (предпросмотр и программа, возврат к слайду) — размер из кэша, одна проверка
+    const key = 'T|' + H + '|' + layer.clientWidth + '|' + avail + '|' + scale + '|' + content.outerHTML;
+    const hit = fitGet(key);
     const apply = (px) => {
       body.style.fontSize = px + 'px';
       ref.style.fontSize = Math.max(px * 0.5, H * 0.025) + 'px';
@@ -587,13 +591,17 @@ const Scene = (() => {
       const refH = ref.hidden ? 0 : ref.offsetHeight + parseFloat(getComputedStyle(ref).marginTop);
       return body.offsetHeight + refH <= avail;
     };
+    if (hit != null && fits(hit)) return;
     // Нижняя граница маленькая: длинный текст должен помещаться целиком, пусть и мелко
     let lo = H * 0.004;
     let hi = H * 0.12;
     if (fits(hi)) lo = hi;
-    else for (let i = 0; i < 14; i++) {
-      const mid = (lo + hi) / 2;
-      if (fits(mid)) lo = mid; else hi = mid;
+    else {
+      // Первая проба — по оценке (высота текста растёт как квадрат размера), дальше половинным делением до 0,4 %
+      const g = hi * Math.sqrt(avail / Math.max(1, body.offsetHeight + (ref.hidden ? 0 : ref.offsetHeight)));
+      const step = (x) => { if (fits(x)) lo = x; else hi = x; };
+      if (g > lo && g < hi) { step(g); const g2 = lo === g ? g * 1.04 : g * 0.96; if (g2 > lo && g2 < hi) step(g2); }
+      for (let i = 0; i < 14 && hi - lo > hi * 0.004; i++) step((lo + hi) / 2);
     }
     // «Размер текста» больше 100% — только пока текст помещается
     let px = lo * scale;
@@ -603,6 +611,7 @@ const Scene = (() => {
       px = a;
     }
     apply(px);
+    fitPut(key, px);
   }
 
   // Блоки текста своего слайда: если текст не влезает в рамку, уменьшаем шрифт (в данных размер не меняется)
@@ -789,6 +798,7 @@ const Scene = (() => {
   // still — миниатюра: видео не играет, вместо него — общий кадр (stillFrame)
   function mediaEl(type, url, still, loop, mute) {
     if (type === 'video' && still) return stillFrame(url);
+    if (type === 'video' && liteBuild && mute !== false) return make('video'); // скрытая сцена: беззвучное видео шаблона не нужно
     const m = make(type === 'video' ? 'video' : 'img');
     m.src = url;
     if (type === 'video') {
@@ -1239,13 +1249,36 @@ const Scene = (() => {
     const avail = el.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom);
     if (!(avail > 0)) return;
     const fits = () => pl.offsetHeight <= avail + 0.5 && tx.scrollWidth <= tx.clientWidth + 1;
+    // Тот же текст в том же блоке уже подгоняли — размер из кэша и одна проверка вместо поиска
+    const key = mode + '|' + base + '|' + min + '|' + max + '|' + avail + '|' + el.clientWidth + '|' + el.style.cssText + '|' + pl.style.cssText + '|' + tx.style.cssText + '|' + tx.innerHTML;
+    const hit = fitGet(key);
+    if (hit != null) { set(hit); if (fits()) return; set(base); }
+    let res = base;
+    // lo помещается, hi — нет (стоит сейчас). Первая проба — по оценке (высота текста растёт как квадрат размера,
+    // ширина длинного слова — как размер), дальше половинным делением до 0,4 % — вместо 12 проб каждый раз
     const search = (lo, hi) => {
-      for (let i = 0; i < 12; i++) { const mid = (lo + hi) / 2; set(mid); if (fits()) lo = mid; else hi = mid; }
+      const r = Math.min(Math.sqrt(avail / Math.max(1, pl.offsetHeight)), tx.clientWidth / Math.max(1, tx.scrollWidth));
+      const step = (x) => { set(x); if (fits()) lo = x; else hi = x; };
+      const g = hi * r;
+      if (g > lo && g < hi) { step(g); const g2 = lo === g ? g * 1.04 : g * 0.96; if (g2 > lo && g2 < hi) step(g2); }
+      for (let i = 0; i < 12 && hi - lo > Math.max(0.005, hi * 0.004); i++) step((lo + hi) / 2);
       set(lo);
+      res = lo;
     };
     if (mode === 'shrink') { if (!fits()) search(min, base); }
-    else if (mode === 'grow') { if (fits()) { set(max); if (!fits()) search(base, max); } }
-    else { set(max); if (!fits()) search(min, max); }
+    else if (mode === 'grow') { if (fits()) { set(max); res = max; if (!fits()) search(base, max); } }
+    else { set(max); res = max; if (!fits()) search(min, max); }
+    fitPut(key, res);
+  }
+
+  // Кэш подгонки текста: ключ — текст, оформление и размер рамки; значение — найденный размер шрифта.
+  // Шрифт догрузился или сменился список шрифтов — кэш сбрасывается
+  const FIT = new Map();
+  const fitGet = (k) => FIT.get(k);
+  function fitPut(k, v) {
+    FIT.delete(k);
+    FIT.set(k, v);
+    if (FIT.size > 600) FIT.delete(FIT.keys().next().value);
   }
 
   // Маска подложки «вырезанного текста»: подложка целиком, слова — прозрачные (тем же шрифтом, по местам слов на экране)
@@ -1356,6 +1389,7 @@ const Scene = (() => {
   }
 
   const fitLayer = (layer) => {
+    if (layer._lite) return; // скрытая сцена (запасной предпросмотр оператора) — текст не подгоняется
     if (layer.classList.contains('themed')) fitThemed(layer);
     else if (layer.classList.contains('text')) fitText(layer);
     else if (layer.classList.contains('custom')) fitCustom(layer);
@@ -1612,10 +1646,16 @@ const Scene = (() => {
   }
 
   // layerId — в какой слой; без него — как раньше, одна картинка на всю сцену (редактор, окошки источников)
+  // Облегчённая сцена (stage._lite): её не видно (запасной «Предпросмотр» оператора под экраном «Основной») —
+  // текст не подгоняется, беззвучные видео шаблонов и видеофоны не грузятся. Видеофайл слайда и звук — как обычно
+  let liteBuild = false;
   function show(stage, content, tr, layerId) {
     tr = tr || { type: 'none', ms: 0 };
     const box = layerId ? slotOf(stage, layerId) : stage;
-    const layer = build(content);
+    liteBuild = !!stage._lite;
+    let layer;
+    try { layer = build(content); } finally { liteBuild = false; }
+    if (stage._lite) layer._lite = true;
     // В слое чёрный фон темы — прозрачный: под текстом видны медиа и источники (пустой экран и так чёрный)
     if (layerId && layer.style.backgroundColor === 'rgb(0, 0, 0)') layer.style.background = 'transparent';
     const old = layers(box);
@@ -1650,6 +1690,8 @@ const Scene = (() => {
     }
     adoptPre(layer); // видео, загруженное заранее (preload), — вместо нового: стартует без ожидания
     fitLayer(layer);
+    // Подогнали сейчас — ResizeObserver при первом срабатывании не подгоняет второй раз
+    if (!layer._lite && layer.clientHeight) { layer._fitH = layer.clientHeight; layer._fitW = layer.clientWidth; }
     if (layerId) applyVolume(stage);
     if (!content.edit) startBuilds(layer, same);
     // Старые слои убирает переход, который подхватил их последним (быстрые щелчки: слой не пропадает посреди наплыва)
@@ -1709,10 +1751,11 @@ const Scene = (() => {
   let userFonts = [];
   function useFonts(list) {
     userFonts = Array.isArray(list) ? list : [];
+    FIT.clear();
     fontCss.textContent = userFonts.map((f) => `@font-face { font-family: "${String(f.family).replace(/["\\]/g, '')}"; src: url("${f.url}"); font-weight: ${Number(f.weight) || 400}; font-style: ${f.italic ? 'italic' : 'normal'}; font-display: block; }`).join('\n');
   }
   // Шрифт догрузился — текст подогнать заново
-  if (document.fonts) document.fonts.addEventListener('loadingdone', () => document.querySelectorAll('.layer.text, .layer.custom, .layer.themed').forEach(fitLayer));
+  if (document.fonts) document.fonts.addEventListener('loadingdone', () => FIT.clear() || document.querySelectorAll('.layer.text, .layer.custom, .layer.themed').forEach(fitLayer));
   if (typeof window !== 'undefined' && window.api && window.api.fontsUser) {
     window.api.fontsUser().then(useFonts).catch(() => {});
     if (window.api.onFonts) window.api.onFonts(useFonts);
