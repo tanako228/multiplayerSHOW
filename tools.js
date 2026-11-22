@@ -1567,6 +1567,10 @@ const UI_THEMES = [
   // белый текст на синем, выбранное в списках — синяя подложка с полоской слева, галочки — синие квадраты
   { id: 'azure', name: 'Лазурь', deco: 'azure', fx: { uiGlass: '', uiAlpha: 16, uiGlow: 0, uiRadius: 12 },
     c: ['#0a0f1a', '#111827', '#182134', '#253049', '#eaf0fb', '#8b98b3', '#2d7bff', '#6aa8ff', '#ff5d6c'] },
+  // «Спектр» (deco: 'spectral', index.html): чёрный фон с зернистыми пятнами спектра, матовое стекло со светлой кромкой,
+  // тонкие заглавные подписи, ползунок — белая линия с точкой, главное — тёплое свечение
+  { id: 'spectral', name: 'Спектр', deco: 'spectral', fx: { uiGlass: 'glass', uiAlpha: 45, uiBlur: 26, uiGlow: 0, uiRadius: 14 },
+    c: ['#09090b', '#1b1b20', '#26262c', '#3a3a42', '#f4f1ec', '#9d9aa3', '#ff6a2b', '#a35bff', '#ff4d5e'] },
 ];
 
 // Правка тем владельцем (localStorage cp.uiThemes): over — изменённые готовые темы {id: {c, fx, light}},
@@ -1639,7 +1643,7 @@ function applyUiFx(p) {
   html.dataset.uiFont = UI_FONTS.some(([id]) => id === settings.uiFont) ? settings.uiFont : '';
   html.dataset.uiDeco = uiTheme().deco || ''; // особое оформление темы (свечение, «таблетки»)
   html.classList.toggle('ui-caps', !!settings.uiCaps);
-  const ctl = ['aura', 'amber', 'sunset', 'azure'].includes(html.dataset.uiDeco); // темы со своими ползунками, переключателями и крутилками
+  const ctl = ['aura', 'amber', 'sunset', 'azure', 'spectral'].includes(html.dataset.uiDeco); // темы со своими ползунками, переключателями и крутилками
   html.classList.toggle('ui-ctl', ctl);
   auraRun(ctl);
 }

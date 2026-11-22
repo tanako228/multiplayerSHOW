@@ -2125,6 +2125,142 @@
     .ui-th-pv[data-deco=azure] { background: radial-gradient(70% 70% at 0% 0%, color-mix(in srgb, var(--e) 30%, transparent), transparent 70%), var(--a); }
     .ui-th-pv[data-deco=azure] i:nth-child(1) { border-radius: 4px; box-shadow: inset 2px 0 0 var(--e); }
     .ui-th-pv[data-deco=azure] i:nth-child(3) { border-radius: 4px; box-shadow: 0 2px 6px -1px var(--e); }
+    /* ----- Тема «Спектр» (deco: 'spectral'): по подборке «Analytics / Figma gradient / Superpower / Spectral Gradient / lyrics» —
+       почти чёрный фон с зернистыми размытыми пятнами спектра (оранжевый, фиолетовый, бирюзовый), матовое стекло со светлой
+       кромкой, тонкие заглавные подписи с разрядкой, мелкие подписи — «печатной машинкой», ползунок — тонкая белая линия
+       с точкой (как график), главное — тёплое свечение «конверта». Зерно — SVG-шум первым слоем фона (data:, CSP разрешает) ----- */
+    html[data-ui-deco=spectral] { --live-ink: #fff !important;
+      --sp-grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 .2 -.07'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+      /* зерно для панелей, окон и кнопок: мельче, светлые и тёмные крупинки — фактура «матового пластика» */
+      --sp-grain2: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='m'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='1.15' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3CfeComponentTransfer%3E%3CfeFuncA type='table' tableValues='0 .035 0 .035'/%3E%3C/feComponentTransfer%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23m)'/%3E%3C/svg%3E");
+      /* светлые косые лучи, как на фото «Analytics» */
+      --sp-rays: linear-gradient(115deg, transparent 38%, rgba(255, 255, 255, .045) 44%, transparent 50%), linear-gradient(115deg, transparent 56%, rgba(255, 255, 255, .03) 60%, transparent 65%), linear-gradient(108deg, transparent 70%, rgba(255, 255, 255, .025) 73%, transparent 77%);
+      --sp-hot: linear-gradient(135deg, color-mix(in srgb, var(--live) 85%, #ffd27a), var(--live) 45%, color-mix(in srgb, var(--live) 55%, var(--brown)));
+      --sp-edge: linear-gradient(135deg, rgba(255, 255, 255, .34), rgba(255, 255, 255, .06) 40%, rgba(255, 255, 255, .02) 60%, rgba(255, 255, 255, .16));
+      --sp-card: inset 0 1px 0 rgba(255, 255, 255, .12), inset 0 0 0 1px rgba(255, 255, 255, .025), 0 1px 2px rgba(0, 0, 0, .4), 0 22px 44px -22px rgba(0, 0, 0, .9);
+      --sp-mono: "Cascadia Mono", Consolas, monospace; }
+    html[data-ui-deco=spectral], html[data-ui-deco=spectral] body {
+      background: var(--sp-grain), var(--sp-rays),
+        /* горизонт: полоса спектра по нижнему краю — пурпур, янтарь, бирюза, синий; над ней мягкий тёплый отсвет */
+        radial-gradient(30% 34% at 22% 100%, rgba(235, 55, 175, .75), transparent 70%),
+        radial-gradient(28% 30% at 42% 102%, rgba(255, 185, 70, .7), transparent 70%),
+        radial-gradient(30% 34% at 60% 100%, rgba(35, 205, 170, .62), transparent 70%),
+        radial-gradient(28% 32% at 80% 100%, rgba(70, 110, 255, .62), transparent 70%),
+        radial-gradient(22% 28% at 96% 100%, rgba(165, 90, 255, .6), transparent 70%),
+        linear-gradient(0deg, rgba(255, 120, 70, .22), transparent 34%),
+        radial-gradient(75% 55% at 10% 105%, color-mix(in srgb, var(--live) 70%, transparent), transparent 70%),
+        radial-gradient(55% 30% at 40% 78%, color-mix(in srgb, var(--live) 28%, transparent), transparent 75%),
+        radial-gradient(55% 50% at 0% 0%, color-mix(in srgb, var(--brown) 55%, transparent), transparent 70%),
+        radial-gradient(50% 55% at 100% 5%, rgba(38, 150, 125, .45), transparent 70%),
+        radial-gradient(45% 45% at 98% 98%, rgba(45, 80, 230, .42), transparent 70%), var(--ink) fixed;
+    }
+    /* Матовое стекло со светлой кромкой (как карточка «Analytics»): светлее сверху-слева, многослойная мягкая тень.
+       Фактура (--sp-grain2) — только на панелях и окнах, на кнопках и слайдах её нет (рябило) */
+    html[data-ui-deco=spectral] :is(aside, .tabs, .svc-side, .ly-box, .bm-box, .mu-pane, #bookNav, .te-side, .te-insp, .mc-side, .mc-props, .ae-side, .sc-side, #viewBar) {
+      border-color: rgba(255, 255, 255, .1); background-image: var(--sp-grain2), linear-gradient(160deg, rgba(255, 255, 255, .07), rgba(255, 255, 255, 0) 45%); }
+    html[data-ui-deco=spectral] :is(.svc-side, .ly-box, .bm-box, .mu-pane, #bookNav) { box-shadow: var(--sp-card); }
+    /* Окна и всплывающие плашки — просто и легко, как в обычных темах (решение владельца 21.11): прозрачнее панелей,
+       без фактуры, бликов и тёплого отсвета — только размытие, тонкая рамка и обычная тень */
+    html[data-ui-deco=spectral] :is(dialog, .ctx-menu, .note-pop, .ly-pop, #srcPop, .st-pop, .ui-pop, #quick) {
+      background-color: color-mix(in srgb, var(--panel) 70%, transparent); background-image: none;
+      border: 1px solid rgba(255, 255, 255, .12); box-shadow: 0 16px 40px rgba(0, 0, 0, .5); }
+    html[data-ui-deco=spectral] :is(.dlg-head, .dlg-foot) { border-color: rgba(255, 255, 255, .08); }
+    /* Шрифт: заголовки — тонкие заглавные с разрядкой («ANALYTICS», «NET REVENUE»), мелкие подписи — печатные (lyrics) */
+    html[data-ui-deco=spectral] :is(.dlg-head h2, aside h2, .svc-fold, .set-sec h3, .ly-title) { text-transform: uppercase; letter-spacing: .14em; font-weight: 400; }
+    html[data-ui-deco=spectral] .dlg-head h2 { font-size: 14px; }
+    html[data-ui-deco=spectral] :is(.hint, .sl .cap .no, .svc-ihead .cnt, .svc-ihead .kind, code, kbd, output) { font-family: var(--sp-mono); letter-spacing: .02em; }
+    html[data-ui-deco=spectral] .svc-ihead .iname { font-weight: 300; letter-spacing: .02em; }
+
+    /* Кнопки — «стеклянные клавиши»: блик сверху, тонкая кромка, тень под ними; наведение — приподнимаются, нажатие — утапливаются.
+       :where — низкая сила правила: кнопки, которым их класс велит быть прозрачными (значки, строки списков), такими и остаются */
+    :where(html[data-ui-deco=spectral]) :where(button, select):not(.tab):not(.primary) {
+      background-image: linear-gradient(180deg, rgba(255, 255, 255, .08), rgba(255, 255, 255, .015) 55%, rgba(0, 0, 0, .06));
+      border-color: rgba(255, 255, 255, .11); transition: background-color .15s, border-color .15s, box-shadow .15s, transform .12s, color .15s; }
+    html.ui-glass[data-ui-deco=spectral] :is(button, select):not(.tab):not(.primary):not(.svc-row):not(.svc-sub):not(.svc-fold):not(.ly-fold):not(.set-nav *):not(.ctx-menu *):not(.cpk *) {
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, .1), 0 1px 2px rgba(0, 0, 0, .35); }
+    :where(html[data-ui-deco=spectral]) button:not(.tab):not(.primary):not(:disabled):hover { background-color: rgba(255, 255, 255, .1); border-color: rgba(255, 255, 255, .26); transform: translateY(-1px); }
+    html.ui-glass[data-ui-deco=spectral] :is(button, select):not(.tab):not(.primary):not(.svc-row):not(.svc-sub):not(.svc-fold):not(.ly-fold):not(.set-nav *):not(.ctx-menu *):not(.cpk *):not(:disabled):hover {
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, .16), 0 6px 16px -8px rgba(0, 0, 0, .9), 0 0 0 1px rgba(255, 255, 255, .04); }
+    :where(html[data-ui-deco=spectral]) button:not(.tab):not(:disabled):active { transform: translateY(0); }
+    html.ui-glass[data-ui-deco=spectral] :is(button, select):not(.tab):not(.primary):not(.svc-row):not(.svc-sub):not(.svc-fold):not(.ly-fold):not(.set-nav *):not(.ctx-menu *):not(.cpk *):not(:disabled):active {
+      box-shadow: inset 0 2px 5px rgba(0, 0, 0, .5); }
+    /* Поля ввода — утоплены: тень внутри, при фокусе светлая кромка и тёплый отсвет */
+    html.ui-glass[data-ui-deco=spectral] :is(input[type=text], input[type=number], textarea) { border-color: rgba(255, 255, 255, .1); background-color: rgba(0, 0, 0, .22); box-shadow: inset 0 1px 3px rgba(0, 0, 0, .45), 0 1px 0 rgba(255, 255, 255, .05); }
+    html.ui-glass[data-ui-deco=spectral] :is(select, input[type=text], input[type=number], textarea):focus { outline: none; border-color: rgba(255, 255, 255, .5);
+      box-shadow: inset 0 1px 3px rgba(0, 0, 0, .45), 0 0 0 3px rgba(255, 255, 255, .08), 0 0 18px -6px color-mix(in srgb, var(--live) 70%, transparent); }
+    html[data-ui-deco=spectral] :is(button, select, input, .tile, .tab):focus-visible { outline: 1px solid rgba(255, 255, 255, .75); outline-offset: 2px; }
+    /* Главная кнопка — тёплое письмо из конверта: блик сверху, свечение снизу; наведение — ярче и выше */
+    html[data-ui-deco=spectral] button.primary:not(.on) { background: linear-gradient(180deg, rgba(255, 255, 255, .24), rgba(255, 255, 255, 0) 55%), var(--sp-hot);
+      border-color: rgba(255, 220, 190, .35); color: #fff; padding-inline: 16px; letter-spacing: .03em; text-shadow: 0 1px 2px rgba(120, 30, 0, .35);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, .4), inset 0 -2px 4px rgba(120, 20, 60, .25), 0 2px 4px rgba(0, 0, 0, .35), 0 8px 24px -8px color-mix(in srgb, var(--live) 90%, transparent);
+      transition: box-shadow .15s, transform .12s, filter .15s; }
+    html[data-ui-deco=spectral] button.primary:not(.on):not(:disabled):hover { filter: brightness(1.08) saturate(1.1); transform: translateY(-1px);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, .45), inset 0 -2px 4px rgba(120, 20, 60, .25), 0 4px 8px rgba(0, 0, 0, .35), 0 12px 34px -8px var(--live); }
+    html[data-ui-deco=spectral] button.primary:not(.on):not(:disabled):active { transform: translateY(0); filter: brightness(.95); box-shadow: inset 0 2px 6px rgba(100, 20, 0, .45), 0 4px 14px -8px var(--live); }
+    html[data-ui-deco=spectral] button.primary.on { color: color-mix(in srgb, var(--live) 55%, #fff); border-color: color-mix(in srgb, var(--live) 55%, transparent);
+      background: color-mix(in srgb, var(--live) 10%, transparent); box-shadow: inset 0 0 12px -4px color-mix(in srgb, var(--live) 60%, transparent); }
+    /* Вкладки: выбранная — стеклянная «таблетка» с линией спектра снизу */
+    html[data-ui-deco=spectral] .tab { position: relative; border-bottom-color: transparent !important; letter-spacing: .03em; border-radius: calc(8px * var(--rk, 1)) calc(8px * var(--rk, 1)) 0 0; transition: color .15s, background-color .15s; }
+    html[data-ui-deco=spectral] .tab:hover { color: var(--text); background-color: rgba(255, 255, 255, .04); }
+    html[data-ui-deco=spectral] .tab[aria-selected=true] { color: #fff; text-shadow: 0 0 14px rgba(255, 255, 255, .3);
+      background: linear-gradient(180deg, rgba(255, 255, 255, .02), rgba(255, 255, 255, .08)); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .08); }
+    html[data-ui-deco=spectral] .tab[aria-selected=true]::after { content: ""; position: absolute; left: 10px; right: 10px; bottom: 0; height: 2px; border-radius: 2px;
+      background: linear-gradient(90deg, var(--brown), var(--live), #ffd27a); box-shadow: 0 0 12px color-mix(in srgb, var(--live) 80%, transparent), 0 -4px 14px -4px color-mix(in srgb, var(--live) 60%, transparent); }
+    /* Выбранное в списках и меню настроек — тёплый отсвет слева, светящаяся черта и стеклянная кромка */
+    html[data-ui-deco=spectral] :is(.svc-row.cur, .svc-sub.open, .set-nav button[aria-current=true]) {
+      background: linear-gradient(90deg, color-mix(in srgb, var(--live) 24%, transparent), color-mix(in srgb, var(--brown) 10%, transparent) 65%, rgba(255, 255, 255, .03));
+      color: #fff; text-shadow: none;
+      box-shadow: inset 2px 0 0 color-mix(in srgb, var(--live) 70%, #fff), inset 0 1px 0 rgba(255, 255, 255, .14), inset 0 0 0 1px rgba(255, 255, 255, .07), -4px 0 14px -6px var(--live); }
+    html[data-ui-deco=spectral] .svc-sub.live { color: color-mix(in srgb, var(--live) 55%, #fff); }
+    html[data-ui-deco=spectral] :is(.svc-row, .svc-sub, .set-nav button):not(.cur):not(.open):not(.marked):not([aria-current=true]):hover { background: rgba(255, 255, 255, .06); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .05); }
+    html[data-ui-deco=spectral] .ctx-menu button:not(:disabled):hover { background: linear-gradient(90deg, color-mix(in srgb, var(--live) 22%, transparent), rgba(255, 255, 255, .04)); color: #fff; }
+    /* Шапка пункта в ленте — стеклянная карточка; показанный пункт — тёплая черта слева со свечением */
+    html[data-ui-deco=spectral] .svc-item:not(.marked) .svc-ihead { background: linear-gradient(180deg, rgba(255, 255, 255, .07), rgba(255, 255, 255, .025)); border-color: rgba(255, 255, 255, .09);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, .08), 0 6px 18px -12px rgba(0, 0, 0, .9); }
+    html[data-ui-deco=spectral] .svc-item.live-item:not(.marked) .svc-ihead { border-left-color: var(--live); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .08), -6px 0 18px -10px var(--live), 0 6px 18px -12px rgba(0, 0, 0, .9); }
+    html[data-ui-deco=spectral] .svc-item.live-item .svc-ihead .iname { color: color-mix(in srgb, var(--live) 55%, #fff); }
+    /* Слайды: лежат на тени, при наведении приподнимаются; выбранный — светлая кромка; в эфире — двойное тёплое кольцо и ореол */
+    html[data-ui-deco=spectral] .sl { border-color: rgba(255, 255, 255, .06); box-shadow: 0 10px 24px -14px rgba(0, 0, 0, .95); transition: transform .15s, box-shadow .15s, border-color .15s; }
+    html[data-ui-deco=spectral] .sl:hover:not(.live) { transform: translateY(-2px); border-color: rgba(255, 255, 255, .22); box-shadow: 0 16px 30px -14px rgba(0, 0, 0, 1); }
+    html[data-ui-deco=spectral] .sl.sel:not(.live) { border-color: rgba(255, 255, 255, .55); box-shadow: 0 0 0 1px rgba(255, 255, 255, .12), 0 12px 28px -14px rgba(0, 0, 0, 1); }
+    html[data-ui-deco=spectral] .sl.sel:not(.live) .cap { background: rgba(255, 255, 255, .12); }
+    html[data-ui-deco=spectral] :is(.tile.live, .sl.live) { border-color: #ffd9bd;
+      box-shadow: 0 0 0 3px color-mix(in srgb, var(--live) 38%, transparent), 0 0 22px -2px var(--live), 0 18px 50px -14px color-mix(in srgb, var(--live) 85%, transparent); }
+    html[data-ui-deco=spectral] .sl.live .cap { background: linear-gradient(180deg, rgba(255, 255, 255, .2), rgba(255, 255, 255, 0) 60%), var(--sp-hot); text-shadow: 0 1px 2px rgba(120, 30, 0, .35); }
+    /* Ползунок — как линия графика: тонкая белая до значения, дальше пунктир, ручка — белая точка с кольцом */
+    html[data-ui-deco=spectral] input[type=range]:not(.cpk *) { -webkit-appearance: none; appearance: none; height: 18px; background: transparent; filter: none; }
+    html[data-ui-deco=spectral] input[type=range]:not(.cpk *)::-webkit-slider-runnable-track { height: 2px; border-radius: 1px;
+      background: linear-gradient(90deg, #fff var(--pct, 0%), transparent var(--pct, 0%)), repeating-linear-gradient(90deg, rgba(255, 255, 255, .35) 0 4px, transparent 4px 8px); }
+    html[data-ui-deco=spectral] input[type=range]:not(.cpk *)::-webkit-slider-thumb { -webkit-appearance: none; width: 10px; height: 10px; margin-top: -4px; border-radius: 50%;
+      background: #fff; border: 0; box-shadow: 0 0 0 3px rgba(255, 255, 255, .18), 0 0 10px rgba(255, 255, 255, .6); transition: box-shadow .12s; }
+    html[data-ui-deco=spectral] input[type=range]:not(.cpk *):hover::-webkit-slider-thumb { box-shadow: 0 0 0 6px rgba(255, 255, 255, .16), 0 0 14px #fff; }
+    html[data-ui-deco=spectral] input[type=range]:not(.cpk *):disabled { opacity: .35; }
+    /* Перемотка — та же линия, но залита тёплым спектром */
+    html[data-ui-deco=spectral] :is(#seek, #vSeek)::-webkit-slider-runnable-track { height: 3px;
+      background: linear-gradient(90deg, var(--brown), var(--live) var(--pct, 0%), rgba(255, 255, 255, .18) var(--pct, 0%)); box-shadow: 0 0 10px -2px color-mix(in srgb, var(--live) 70%, transparent); }
+    html[data-ui-deco=spectral] :is(#player, #vplayer).muted :is(#volume, #vVolume)::-webkit-slider-runnable-track { background: linear-gradient(90deg, var(--muted) var(--pct, 0%), rgba(255, 255, 255, .12) var(--pct, 0%)); }
+    /* Проигрыватель: «играть» — тёплый светящийся круг, остальные — тонкие значки */
+    html[data-ui-deco=spectral] :is(#playPause, #vPlay) { width: 36px; height: 36px; border-radius: 50%; border-color: transparent; background: var(--sp-hot); color: #fff; font-size: 13px;
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, .35), 0 0 24px -2px color-mix(in srgb, var(--live) 90%, transparent); }
+    html[data-ui-deco=spectral] :is(#muPrev, #muNext, #stop, #vStop) { background: none; border-color: transparent; box-shadow: none; backdrop-filter: none; color: var(--muted); }
+    html[data-ui-deco=spectral] :is(#muPrev, #muNext, #stop, #vStop):hover { background: none; color: #fff; }
+    html[data-ui-deco=spectral] .pl-btns { align-items: center; }
+    /* Переключатели: выключен — прозрачная «таблетка» с тонкой кромкой, включён — тёплый спектр с белым кружком */
+    html[data-ui-deco=spectral] input[type=checkbox] { -webkit-appearance: none; appearance: none; position: relative; flex: none; width: 30px; height: 16px; margin: 0 2px; vertical-align: middle; border-radius: 999px; cursor: pointer;
+      background: rgba(255, 255, 255, .06); border: 1px solid rgba(255, 255, 255, .28); box-shadow: none; filter: none; }
+    html[data-ui-deco=spectral] input[type=checkbox]::before { content: ""; position: absolute; left: 2px; top: 2px; width: 10px; height: 10px; border-radius: 50%; background: rgba(255, 255, 255, .55); }
+    html[data-ui-deco=spectral] input[type=checkbox]:checked { background: var(--sp-hot); border-color: transparent; box-shadow: 0 0 12px -2px var(--live); }
+    html[data-ui-deco=spectral] input[type=checkbox]:checked::before { left: 16px; background: #fff; }
+    html[data-ui-deco=spectral] input[type=checkbox]:indeterminate::before { left: 9px; }
+    html[data-ui-deco=spectral] input[type=checkbox]:disabled { opacity: .4; cursor: default; }
+    /* Крутилка: дуга спектра, ручка — матовое стекло */
+    html[data-ui-deco=spectral] .ui-knob .kn-arc { background: conic-gradient(from -136deg, var(--brown), var(--live) calc(var(--pct, 0%) * .5), #ffd27a calc(var(--pct, 0%) * .75), transparent 0); filter: drop-shadow(0 0 3px var(--live)); }
+    html[data-ui-deco=spectral] .ui-knob .kn-cap { background: linear-gradient(160deg, rgba(255, 255, 255, .22), rgba(255, 255, 255, .04)), #1a1a1f; box-shadow: inset 0 1px 0 rgba(255, 255, 255, .3), 0 4px 12px rgba(0, 0, 0, .6); }
+    html[data-ui-deco=spectral] ::-webkit-scrollbar-thumb { border-radius: 999px; background-color: rgba(255, 255, 255, .18); }
+    .ui-th-pv[data-deco=spectral] { background: radial-gradient(60% 70% at 0% 110%, color-mix(in srgb, var(--e) 75%, transparent), transparent 70%),
+      radial-gradient(50% 60% at 0% 0%, color-mix(in srgb, var(--f) 60%, transparent), transparent 70%), radial-gradient(45% 60% at 100% 0%, rgba(38, 140, 120, .5), transparent 70%), var(--a); }
+    .ui-th-pv[data-deco=spectral] i:nth-child(1) { background: rgba(255, 255, 255, .1); border-color: rgba(255, 255, 255, .25); }
+    .ui-th-pv[data-deco=spectral] i:nth-child(3) { border-radius: 999px; background: linear-gradient(135deg, #ffb070, var(--e)); box-shadow: 0 0 10px var(--e); }
     /* Шрифт программы (settings.uiFont): только системные шрифты Windows */
     html[data-ui-font=tech], html[data-ui-font=narrow] { font-family: Bahnschrift, "Segoe UI", system-ui, sans-serif; }
     html[data-ui-font=narrow] { font-stretch: 87.5%; }
