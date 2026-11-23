@@ -206,7 +206,7 @@ function scSceneScreen(sc, main) {
 function scLook(s) {
   const t = s.theme && typeof themeById === 'function' ? themeById(s.theme) : null;
   if (!t) return null;
-  return { ...THEME_DEFAULTS, ...Themes.style(t), showTranslation: settings.showTr, bible: bibleLook(), tpl: s.themeTpl || undefined };
+  return { ...THEME_DEFAULTS, ...Themes.style(t), showTranslation: settings.showTr, refShort: settings.refShort, bible: bibleLook(), tpl: s.themeTpl || undefined };
 }
 function scConfig() {
   const main = scMainSize();

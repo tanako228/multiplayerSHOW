@@ -2,7 +2,7 @@
 // и слой рисунка поверх. Используется в окне вывода, в предпросмотре и в редакторе.
 //
 // Оформление текста (style, оно же «тема»):
-//   font, scale, color, bg, showTranslation — как раньше;
+//   font, scale, color, bg, showTranslation, refShort (место сокращённо) — как раньше;
 //   bgUrl, bgVideo — фон-картинка или фон-видео; blur — размытие фона (пиксели при 1080p);
 //   dim — затемнение фона 0…0.9; weight — 400/600/800; italic; align — left/center/right;
 //   valign — top/middle/bottom; shadow; upper — заглавные буквы; lineHeight; pad — поля в %.
@@ -458,11 +458,13 @@ const Scene = (() => {
       : [{ verses: c.verses, ref: c.ref, translation: c.translation }].concat(c.par && Array.isArray(c.par.verses) ? [c.par] : []);
     const slots = st.bible && Array.isArray(st.bible.slots) ? st.bible.slots : null;
     const tr = (x) => (st.showTranslation && x.translation ? ` · ${x.translation}` : '');
+    // Место сокращённо («1 Пет 3:5» вместо «1 Петра 3:5») — галочка в окне «Библия»; bible.js подключён во всех окнах показа
+    const place = (r) => (st.refShort && r && typeof Bible !== 'undefined' && Bible.shortRef ? Bible.shortRef(r) : r || '');
     return list.map((x, i) => {
       // Строки нет в настройках: основной — как обычно, остальные не показываем
       const s = (slots && slots[i]) || (i && slots ? { text: '', ref: '' } : { text: 'auto', ref: 'auto' });
       return {
-        verses: x.verses || [], place: x.ref || '', tr: x.translation || '', line: x.ref ? x.ref + tr(x) : '',
+        verses: x.verses || [], place: place(x.ref), tr: x.translation || '', line: x.ref ? place(x.ref) + tr(x) : '',
         text: s.text == null ? 'auto' : s.text, ref: s.ref == null ? 'auto' : s.ref,
       };
     }).filter((x) => x.verses.length || x.place);
@@ -1487,6 +1489,7 @@ const Scene = (() => {
   function build(content) {
     if (content.type === 'lower') return buildLower(content);
     if (content.type === 'live') return buildLive(content);
+    if (content.type === 'map') return typeof MapView !== 'undefined' ? MapView.build(content, liteBuild) : make('div', 'layer'); // карта (mapview.js)
     if (content.type !== 'text' && content.type !== 'custom') return buildMedia(content);
     const t = pickTpl(content);
     const layer = t ? buildThemed(content, t) : content.type === 'text' ? buildText(content) : buildCustom(content);
@@ -1496,6 +1499,7 @@ const Scene = (() => {
 
   function dispose(layer) {
     sizer.unobserve(layer);
+    if (layer._mvStop) layer._mvStop();
     if (layer.classList.contains('live')) {
       layer.querySelectorAll('video').forEach((v) => { v.srcObject = null; });
       liveRelease(layer);
@@ -1652,6 +1656,11 @@ const Scene = (() => {
   function show(stage, content, tr, layerId) {
     tr = tr || { type: 'none', ms: 0 };
     const box = layerId ? slotOf(stage, layerId) : stage;
+    // Та же карта ещё на экране: другая компоновка, точка или маршрут — плавно, без новой картинки (mapview.js)
+    if (content.type === 'map' && typeof MapView !== 'undefined') {
+      const cur = layers(box).filter((n) => !n.classList.contains('gone') && !n.classList.contains('leaving')).pop();
+      if (cur && MapView.update(cur, content)) return;
+    }
     liteBuild = !!stage._lite;
     let layer;
     try { layer = build(content); } finally { liteBuild = false; }
@@ -1887,5 +1896,5 @@ const Scene = (() => {
     for (const el of stage.querySelectorAll(':scope > .slot, :scope > .layer, :scope > svg.ink')) viewOn(stage, el, Math.max(0, Number(ms) || 0));
   }
 
-  return { TRANS, animIn, animOut, animSwap, setTimers, setView, viewCss, show, clear, refit, build, fitText, stillFrame, preload, track: (layer) => sizer.observe(layer), setInk, shapeNode, liveStream, liveRelease, setLayers, applyVolume, layerPlay, pickTpl, textLabels, buildNext, useFonts, fontsList, family, LIVE, FONTS, FONT_NAMES };
+  return { TRANS, animIn, animOut, animSwap, setTimers, setView, viewCss, show, clear, refit, build, fitText, stillFrame, preload, track: (layer) => sizer.observe(layer), setInk, shapeNode, animateInk, liveStream, liveRelease, setLayers, applyVolume, layerPlay, pickTpl, textLabels, buildNext, useFonts, fontsList, family, LIVE, FONTS, FONT_NAMES };
 })();

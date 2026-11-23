@@ -1514,6 +1514,7 @@ const teUi = {
       });
       b.append(x);
     }
+    if (window.Glide) Glide.seg(b); // выбранный вариант — плашка на пружине (glide.js)
     return b;
   },
   toggle(o, path, text, title, css) {

@@ -248,33 +248,48 @@ function stFmt(ms, up) {
   const out = h ? `${h}:${stPad(Math.floor((s % 3600) / 60))}:${stPad(s % 60)}` : `${stPad(Math.floor(s / 60))}:${stPad(s % 60)}`;
   return (neg ? '−' : '') + out;
 }
-async function stEditTimer(id) {
-  const t = stTimer(id);
-  if (!t) return;
+/* Время на колёсах (wheel.js): маленькое окошко над полем времени, выбранное сразу применяется.
+   Обратный отсчёт — часы 0–23 : минуты : секунды; «до времени» — 00–23 : 00–59 (24 часа). Щелчок мимо — закрыть. */
+function stApplyTime(t, r) {
   if (t.mode === 'to') {
-    const v = await askName('До какого времени: ЧЧ:ММ', t.at || '10:00');
-    if (v == null) return;
-    const m = v.trim().match(/^(\d{1,2})[:.](\d{2})$/);
-    if (!m || Number(m[1]) > 23 || Number(m[2]) > 59) { flashStatus('Не понял время. Пример: 10:00'); return; }
-    t.at = stPad(Number(m[1])) + ':' + m[2];
-    saveLib();
-    stSend();
-    stPanelRefresh();
-    return;
+    const at = stPad(r.h) + ':' + stPad(r.m);
+    if (at === t.at) return;
+    t.at = at;
+  } else {
+    const d = r.h * 3600 + r.m * 60 + r.s;
+    if (d <= 0 || d === t.dur) return; // ноль не применяем — остаётся прежнее время
+    t.dur = d;
+    if (!(stRun[t.id] || {}).run) stRun[t.id] = { run: false, base: 0, at: Date.now() }; // стоит — сразу показать новое время
   }
-  const v = await askName('Время таймера: минуты или мм:сс', stFmt(t.dur * 1000));
-  if (v == null) return;
-  const d = stParseDur(v);
-  if (d == null || d <= 0) { flashStatus('Не понял время. Пример: 5 или 4:30'); return; }
-  t.dur = d;
   saveLib();
   stSend();
   stPanelRefresh();
   if (typeof scRenderInsp === 'function' && scTabOn) scRenderInsp();
 }
+// Поле времени таймера в блоке «Таймеры» (если видно) — к нему и пристраиваем окошко
+const stTimeField = (id) => document.querySelector(`#tmRows .tm-row[data-tm="${id}"] .tm-dur`);
+function stEditTimer(id, anchor) {
+  const t = stTimer(id);
+  if (!t || t.mode === 'up') return;
+  const key = 'tm:' + id;
+  if (WheelTime.recent(key)) return; // щелчок по тому же полю, когда окошко открыто, — просто закрыть
+  const f = stTimeField(id);
+  const at = anchor || (f && f.offsetParent ? f : null);
+  let r;
+  if (t.mode === 'to') {
+    const m = String(t.at || '10:00').match(/^(\d{1,2}):(\d{2})/) || [0, 10, 0];
+    r = { h: Number(m[1]) % 24, m: Number(m[2]) % 60, s: 0 };
+  } else {
+    const d = Math.max(0, Math.round(t.dur || 0));
+    r = { h: Math.min(23, Math.floor(d / 3600)), m: Math.floor((d % 3600) / 60), s: d % 60 };
+  }
+  const mark = (on) => { const el = stTimeField(id); if (el) el.classList.toggle('on', on); };
+  mark(true);
+  WheelTime.pop({ anchor: at, key, sec: t.mode !== 'to', ...r, onChange: (v) => stApplyTime(t, v), onClose: () => mark(false) });
+}
 function stTimerMenu(e, t) {
   showMenu(e, [
-    { label: 'Время…', fn: () => stEditTimer(t.id) },
+    ...(t.mode !== 'up' ? [{ label: 'Время…', fn: () => stEditTimer(t.id, stTimeField(t.id) && stTimeField(t.id).offsetParent ? null : { x: e.clientX, y: e.clientY }) }] : []),
     { label: (t.mode !== 'up' ? '● ' : '   ') + 'Обратный отсчёт', fn: () => { t.mode = 'down'; saveLib(); stReset(t.id); } },
     { label: (t.mode === 'up' ? '● ' : '   ') + 'Секундомер (вверх)', fn: () => { t.mode = 'up'; saveLib(); stReset(t.id); } },
     { label: (t.mode === 'to' ? '● ' : '   ') + 'До времени (например, до 10:00)', fn: () => { t.mode = 'to'; if (!t.at) t.at = stNextHalfHour(); saveLib(); stReset(t.id); } },
@@ -415,8 +430,8 @@ function stPanelOpen() {
   if (stPop) return;
   const el = stEl('div', 'st-pop');
   document.body.append(el);
-  const away = (ev) => { if (!el.contains(ev.target) && ev.target !== $('stBtn') && !(ev.target.closest && ev.target.closest('.ctx-menu, dialog'))) stPanelClose(); };
-  const key = (ev) => { if (ev.key === 'Escape' && stPop && !document.querySelector('dialog[open]')) { ev.stopPropagation(); stPanelClose(); } };
+  const away = (ev) => { if (!el.contains(ev.target) && ev.target !== $('stBtn') && !(ev.target.closest && ev.target.closest('.ctx-menu, dialog, .wh-pop'))) stPanelClose(); };
+  const key = (ev) => { if (ev.key === 'Escape' && stPop && !document.querySelector('dialog[open]') && !(ev.target.closest && ev.target.closest('.wh-pop'))) { ev.stopPropagation(); stPanelClose(); } };
   setTimeout(() => document.addEventListener('pointerdown', away, true), 0);
   document.addEventListener('keydown', key, true);
   const tick = setInterval(stPanelTick, 250);
@@ -506,6 +521,7 @@ function stPanelRender() {
     nm.title = (t.mode === 'up' ? 'Секундомер' : 'Обратный отсчёт с ' + stFmt(t.dur * 1000)) + ' · правой кнопкой — настройки';
     const val = stEl('span', 'st-val');
     val.dataset.timer = t.id;
+    if (t.mode !== 'up') { val.classList.add('st-val-pick'); val.title = 'Щёлкните, чтобы настроить время'; val.addEventListener('click', () => stEditTimer(t.id, val)); }
     const go = stB(r.run ? '❚❚' : '▶', () => stToggle(t.id), r.run ? 'Пауза' : 'Пуск', r.run ? 'on' : '');
     const rs = stB('⟲', () => stReset(t.id), 'Сначала');
     const more = stB('⋯', (ev) => stTimerMenu(ev, t), 'Время, вид, имя, удалить');
@@ -513,13 +529,7 @@ function stPanelRender() {
     row.addEventListener('contextmenu', (ev) => { ev.preventDefault(); stTimerMenu(ev, t); });
     tm.append(row);
   }
-  tm.append(stB('＋ Таймер', async () => {
-    const v = await askName('Новый таймер: минуты или мм:сс', '5:00');
-    if (v == null) return;
-    const d = stParseDur(v);
-    if (d == null || d <= 0) { flashStatus('Не понял время. Пример: 5 или 4:30'); return; }
-    stNewTimer({ dur: d });
-  }, 'Обратный отсчёт; секундомер — в «⋯»'));
+  tm.append(stB('＋ Таймер', () => stNewTimer({ dur: 300 }), 'Обратный отсчёт на 5 минут; время — щелчком по цифрам, секундомер — в «⋯»'));
 
   // Только для сцены
   const on = sec('Только для сцены');
@@ -576,6 +586,7 @@ function tmSet(t, patch) {
   stSend();
   stPanelRefresh();
 }
+let tmFresh = ''; // у какого таймера сменили вид — его строка после перерисовки «собирается» заново (motion.js)
 function tmRender() {
   const box = $('tmRows');
   if (!box || !lib) return;
@@ -606,25 +617,14 @@ function tmRender() {
     mode.setAttribute('aria-label', 'Вид таймера');
     for (const [v, n] of TM_MODES) mode.append(Object.assign(stEl('option', '', n), { value: v }));
     mode.value = t.mode || 'down';
-    mode.addEventListener('change', () => { const m = mode.value; mode.blur(); tmSet(t, { mode: m, ...(m === 'to' && !t.at ? { at: stNextHalfHour() } : {}) }); stReset(t.id); });
+    mode.addEventListener('change', () => { const m = mode.value; mode.blur(); tmFresh = t.id; tmSet(t, { mode: m, ...(m === 'to' && !t.at ? { at: stNextHalfHour() } : {}) }); stReset(t.id); });
     ctl.append(mode);
     if (t.mode === 'to') {
-      const at = Object.assign(document.createElement('input'), { type: 'time', value: t.at || '10:00', title: 'До какого времени' });
-      at.addEventListener('change', () => { if (/^\d{2}:\d{2}$/.test(at.value)) { at.blur(); tmSet(t, { at: at.value }); } });
-      ctl.append(at);
+      // Время суток — колёса 00–23 : 00–59
+      ctl.append(stB(t.at || '10:00', (ev) => stEditTimer(t.id, ev.currentTarget), 'До какого времени (24 часа) — щёлкните, чтобы выбрать', 'tm-dur' + (WheelTime.isOpen('tm:' + t.id) ? ' on' : '')));
     } else if (t.mode !== 'up') {
-      const dur = Object.assign(document.createElement('input'), { type: 'text', className: 'tm-dur', value: stFmt((t.dur || 0) * 1000), title: 'Время: минуты или мм:сс (5, 4:30, 1:00:00) — Enter' });
-      const apply = () => {
-        const d = stParseDur(dur.value);
-        if (d == null || d <= 0) { flashStatus('Не понял время. Пример: 5 или 4:30'); dur.value = stFmt((t.dur || 0) * 1000); return; }
-        if (d === t.dur) return;
-        dur.blur();
-        tmSet(t, { dur: d });
-        if (!(stRun[t.id] || {}).run) stReset(t.id); // стоит — сразу показать новое время
-      };
-      dur.addEventListener('change', apply);
-      dur.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter') apply(); if (e.key === 'Escape') { dur.value = stFmt((t.dur || 0) * 1000); dur.blur(); } });
-      ctl.append(dur);
+      // Длительность — колёса часы : минуты : секунды
+      ctl.append(stB(stFmt((t.dur || 0) * 1000), (ev) => stEditTimer(t.id, ev.currentTarget), 'Время таймера — щёлкните, чтобы выбрать на колёсах', 'tm-dur' + (WheelTime.isOpen('tm:' + t.id) ? ' on' : '')));
     }
     ctl.append(stB('⋯', (ev) => stTimerMenu(ev, t), 'Время, вид, имя, вывод в поле, удалить'));
     row.append(nm, val, ctl);
@@ -641,6 +641,7 @@ function tmRender() {
     row.append(outs);
     row.addEventListener('contextmenu', (ev) => { if (ev.target.closest('input, select')) return; ev.preventDefault(); stTimerMenu(ev, t); });
     box.append(row);
+    if (tmFresh === t.id && window.UiMotion) { tmFresh = ''; UiMotion.cascade([val, ...ctl.children, ...row.querySelectorAll('.tm-bar, .tm-outs')], { dy: 6, gap: .03 }); }
   }
   tmTick();
 }

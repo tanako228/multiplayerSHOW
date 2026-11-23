@@ -156,7 +156,9 @@ async function renderMuSongs() {
   else box.replaceChildren(Object.assign(document.createElement('div'), { className: 'mu-msg', textContent: 'Читаю папку…' }));
   const res = (await window.api.poolList(src.path)) || { ok: false, error: 'нет ответа', dirs: [], files: [] };
   if (token !== muToken) return; // пока читали, открыли другое
+  muSeen.delete(src.path);
   muSeen.set(src.path, res);
+  if (muSeen.size > 40) muSeen.delete(muSeen.keys().next().value); // давние папки — из памяти
   if (!old || JSON.stringify(old) !== JSON.stringify(res)) draw(res);
 }
 
@@ -605,6 +607,15 @@ $('volume').addEventListener('input', (e) => {
   else { settings.musicMute = false; settings.musicVol = e.target.value / 100; applyVol(); updateAudioUi(); }
 });
 $('volume').addEventListener('change', saveSettings);
+// Колесо мыши над громкостью — ±5 % (быстрее, чем ловить ручку); сохраняем, когда колесо остановилось
+let volWheelT = 0;
+$('volume').addEventListener('wheel', (e) => {
+  e.preventDefault();
+  const v = $('volume');
+  v.value = String(Math.max(0, Math.min(100, Number(v.value) + (e.deltaY < 0 ? 5 : -5))));
+  v.dispatchEvent(new Event('input', { bubbles: true }));
+  clearTimeout(volWheelT); volWheelT = setTimeout(saveSettings, 400);
+}, { passive: false });
 
 applyVol();
 renderTracks();

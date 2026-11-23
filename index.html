@@ -95,8 +95,21 @@
     .peek-bar button { flex: none; padding: 2px 8px; font-size: 12px; }
     #peekClose { padding: 2px 6px; line-height: 0; }
     #peekClose .mp-icon { width: 14px; height: 14px; }
-    #outHint { margin: 8px 0 0; color: var(--muted); font-size: 12px; }
-    #outHint.on { color: var(--live); }
+    .prev-foot { display: flex; justify-content: center; margin-top: 4px; }
+    .prev-foot .prev-pick { padding: 1px 8px; font-size: 11px; line-height: 1.4; color: var(--muted); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .prev-foot .prev-pick:hover, .prev-foot .prev-pick.on { color: var(--text); }
+    /* Карточка «куда идёт картинка» — при наведении на «Зал» / «Сцена» над предпросмотром */
+    .out-info { position: fixed; z-index: 960; width: 280px; background: var(--panel); border: 1px solid var(--line); border-radius: calc(8px * var(--rk, 1)); box-shadow: 0 10px 30px rgba(0, 0, 0, .45); padding: 8px 10px; font-size: 12px; pointer-events: none; }
+    .out-info[hidden] { display: none; }
+    .out-info h4 { margin: 0 0 6px; font-size: 12px; color: var(--text); }
+    .out-info .oi-sc { padding: 5px 0; border-top: 1px solid var(--line); }
+    .out-info .oi-sc:first-of-type { border-top: 0; padding-top: 0; }
+    .out-info .oi-name { display: flex; align-items: center; gap: 6px; color: var(--text); font-weight: 600; }
+    .out-info .oi-name i { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); flex: none; }
+    .out-info .oi-sc.on .oi-name i { background: #22c55e; box-shadow: 0 0 6px rgba(34, 197, 94, .7); }
+    .out-info .oi-out { color: var(--muted); padding-left: 13px; margin-top: 2px; }
+    .out-info .oi-sc.on .oi-out { color: var(--text); }
+    .out-info .oi-hint { margin-top: 6px; color: var(--muted); }
     #resCustom { display: flex; gap: 6px; align-items: center; margin-bottom: 8px; justify-content: flex-end; }
     #resCustom input { width: 84px; padding: 6px 8px; }
     #resCustom[hidden] { display: none; }
@@ -501,6 +514,9 @@
     .q-row { position: absolute; left: 0; right: 0; height: 30px; display: flex; align-items: center; gap: 8px; padding: 0 10px; cursor: default; font-size: 13px; }
     .q-row:hover { background: var(--field); }
     .q-row.sel { background: color-mix(in srgb, var(--live) 30%, transparent); }
+    .q-row .q-mpdot { width: 16px; height: 16px; flex: none; border-radius: 50%; display: grid; place-items: center; background: var(--c); }
+    .q-row .q-mpdot svg { width: 11px; height: 11px; }
+    .q-row .q-mpsw { width: 16px; height: 4px; flex: none; border-radius: 2px; background: var(--c); }
     .q-row .n { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .q-row .w { flex: none; max-width: 40%; color: var(--muted); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .q-none { padding: 20px; color: var(--muted); text-align: center; }
@@ -734,6 +750,31 @@
     /* Крестик на точке — виден при наведении: удалить одним щелчком */
     #zoomPts .zp-x { position: absolute; right: -6px; top: -7px; width: 16px; height: 16px; border-radius: 50%; background: var(--warn); color: #fff; font-size: 12px; line-height: 15px; text-align: center; display: none; }
     #zoomPts button:hover .zp-x { display: block; }
+    /* «По точкам»: лента 0 —•— 1 —•— 2…; у зрителей — заливка, переход течёт пузырьком к точке, пришли — точка «вспухает» */
+    #zoomPts.pts { gap: 0; align-items: center; flex-wrap: wrap; row-gap: 6px; }
+    #zoomPts.pts button.pt { border-radius: 999px; min-width: 30px; height: 30px; padding: 0 8px; }
+    #zoomPts.pts button.pt[data-kind=ink]::after { content: ''; position: absolute; left: 50%; bottom: 3px; width: 10px; height: 3px; margin-left: -5px; border-radius: 2px; background: var(--pc); }
+    #zoomPts.pts button.pt[data-kind=view] { font-style: italic; }
+    #zoomPts.pts button.pt.air { background: var(--live); color: var(--live-ink); border-color: var(--live); }
+    #zoomPts.pts button.pt[aria-pressed=true] { box-shadow: 0 0 0 2px var(--text); }
+    #zoomPts.pts button.pt.play { border-color: var(--live); color: var(--live); background: var(--live-soft); }
+    #zoomPts.pts button.pt.play::before { content: ''; position: absolute; inset: -2px; border-radius: inherit; border: 2px solid var(--live); animation: ptRing 1s ease-out infinite; pointer-events: none; }
+    #zoomPts.pts button.pt.pop { animation: ptPop .55s cubic-bezier(.3,1.6,.5,1); }
+    @keyframes ptRing { from { transform: scale(1); opacity: .9; } to { transform: scale(1.7); opacity: 0; } }
+    @keyframes ptPop { 0% { transform: scale(1); } 40% { transform: scale(1.35); } 100% { transform: scale(1); } }
+    #zoomPts .zp-link { position: relative; width: 30px; height: 3px; border-radius: 2px; background: var(--line); flex: none; }
+    #zoomPts .zp-link.done { background: var(--live); }
+    #zoomPts .zp-link.run::after { content: ''; position: absolute; left: 0; top: 0; bottom: 0; border-radius: inherit; background: var(--live); animation: ptFill var(--d, 1s) linear var(--dl, 0ms) both; }
+    #zoomPts .zp-link.run::before { content: ''; position: absolute; top: 50%; width: 11px; height: 11px; margin: -5.5px 0 0 -5.5px; border-radius: 50%; background: var(--live); box-shadow: 0 0 8px var(--live); animation: ptBubble var(--d, 1s) cubic-bezier(.45,0,.25,1) var(--dl, 0ms) both; z-index: 1; }
+    @keyframes ptFill { from { width: 0; } to { width: 100%; } }
+    @keyframes ptBubble { 0% { left: 0; transform: scale(.5); } 50% { transform: scale(1.25); } 100% { left: 100%; transform: scale(1.7); opacity: .2; } }
+    /* Палитра: кружок-спектр — окно «Цвета»; свой цвет — внутри кружка */
+    .swatch.more { background: conic-gradient(#ff3b30, #ffcc00, #34c759, #0a84ff, #b18cff, #ff5fd2, #ff3b30); position: relative; }
+    .swatch.more i { position: absolute; inset: 5px; border-radius: 50%; }
+    .swatch.more i:not([style*=background]) { background: var(--panel); }
+    .swatch.more i:not([style*=background])::after { content: '+'; position: absolute; inset: 0; display: grid; place-items: center; color: var(--text); font: 600 13px/1 sans-serif; font-style: normal; }
+    #inkColors.mk .swatch.more { opacity: 1; width: 26px; height: 26px; border-radius: 50%; }
+    #inkColors.mk .swatch.own { opacity: .75; }
     .zoom-mode button[aria-pressed=true], #animStepMode[aria-pressed=true] { border-color: var(--live); color: var(--live); background: var(--live-soft); }
     #inkSvg.tool-zoom { cursor: zoom-in; }
     #inkSvg.tool-zoomout { cursor: zoom-out; }
@@ -1105,7 +1146,7 @@
     .set-group .field.upd-acts { flex-wrap: wrap; gap: 8px; justify-content: flex-start; }
     .upd-notes { white-space: pre-line; overflow-wrap: anywhere; font-size: 13.5px; line-height: 1.5; padding: 10px 12px; max-height: 46vh; overflow: auto;
       background: var(--field); border: 1px solid var(--line); border-radius: calc(8px * var(--rk, 1)); }
-    #isles { position: fixed; inset: var(--isle-top, 8px) auto auto var(--isle-x, 50%); transform: translateX(-50%); margin: 0; padding: 0; border: 0; background: none; overflow: visible;
+    #isles { position: fixed; inset: var(--isle-top, 8px) auto auto 50%; transform: translateX(-50%); margin: 0; padding: 0; border: 0; background: none; overflow: visible;
       width: min(440px, calc(100vw - 32px)); display: flex; flex-direction: column; align-items: center; color: var(--text); pointer-events: none; z-index: 2000; }
     .isle-slot { width: 100%; display: grid; justify-items: center; grid-template-rows: 0fr; transition: grid-template-rows .38s cubic-bezier(.3, 1.1, .4, 1), margin .38s; }
     .isle-slot.in { grid-template-rows: 1fr; margin-bottom: 8px; }
@@ -1158,9 +1199,8 @@
       .isle-spin, .isle.morph .isle-body, .isle.morph .isle-n, .isle.run .isle-bar { animation: none; }
     }
 
-    /* Логотип в строке вкладок (brand/ — готовые файлы фирменного стиля; светлый/тёмный по цвету программы) */
-    /* Видна только эмблема: файл тот же, надпись справа обрезана (эмблема — первые 253 из 1056 по ширине) */
-    .brand-logo { height: 34px; width: 34px; flex: none; object-fit: cover; object-position: left center; margin: -7px 6px -7px -8px; user-select: none; -webkit-user-drag: none; }
+    /* Лупа слева от «Экран» — быстрый поиск (quick.js), то же, что Ctrl+F; видна всегда */
+    .quick-btn { margin-left: -4px; margin-right: 4px; }
 
     /* Разделители: потянуть — изменить ширину панели, двойной щелчок — как было (renderer.js, settings.sizes) */
     .splitter { flex: none; align-self: stretch; width: 10px; margin: 0 calc(var(--sg, 12px) / -2 - 5px); position: relative; z-index: 6; cursor: ew-resize; touch-action: none; }
@@ -1199,6 +1239,150 @@
       .ms-scr, .ms-play { animation: none; opacity: 1; transform: none; }
       .ms-bar { animation-duration: 3s; }
     }
+
+    /* ----- Карты (maps.js): панели — как у макросов (.mc-side/.mc-props), предпросмотр справа остаётся ----- */
+    body.maps-mode main { padding: 0; overflow: hidden; }
+    #mapsView { height: 100%; display: flex; min-height: 0; --sg: 0px; } /* панели вплотную: разделитель не наезжает на них */
+    #mapsView[hidden] { display: none; }
+    #mapsView button { padding: 4px 9px; font-size: 12px; }
+    #mapsView button.icon-only { padding: 3px 4px; }
+    #mapsView button:disabled { opacity: .4; cursor: default; }
+    #mapsView select, #mapsView input[type=text], #mapsView input[type=search], #mapsView input[type=number], #mapsView textarea { padding: 4px 7px; font-size: 12px; border-radius: calc(6px * var(--rk, 1)); }
+    #mapsView textarea { font: inherit; font-size: 12px; color: var(--text); background: var(--field); border: 1px solid var(--line); width: 100%; box-sizing: border-box; resize: vertical; line-height: 1.4; }
+    #mapsView .mp-side { overflow: hidden; width: var(--w, clamp(180px, 22%, 250px)); }
+    #mapsView .mp-props { width: var(--w, clamp(230px, 28%, 320px)); }
+    .mp-list { overflow-y: auto; padding: 0 8px 6px; display: flex; flex-direction: column; gap: 2px; min-height: 0; }
+    .mp-maps { flex: 0 1 auto; max-height: 30%; }
+    .mp-pts { flex: 1 1 40%; min-height: 60px; }
+    .mp-rts { flex: 0 1 auto; max-height: 22%; }
+    .mp-row { display: flex; align-items: center; gap: 7px; padding: 4px 7px; border-radius: calc(7px * var(--rk, 1)); cursor: pointer; font-size: 13px; color: var(--muted); border: 1px solid transparent; user-select: none; }
+    .mp-row:hover { background: var(--field); }
+    .mp-row.sel { background: color-mix(in srgb, var(--live) 18%, var(--field)); color: var(--text); font-weight: 600; border-color: color-mix(in srgb, var(--live) 45%, transparent); }
+    .mp-row.live::after { content: ''; width: 7px; height: 7px; border-radius: 50%; background: var(--live); flex: none; box-shadow: 0 0 0 3px var(--live-soft); }
+    .mp-row.off .nm { opacity: .5; }
+    .mp-row .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .mp-row .sub { font-size: 11px; color: var(--muted); font-weight: 400; flex: none; }
+    .mp-row .mp-th { width: 44px; height: 30px; flex: none; border-radius: calc(4px * var(--rk, 1)); object-fit: cover; background: var(--ink); border: 1px solid var(--line); }
+    .mp-row .mp-dot { width: 18px; height: 18px; flex: none; border-radius: 50%; display: grid; place-items: center; background: var(--c); }
+    .mp-row .mp-dot svg { width: 13px; height: 13px; }
+    .mp-row .mp-sw { width: 14px; height: 4px; flex: none; border-radius: 2px; background: var(--c); }
+    .mp-row button { padding: 0 4px !important; background: none; border-color: transparent; opacity: .6; }
+    .mp-row button:hover { opacity: 1; border-color: var(--line); }
+    .mp-row.drop-before { box-shadow: 0 -2px 0 var(--live); }
+    .mp-empty-l { color: var(--muted); font-size: 12px; padding: 4px 8px 8px; line-height: 1.4; }
+    .mp-find-h { font-size: 11px; color: var(--muted); padding: 6px 6px 2px; text-transform: uppercase; letter-spacing: .05em; }
+    .mp-layers { padding: 0 12px 12px; display: flex; flex-direction: column; gap: 3px; font-size: 12px; }
+    .mp-layers label { display: flex; align-items: center; gap: 7px; color: var(--muted); cursor: pointer; }
+    .mp-layers label input { margin: 0; accent-color: var(--live); }
+    .mp-layers .mp-dot { width: 14px; height: 14px; border-radius: 50%; background: var(--c); display: grid; place-items: center; flex: none; }
+    .mp-layers .mp-dot svg { width: 10px; height: 10px; }
+    .mp-center { flex: 1; min-width: 0; display: flex; flex-direction: column; min-height: 0; }
+    .mp-title { font-size: 13px; max-width: 36%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .mp-zoom { min-width: 40px; text-align: center; font-variant-numeric: tabular-nums; }
+    .mp-tools button.on { background: var(--live) !important; color: var(--live-ink); border-color: var(--live) !important; }
+    .mp-canvas { position: relative; flex: 1; min-height: 0; overflow: hidden; background: var(--ink); cursor: grab; touch-action: none; outline: none; }
+    .mp-canvas.panning { cursor: grabbing; }
+    .mp-canvas.add-pt, .mp-canvas.add-rt { cursor: crosshair; }
+    .mp-canvas.drop { box-shadow: inset 0 0 0 3px var(--live); }
+    .mp-img { position: absolute; left: 0; top: 0; max-width: none; user-select: none; pointer-events: none; box-shadow: 0 4px 30px rgba(0,0,0,.35); }
+    .mp-routes { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
+    .mp-routes path.rt-hit { pointer-events: stroke; cursor: pointer; }
+    .mp-marks { position: absolute; inset: 0; pointer-events: none; --s: 24px; --ls: 12px; font-size: 12px; }
+    .mp-marks .mv-pt { pointer-events: auto; cursor: pointer; }
+    .mp-marks .mv-pt .mv-pin { cursor: pointer; }
+    .mp-marks .mv-pt.sel .mv-pin { box-shadow: 0 0 0 3px #fff, 0 0 0 6px var(--live), 0 3px 10px rgba(0,0,0,.6); }
+    .mp-marks .mv-pt.sel { z-index: 2; }
+    .mp-marks .mv-pt.out .mv-pin::after { content: ''; position: absolute; right: -4px; top: -4px; width: 9px; height: 9px; border-radius: 50%; background: var(--live); box-shadow: 0 0 0 2px var(--panel); }
+    .mp-marks .mv-pt.ghost { opacity: .35; }
+    .mp-marks .mv-pt.dragging { cursor: grabbing; }
+    .mp-mode { position: absolute; left: 50%; top: 10px; transform: translateX(-50%); padding: 6px 12px; border-radius: calc(8px * var(--rk, 1)); background: var(--panel); border: 1px solid var(--live); color: var(--text); font-size: 12px; box-shadow: 0 4px 16px rgba(0,0,0,.3); display: flex; gap: 8px; align-items: center; }
+    .mp-mode[hidden] { display: none; }
+    .mp-props .te-head button { opacity: .8; }
+    .mp-out { flex: none; border-top: 1px solid var(--line); padding: 0 10px 10px; display: flex; flex-direction: column; gap: 6px; }
+    .mp-out .te-head { padding-left: 2px; }
+    .mp-live { font-size: 11px; color: var(--live); max-width: 60%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .mp-lays { container-type: inline-size; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 4px; }
+    #mapsView .mp-lays button { padding: 4px 2px !important; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; display: flex; flex-direction: column; align-items: center; gap: 3px; font-size: 10px !important; color: var(--muted); line-height: 1.1; }
+    .mp-lays button.on { border-color: var(--live); color: var(--text); background: var(--live-soft); }
+    .mp-lays button.live { box-shadow: inset 0 -2px 0 var(--live); }
+    .mp-lays svg { width: 100%; max-width: 34px; height: 22px; display: block; }
+    #mapsView .mp-lays span { font-size: 10px; display: block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+    @container (max-width: 230px) { #mapsView .mp-lays span { display: none; } }
+    .mp-outrow { display: flex; gap: 6px; }
+    /* Кнопка «Студия» в шапке «Вывода на экран» и окно студии #mpStudio (оформление — .ui-pop, .dlg-head/.dlg-foot) */
+    #mapsView .mp-out .te-head { gap: 4px 8px; flex-wrap: wrap; } /* узкая панель — «Студия» уходит вниз, а не за край */
+    #mapsView .mp-out .te-head b { white-space: nowrap; flex: none; }
+    #mapsView .mp-out .mp-live { flex: 1 1 60px; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    #mapsView .mp-studio-btn { flex: none; white-space: nowrap; }
+    #mapsView .mp-studio-btn { margin-left: auto; padding: 3px 9px; font-size: 12px; }
+    #mapsView .mp-studio-btn.on { border-color: var(--live); color: var(--text); background: var(--live-soft); }
+    #mpStudio { position: fixed; z-index: 880; width: 560px; min-width: 340px; max-width: calc(100vw - 16px); resize: horizontal; overflow: hidden;
+      display: flex; flex-direction: column; color: var(--text); background: var(--panel); border: 1px solid var(--line); border-radius: calc(10px * var(--rk, 1)); box-shadow: 0 20px 60px rgba(0, 0, 0, .55); }
+    #mpStudio[hidden] { display: none; }
+    #mpStudio .dlg-head { padding: 8px 8px 8px 14px; cursor: move; user-select: none; touch-action: none; gap: 8px; }
+    #mpStudio .dlg-head h2 { flex: none; font-size: 14px; }
+    #mpStudio .mp-st-what { flex: 1; min-width: 0; color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    #mpStudio .mp-st-wrap { position: relative; margin: 10px 10px 0; overflow: hidden; background: #000; border-radius: calc(6px * var(--rk, 1)); box-shadow: 0 0 0 1px var(--line); }
+    #mpStudio .mp-st-stage { position: absolute; left: 0; top: 0; transform-origin: 0 0; overflow: hidden; }
+    #mpStudio .mp-lays { margin: 8px 10px 0; }
+    #mpStudio .dlg-foot { padding: 8px 10px 10px; align-items: center; border-top: 0; }
+    #mpStudio .mp-st-tip { flex: 1; min-width: 0; text-align: center; color: var(--muted); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .mp-st-gap { flex: 1; }
+    /* Нейросеть: кнопки в свойствах и окно ответа */
+    #mapsView .mp-outrow > button { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    #mapsView .mp-ai > button { flex: 1 1 0; font-size: 12px !important; padding: 5px 6px !important; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; justify-content: center; }
+    #mapsView .mp-ai > button.on { border-color: var(--live); color: var(--text); }
+    .mp-ai-dlg[open] { display: flex; flex-direction: column; width: min(760px, 94vw); }
+    .mp-ai-dlg .dlg-body { display: flex; flex-direction: column; gap: 8px; }
+    .mp-ai-dlg textarea { width: 100%; min-height: 300px; resize: vertical; font: 12px/1.45 Consolas, 'Cascadia Mono', monospace; color: var(--text); background: var(--field); border: 1px solid var(--line); border-radius: calc(6px * var(--rk, 1)); padding: 8px 10px; box-sizing: border-box; }
+    .mp-ai-dlg .mp-ai-err { color: var(--warn); }
+    .mp-ai-dlg .mp-ai-err[hidden] { display: none; }
+    .mp-outrow > button:not(.icon-only) { flex: 1; justify-content: center; }
+    .mp-outrow > button[hidden] { display: none; }
+    .mp-f { display: flex; flex-direction: column; align-items: stretch; text-align: left; gap: 4px; font-size: 12px; }
+    .mp-f > span { color: var(--muted); display: flex; align-items: center; gap: 6px; }
+    .mp-f > span > em { font-style: normal; margin-left: auto; font-variant-numeric: tabular-nums; }
+    .mp-f small { color: var(--muted); font-size: 11px; line-height: 1.35; }
+    .mp-f input[type=range] { accent-color: var(--live); }
+    .mp-two { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 8px; } /* узкая панель — поля друг под другом */
+    .mp-two input, .mp-two select { min-width: 0; width: 100%; box-sizing: border-box; }
+    .mp-sec { font-size: 11px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; padding-top: 8px; border-top: 1px solid var(--line); display: flex; align-items: center; gap: 6px; }
+    .mp-sec .spacer { flex: 1; }
+    .mp-sec button { text-transform: none; letter-spacing: 0; font-weight: 400; }
+    .mp-check { display: flex; align-items: center; gap: 7px; font-size: 12px; color: var(--text); cursor: pointer; }
+    .mp-check input { margin: 0; accent-color: var(--live); }
+    .mp-icons { display: grid; grid-template-columns: repeat(auto-fill, minmax(30px, 1fr)); gap: 4px; }
+    .mp-icons button { padding: 3px !important; aspect-ratio: 1; display: grid; place-items: center; }
+    .mp-icons button.on { border-color: var(--live); background: var(--live-soft); }
+    .mp-icons .mp-dot { width: 20px; height: 20px; border-radius: 50%; background: var(--c); display: grid; place-items: center; }
+    .mp-icons .mp-dot svg { width: 14px; height: 14px; }
+    .mp-color { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; } /* узкая панель — кружки переносятся вниз */
+    .mp-color button.sw { width: 24px; height: 24px; padding: 0 !important; border-radius: 50%; border: 2px solid var(--line); background: var(--c); flex: none; }
+    .mp-items { display: flex; flex-direction: column; gap: 4px; }
+    .mp-item { display: flex; gap: 4px; align-items: center; }
+    .mp-item input { flex: 1; min-width: 0; }
+    .mp-item input.ref { flex: 0 0 34%; }
+    .mp-item button { padding: 2px 5px !important; background: none; border-color: transparent; color: var(--muted); }
+    .mp-item button:hover { border-color: var(--line); color: var(--text); }
+    .mp-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+    .mp-chip { display: inline-flex; align-items: center; border: 1px solid var(--line); border-radius: calc(12px * var(--rk, 1)); background: var(--field); font-size: 12px; overflow: hidden; }
+    .mp-chip button { border: 0 !important; background: none !important; padding: 3px 8px !important; border-radius: 0; }
+    .mp-chip button.go { color: var(--live); font-weight: 600; }
+    .mp-chip button.go:hover { background: var(--live-soft) !important; }
+    .mp-chip button.x { color: var(--muted); padding: 3px 6px 3px 2px !important; }
+    .mp-pics { display: grid; grid-template-columns: repeat(3, 1fr); gap: 5px; }
+    .mp-pics .pic { position: relative; aspect-ratio: 4 / 3; border-radius: calc(5px * var(--rk, 1)); background: var(--ink) center / cover no-repeat; border: 1px solid var(--line); }
+    .mp-pics .pic button { position: absolute; right: 2px; top: 2px; padding: 0 5px !important; font-size: 11px !important; background: var(--panel); opacity: .85; }
+    .mp-stops { display: flex; flex-direction: column; gap: 2px; }
+    .mp-stop { display: flex; align-items: center; gap: 6px; padding: 3px 6px; border-radius: calc(6px * var(--rk, 1)); background: var(--field); font-size: 12px; cursor: grab; }
+    .mp-stop b { width: 18px; height: 18px; border-radius: 50%; background: var(--c); color: #fff; font-size: 10px; display: grid; place-items: center; flex: none; }
+    .mp-stop span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .mp-stop button { padding: 0 4px !important; background: none; border-color: transparent; color: var(--muted); }
+    .mp-stop.drop-before { box-shadow: 0 -2px 0 var(--live); }
+    .mp-back { position: absolute; z-index: 30; right: 14px; bottom: 14px; display: flex; align-items: center; gap: 8px; padding: 6px 8px 6px 12px; font-size: 12px;
+      background: var(--panel); border: 1px solid var(--line); border-radius: calc(10px * var(--rk, 1)); box-shadow: 0 8px 28px rgba(0,0,0,.35); color: var(--text); }
+    .mp-back[hidden] { display: none; }
+    .mp-back button { padding: 3px 9px; font-size: 12px; }
 
     /* ----- Макросы (macros.js): слева макросы и ноды, по центру холст, справа свойства и журнал ----- */
     body.mc-mode aside, body.mc-mode .workspace > .splitter[data-split=aside] { display: none; }
@@ -1413,7 +1597,35 @@
     .tm-ctl button { font-size: 11px; padding: 2px 7px; }
     .tm-ctl button.on { background: var(--live); color: var(--live-ink); border-color: var(--live); }
     .tm-ctl select, .tm-ctl input { font-size: 11px; padding: 1px 4px; min-width: 0; }
-    .tm-ctl input.tm-dur { width: 64px; }
+    .tm-ctl .tm-dur { min-width: 64px; font-variant-numeric: tabular-nums; }
+    /* Колесо выбора времени (wheel.js: Wheel, WheelTime) — геометрия как в Wheel picker Kokonut UI, цвета — переменные темы */
+    /* Окошко над полем времени (WheelTime.pop): .ui-pop — стекло и рамки тем; стрелка указывает на поле (--ax) */
+    .wh-pop { position: fixed; z-index: 950; padding: 6px; color: var(--text); background: var(--panel); border: 1px solid var(--line); border-radius: calc(12px * var(--rk, 1)); box-shadow: 0 14px 40px rgba(0, 0, 0, .45); animation: wh-in .16s ease-out; }
+    .wh-pop::after { content: ''; position: absolute; left: var(--ax, 50%); bottom: -6px; width: 10px; height: 10px; margin-left: -5px; background: inherit; border: 1px solid var(--line); border-width: 0 1px 1px 0; transform: rotate(45deg); }
+    .wh-pop.below::after { bottom: auto; top: -6px; border-width: 1px 0 0 1px; }
+    .wh-pop.below { animation-name: wh-in-below; }
+    @keyframes wh-in { from { opacity: 0; transform: translateY(6px) scale(.97); } }
+    @keyframes wh-in-below { from { opacity: 0; transform: translateY(-6px) scale(.97); } }
+    @media (prefers-reduced-motion: reduce) { .wh-pop { animation: none; } }
+    .wh-root { display: flex; align-items: center; justify-content: center; gap: 0; padding: 4px 4px 0; user-select: none; }
+    .wh-cell { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+    .wh-cap { font-size: 11px; color: var(--muted); text-transform: lowercase; letter-spacing: .04em; }
+    .wh-colon { font: 600 20px/1 "Segoe UI", sans-serif; color: var(--muted); padding-top: 18px; }
+    .wh-col { position: relative; width: 58px; cursor: grab; touch-action: none; border-radius: calc(8px * var(--rk, 1)); outline: none; }
+    .wh-col:active { cursor: grabbing; }
+    .wh-col:focus-visible { box-shadow: inset 0 0 0 2px var(--live); }
+    .wh-band { position: absolute; left: 8px; right: 8px; top: 50%; height: 36px; margin-top: -18px; border-radius: calc(8px * var(--rk, 1)); background: color-mix(in srgb, var(--live) 16%, transparent); pointer-events: none; }
+    .wh-tick { position: absolute; top: 50%; width: 4px; height: 1px; background: var(--muted); pointer-events: none; }
+    .wh-tick.l { left: 2px; } .wh-tick.r { right: 2px; }
+    .wh-mask { position: absolute; inset: 0; -webkit-mask-image: linear-gradient(to bottom, transparent, #000 34%, #000 66%, transparent); mask-image: linear-gradient(to bottom, transparent, #000 34%, #000 66%, transparent); pointer-events: none; }
+    .wh-persp { position: absolute; inset: 0; perspective: 1000px; }
+    .wh-hi { clip-path: inset(calc(50% - 18px) 0 calc(50% - 18px) 0); }
+    .wh-drum { position: absolute; left: 0; right: 0; top: 50%; height: 0; transform-style: preserve-3d; }
+    .wh-row { position: absolute; left: 0; right: 0; top: -18px; height: 36px; display: flex; align-items: center; justify-content: center; font: 20px/1 "Segoe UI", sans-serif; font-variant-numeric: tabular-nums; backface-visibility: hidden; color: var(--muted); }
+    .wh-hi .wh-row { color: var(--text); font-weight: 600; }
+    .tm-ctl .tm-dur.on { border-color: var(--live); color: var(--live); }
+    .st-val-pick { cursor: pointer; border-radius: calc(4px * var(--rk, 1)); }
+    .st-val-pick:hover { background: var(--field); }
     .tm-ctl .tm-mode { flex: 1; }
     .tm-bar { grid-column: 1 / -1; height: 3px; border-radius: 2px; background: var(--line); overflow: hidden; }
     .tm-bar > i { display: block; height: 100%; width: 0; background: var(--live); }
@@ -1790,6 +2002,26 @@
     .cpk-sw button { position: relative; width: 32px; height: 32px; padding: 0; border: 0; border-radius: 50%; background: repeating-conic-gradient(#d8d8d8 0 25%, #8e8e8e 0 50%) 0 0 / 10px 10px; overflow: hidden; }
     .cpk-sw button i { position: absolute; inset: 0; border-radius: 50%; background: var(--c); }
     .cpk-sw button.on { box-shadow: 0 0 0 2px var(--cpbg), 0 0 0 4px var(--cpmuted); overflow: visible; }
+    .cpk-swc { flex: 1; min-width: 0; }
+    .cpk-swh { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: -2px 0 8px; font-size: 12px; }
+    .cpk-swh b { flex: none; font-weight: 600; letter-spacing: .02em; color: var(--cpmuted); text-transform: uppercase; }
+    .cpk-swh span { flex: 1; min-width: 0; color: var(--cpmuted); font-variant-numeric: tabular-nums; }
+    .cpk-swh span span { right: 0; }
+    .cpk-swx { position: absolute; inset: 0; border-radius: 50%; display: grid; place-items: center; opacity: 0; transition: opacity .18s; background: rgba(0, 0, 0, .5); color: #fff; }
+    .cpk-swx svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; }
+    .cpk-sw button:hover .cpk-swx { opacity: 1; }
+    /* Анимация цветов (colorfly.js, по образцу «Invite people»): полёт «таблетки», ряды кружков, прокрутка строчки */
+    .cfly-row { position: relative; }
+    .cfly-row > * { will-change: transform; }
+    .cfly-ghost { position: absolute !important; margin: 0 !important; pointer-events: none; }
+    .cfly-roll { position: relative; display: block; height: 16px; overflow: hidden; }
+    .cfly-roll > span { position: absolute; top: 0; line-height: 16px; white-space: nowrap; will-change: transform, opacity; }
+    .cfly { position: fixed; inset: auto; left: 0; top: 0; width: 34px; height: 34px; margin: 0; padding: 0; border: 0; overflow: visible;
+      border-radius: 999px; background: var(--field-solid, #3a3a3c); color: var(--text); pointer-events: none; will-change: transform, width; }
+    .cfly .tx { position: absolute; left: 12px; top: 50%; transform: translateY(-50%); line-height: 1; font-size: 14px; font-weight: 600; letter-spacing: .02em; white-space: nowrap; font-variant-numeric: tabular-nums; will-change: opacity, filter; }
+    .cfly .av { position: absolute; inset: 0; border-radius: 50%; overflow: hidden; transform: scale(0); will-change: transform;
+      background: repeating-conic-gradient(#d8d8d8 0 25%, #8e8e8e 0 50%) 0 0 / 10px 10px; box-shadow: 0 0 0 1px var(--line); }
+    .cfly .av i { position: absolute; inset: 0; }
     .cpk-sw .cpk-add { display: grid; place-items: center; background: var(--cpseg); color: var(--cptext); }
     .te-row input.hex { width: 74px; flex: none !important; font-family: Consolas, monospace; }
     .te-hint { color: var(--muted); font-size: 11.5px; line-height: 1.45; margin: 0; }
@@ -1834,7 +2066,7 @@
     html.ui-glow .ui-theme[aria-pressed="true"] { box-shadow: 0 0 0 1px var(--live), var(--glow); }
     html.ui-glow .tab[aria-selected=true] { text-shadow: 0 0 var(--glow-px) color-mix(in srgb, var(--live) 70%, transparent); border-bottom-color: var(--live); }
     html.ui-glow input[type=checkbox]:checked, html.ui-glow input[type=radio]:checked, html.ui-glow input[type=range]:not(.cpk *) { filter: drop-shadow(0 0 calc(var(--glow-px) / 2) var(--live)); }
-    html.ui-glow #outHint.on, html.ui-glow .set-nav button[aria-current=true] { text-shadow: 0 0 var(--glow-px) color-mix(in srgb, var(--live) 60%, transparent); }
+    html.ui-glow .set-nav button[aria-current=true] { text-shadow: 0 0 var(--glow-px) color-mix(in srgb, var(--live) 60%, transparent); }
     /* Стекло: окно — мягкий градиент, панели полупрозрачные (--panel/--field с прозрачностью), всплывающие — с размытием */
     html.ui-glass, html.ui-glass body {
       background: radial-gradient(120% 80% at 0% 0%, color-mix(in srgb, var(--live) 9%, transparent), transparent 60%),
@@ -2269,6 +2501,60 @@
     html[data-ui-font=tech] :is(.hint, code, kbd), html[data-ui-font=narrow] :is(.hint, code, kbd) { font-family: "Cascadia Mono", Consolas, monospace; font-stretch: normal; font-size: .92em; }
     /* Заглавные: заголовки, вкладки, разделы настроек */
     html.ui-caps :is(h1, h2, h3, .tab, .set-nav button, .pane-head) { text-transform: uppercase; letter-spacing: .05em; }
+
+    /* ===== Скользящая подсветка на пружинах (glide.js): выбранное — .gl-sel, под мышью — .gl-hov =====
+       Плашки лежат под кнопками; сами кнопки в таких группах прозрачные, иначе плашку не видно. */
+    .gl { isolation: isolate; } /* position: relative ставит glide.js, только если у контейнера своего нет (меню — fixed) */
+    .gl > :not(.gl-pill) { position: relative; z-index: 1; }
+    .gl-pill { position: absolute; left: 0; top: 0; z-index: 0; width: 0; height: 0; opacity: 0; pointer-events: none; transform-origin: 50% 50%; will-change: transform, width; border-radius: calc(6px * var(--rk, 1)); }
+    .gl-hov { background: color-mix(in srgb, var(--text) 8%, transparent); }
+    .gl-sel { background: var(--live-soft); }
+    /* Вкладки наверху: подсвеченная «вкладка» с чертой снизу; своя черта у вкладки не нужна — едет вместе с плашкой */
+    .tabs-side.gl .gl-pill { border-radius: calc(8px * var(--rk, 1)) calc(8px * var(--rk, 1)) 0 0; }
+    .tabs-side.gl .gl-sel::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 2px; border-radius: 2px 2px 0 0; background: var(--gl-bar, var(--live)); }
+    .tabs .tabs-side.gl .tab[aria-selected=true] { border-bottom-color: transparent; border-image: none; }
+    .tabs .tabs-side.gl .tab[aria-selected]::after { display: none; }
+    html[data-ui-deco=aura] { --gl-bar: linear-gradient(90deg, var(--live), var(--brown)); }
+    html[data-ui-deco=sunset] { --gl-bar: linear-gradient(90deg, #fffaf4, #ff9a7a); }
+    /* Переключатели «один из нескольких»: одна плашка-поле, внутри едет выбранное */
+    :is(.view-toggle, .dock-pos, .tool-group).gl { padding: 2px; gap: 2px; background: var(--field); border: 1px solid var(--line); border-radius: calc(7px * var(--rk, 1)); }
+    .tool-group.gl { margin: 0 6px; }
+    :is(.view-toggle, .dock-pos, .tool-group, .te-seg, .cpk-seg, .set-nav).gl > button { background: none !important; background-image: none !important; border-color: transparent !important; box-shadow: none !important; backdrop-filter: none !important; }
+    :is(.view-toggle, .dock-pos, .tool-group).gl .gl-pill { border-radius: calc(5px * var(--rk, 1)); }
+    :is(.view-toggle, .dock-pos, .tool-group).gl .gl-sel { box-shadow: inset 0 0 0 1px var(--live); }
+    .te-seg.gl > button + button { border-left-color: transparent !important; }
+    .te-seg.gl .gl-pill { border-radius: 0; }
+    .te-seg.gl .gl-sel { background: var(--live); }
+    .cpk-seg.gl .gl-pill { border-radius: 7px; }
+    .cpk-seg.gl .gl-sel { background: var(--cpsel); }
+    .cpk-seg.gl .gl-hov { background: color-mix(in srgb, var(--cptext) 7%, transparent); }
+    /* Разделы настроек — столбиком */
+    .set-nav.gl .gl-hov { background: var(--field); }
+    /* Меню правой кнопки: подсветка пункта едет за мышью и стрелками */
+    .ctx-menu.gl > button { background: none !important; }
+    .ctx-menu.gl .gl-hov { background: var(--live-soft); border-radius: calc(5px * var(--rk, 1)); }
+    .ctx-menu.gl > button:focus-visible { outline: none; color: var(--live); }
+    html[data-ui-deco=spectral] .ctx-menu.gl .gl-hov { background: linear-gradient(90deg, color-mix(in srgb, var(--live) 22%, transparent), rgba(255, 255, 255, .04)); }
+
+    /* ===== Живой интерфейс (motion.js): подсказка-перетекание, «ролики», галочки, меню, нажатие ===== */
+    .mo-tip, .mo-tip-tail { position: fixed; inset: 0 auto auto 0; margin: 0; padding: 0; z-index: 2147483000; pointer-events: none; opacity: 0;
+      --mo-bg: color-mix(in srgb, var(--ink) 78%, var(--text) 22%); background: var(--mo-bg); border: 1px solid color-mix(in srgb, var(--text) 16%, transparent); color: var(--text); will-change: transform, width; }
+    .mo-tip { box-sizing: border-box; overflow: hidden; border-radius: calc(7px * var(--rk, 1)); box-shadow: 0 6px 18px -6px rgba(0, 0, 0, .55); }
+    .mo-tip-tail { width: 10px; height: 10px; border-radius: 2px; overflow: visible; z-index: 2147482999; }
+    .mo-tip-lab { position: absolute; left: 9px; top: 5px; font-family: inherit; font-size: 12px; line-height: 1.35; font-weight: 500; color: var(--text); white-space: pre-line; overflow-wrap: anywhere; }
+    /* «Ролики»: кружок едет и вытягивается (переменные ставит motion.js только на время движения) */
+    html:is([data-ui-deco=aura], [data-ui-deco=amber], [data-ui-deco=sunset], [data-ui-deco=spectral]) input[type=checkbox]::before { translate: var(--sw-dx, 0px) 0; padding-right: var(--sw-g, 0px); border-radius: 999px; }
+    /* Ползунки: ручка под мышью подрастает, при перетаскивании — ещё больше и с ореолом (пружинная кривая) */
+    input[type=range]:not(.cpk *)::-webkit-slider-thumb { transition: transform .28s cubic-bezier(.3, 1.6, .5, 1), box-shadow .2s; }
+    input[type=range]:not(.cpk *):not(:disabled):hover::-webkit-slider-thumb { transform: scale(1.15); }
+    input[type=range]:not(.cpk *):not(:disabled):active::-webkit-slider-thumb { transform: scale(1.3); box-shadow: 0 0 0 5px color-mix(in srgb, var(--live) 24%, transparent); }
+    /* Стрелка «свернуть/развернуть» поворачивается с лёгким перелётом */
+    .ly-fold .chev, .svc-fold .arr { transition: transform .34s cubic-bezier(.3, 1.6, .5, 1); }
+    /* Время над шкалой перемотки (motion.js seekTip) */
+    .mo-seek { position: fixed; inset: 0 auto auto 0; margin: 0; padding: 2px 7px; z-index: 2147483000; pointer-events: none; opacity: 0; border-radius: calc(6px * var(--rk, 1));
+      background: var(--live); color: var(--live-ink, #fff); border: 0; font-size: 11px; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; box-shadow: 0 4px 12px -4px rgba(0, 0, 0, .5); will-change: transform; }
+    /* Цифры времени не «прыгают» по ширине */
+    #time, #timeEnd, #vTime, #vTimeEnd, .tm-val { font-variant-numeric: tabular-nums; }
   </style>
 </head>
 <body>
@@ -2293,10 +2579,11 @@
   <!-- Одна строка: разделы и кнопки; монитор и вывод — в Настройках -->
   <div class="tabs" role="tablist">
     <div class="tabs-side">
-    <img class="brand-logo" id="brandLogo" src="brand/logo-dark-transparent.svg" alt="multiplayerSHOW" draggable="false">
+    <button id="quickBtn" class="tab-btn icon-only quick-btn" data-icon="search" title="Поиск по файлам, песням и презентациям (Ctrl+F)" aria-label="Поиск"></button>
     <button class="tab" role="tab" id="tabScreen" data-icon="screen" aria-selected="true">Экран</button>
     <button class="tab" role="tab" id="tabBible" data-icon="bible" aria-selected="false">Библия</button>
     <button class="tab" role="tab" id="tabMusic" data-icon="music" aria-selected="false">Музыка</button>
+    <button class="tab" role="tab" id="tabMaps" data-icon="map" aria-selected="false" title="Карты: свои карты (PNG, JPEG) с точками, маршрутами и карточками для экрана (Ctrl+8)">Карты</button>
     <button class="tab" role="tab" id="tabThemes" data-icon="editor" aria-selected="false" aria-haspopup="menu" title="Редактор: тем (Ctrl+4), сцен (Ctrl+6), макросов (Ctrl+5) — щелчок открывает выбор">Редактор ▾</button>
     </div>
     <!-- Название открытого плейлиста или библиотеки — по центру строки -->
@@ -2734,6 +3021,67 @@
         </div>
       </section>
 
+      <!-- Карты (maps.js): слева библиотека карт, точки, маршруты и слои; по центру карта; справа свойства и вывод на экран -->
+      <section id="mapsView" hidden>
+        <div class="mc-side mp-side">
+          <div class="te-head">
+            <b>Карты</b>
+            <button id="mpAdd" class="icon-only" data-icon="add" title="Добавить карту: PNG или JPEG (можно перетащить файлы сюда)"></button>
+          </div>
+          <input type="search" id="mpFind" class="mc-lfilter" placeholder="Найти карту или точку" autocomplete="off">
+          <div class="mp-list mp-maps" id="mpMaps"></div>
+          <div class="te-head te-objs-head"><b>Точки</b><span class="te-sub" id="mpPtCount"></span><button id="mpPtAdd" class="icon-only" data-icon="pin" title="Новая точка (P): щёлкните по карте"></button></div>
+          <div class="mp-list mp-pts" id="mpPts"></div>
+          <div class="te-head te-objs-head"><b>Маршруты</b><button id="mpRtAdd" class="icon-only" data-icon="add" title="Новый маршрут: потом щёлкайте по точкам по порядку"></button></div>
+          <div class="mp-list mp-rts" id="mpRts"></div>
+          <div class="te-head te-objs-head"><b>Слои</b></div>
+          <div class="mp-layers" id="mpLayers"></div>
+        </div>
+        <div class="splitter" data-split="mpSide" data-min="200" data-max="440"></div>
+        <div class="mp-center">
+          <div class="te-bar">
+            <b class="mp-title" id="mpTitle"></b>
+            <span class="te-sep"></span>
+            <span class="te-grp mp-tools">
+              <button id="mpToolSel" data-icon="pan" class="icon-only" title="Выбор и перемещение (V): точки тянутся мышью, карта — за пустое место"></button>
+              <button id="mpToolPt" data-icon="pin" class="icon-only" title="Новая точка (P): щёлкните по карте"></button>
+              <button id="mpToolRt" data-icon="route" class="icon-only" title="Остановки маршрута (R): щёлкайте по точкам по порядку; повторный щелчок — убрать"></button>
+            </span>
+            <span class="spacer"></span>
+            <span class="te-grp">
+              <button id="mpZoomOut" data-icon="zoomOut" class="icon-only" title="Мельче (−)"></button>
+              <span class="te-sub mp-zoom" id="mpZoom">100%</span>
+              <button id="mpZoomIn" data-icon="zoom" class="icon-only" title="Крупнее (+)"></button>
+              <button id="mpFit" data-icon="fit" class="icon-only" title="Вся карта (F)"></button>
+            </span>
+          </div>
+          <div class="mp-canvas" id="mpCanvas">
+            <img class="mp-img" id="mpImg" alt="" draggable="false">
+            <svg class="mp-routes" id="mpRoutes"></svg>
+            <div class="mp-marks" id="mpMarks"></div>
+            <div class="mp-mode" id="mpMode" hidden></div>
+            <div class="mc-empty" id="mpEmpty"></div>
+          </div>
+        </div>
+        <div class="splitter" data-split="mpProps" data-t="next" data-min="260" data-max="560"></div>
+        <div class="mc-props mp-props">
+          <div class="te-head"><b id="mpPropsTitle">Свойства</b><button id="mpPropsMenu" class="icon-only" data-icon="props" title="Ещё: дублировать, удалить…"></button></div>
+          <div class="mc-props-body" id="mpProps"></div>
+          <div class="mp-out" id="mpOut">
+            <div class="te-head"><b>Вывод на экран</b><span class="mp-live" id="mpLive"></span><button id="mpStudioBtn" class="mp-studio-btn" data-icon="output" title="Студия (S): своё окно предпросмотра — пробуйте компоновку и анимацию, экран зала не меняется, пока не нажмёте «Вывести на экран»">Студия</button></div>
+            <div class="mp-lays" id="mpLays"></div>
+            <div class="mp-outrow">
+              <button class="primary" id="mpShow" data-icon="show" title="Отобразить выбранное на экране (Enter). До этого экран не меняется">Отобразить на экране</button>
+              <button id="mpClear" data-icon="close" class="icon-only" title="Убрать карту с экрана"></button>
+            </div>
+            <div class="mp-outrow">
+              <button id="mpUpd" data-icon="update" title="На экране — прежний вид этой точки. Показать с правками" hidden>Обновить на экране</button>
+              <button id="mpToPl" data-icon="playlist" title="Добавить выбранное слайдом в открытый плейлист или библиотеку">В плейлист</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
    </main>
     <!-- Тонкая строка под рабочим полем — одна на «Библию», «Экран» и «Музыку».
          Новый модуль: <div class="vb-mod" data-parts="bible screen">…</div> (data-parts — на каких вкладках виден) -->
@@ -2778,8 +3126,6 @@
           <button id="inkOpen" class="icon-only" data-icon="draw" aria-label="Быстрая анимация" title="Быстрая анимация: крупный план, рисование и маркер поверх слайда (Ctrl+E)"></button>
           <button id="inkClear" class="icon-only ink-x" data-icon="close" aria-label="Выйти из быстрой анимации" title="Выйти из быстрой анимации: убрать рисунок и вернуть весь слайд" hidden></button>
           <!-- NEXT: пошаговая анимация — каждый щелчок проигрывает следующий подготовленный шаг (tools.js: animNext) -->
-          <!-- Что показывать в окне предпросмотра: программу или любой экран (renderer.js: prevScreen) -->
-          <button id="prevPick" class="prev-pick" title="Какой экран показывать в окне предпросмотра">Программа ▾</button>
           <!-- Идёт авто-переключение слайдов (playlist.js: autoT) — щелчок останавливает -->
           <button id="autoBadge" class="auto-badge" title="Слайды переключаются сами — щелчок, чтобы остановить" hidden></button>
           <button id="animNext" class="anim-next" title="NEXT: проиграть следующий шаг анимации. Правая кнопка — выключить пошаговый режим или сбросить оставшиеся шаги" hidden>NEXT <span id="animNextN"></span></button>
@@ -2804,7 +3150,9 @@
         </div>
         <!-- Тянуть вверх/вниз — высота поля предпросмотра; экран внутри — в своей пропорции, по центру (renderer.js: prevGrip) -->
         <div id="prevGrip" title="Потяните вверх или вниз — высота предпросмотра. Двойной щелчок — по пропорции экрана"></div>
-        <p id="outHint">Вывод выключен. Картинка показана только здесь.</p>
+        <!-- Под предпросмотром: что в нём показывать — программу или любой экран/сцену (renderer.js: prevScreen).
+             Куда идёт картинка (монитор, разрешение) — карточка при наведении на «Зал» и «Сцена» (renderer.js: outInfoShow) -->
+        <div class="prev-foot"><button id="prevPick" class="prev-pick" title="Какой экран показывать в окне предпросмотра">Программа ▾</button></div>
       </div>
       <!-- Блоки под предпросмотром (as-blk): порядок меняется перетаскиванием за ⠿ или правой кнопкой по шапке (renderer.js: asideOrder) -->
         <!-- Слои вывода (Media Layers, layers.js): сверху — верхний слой -->
@@ -3571,6 +3919,38 @@
   </dialog>
 
   <!-- Плавающее окно: .ui-pop + .dlg-head/.dlg-foot — тот же вид, что у окон и панелей программы во всех темах оформления -->
+  <!-- Карты → «Студия»: плавающий предпросмотр карты (maps.js: mpStudio*). Экран зала не меняется до «Вывести на экран» -->
+  <div id="mpStudio" class="ui-pop" role="dialog" aria-labelledby="mpStTitle" hidden>
+    <div class="dlg-head" id="mpStHead">
+      <h2 id="mpStTitle">Студия</h2>
+      <span class="mp-st-what" id="mpStWhat"></span>
+      <button id="mpStClose" class="dlg-x" title="Закрыть студию (S)">×</button>
+    </div>
+    <div class="mp-st-wrap" id="mpStWrap"><div class="mp-st-stage" id="mpStStage"></div></div>
+    <div class="mp-lays" id="mpStLays"></div>
+    <div class="dlg-foot">
+      <button id="mpStReplay" data-icon="loop" title="Проиграть переход ещё раз (T)">Повторить</button>
+      <span class="mp-st-tip">Экран зала не меняется</span>
+      <button class="primary" id="mpStOut" data-icon="show" title="Вывести то, что в студии, на экран зала (Enter)">Вывести на экран</button>
+    </div>
+  </div>
+
+  <!-- Карты → ответ нейросети (maps.js: mpAiOpen/mpAiApply, разбор — mapsai.js) -->
+  <dialog id="mpAiDlg" class="mp-ai-dlg">
+    <div class="dlg-head"><h2 id="mpAiTitle">Ответ нейросети</h2><button id="mpAiX" class="dlg-x" title="Закрыть (Esc)">×</button></div>
+    <div class="dlg-body">
+      <p class="hint" id="mpAiHint"></p>
+      <textarea id="mpAiText" spellcheck="false" placeholder="Вставьте сюда ответ нейросети целиком (Ctrl+V)"></textarea>
+      <p class="hint mp-ai-err" id="mpAiErr" hidden></p>
+    </div>
+    <div class="dlg-foot">
+      <button id="mpAiCopy" data-icon="copy" title="Скопировать задание для нейросети ещё раз">Скопировать промпт</button>
+      <span class="mp-st-gap"></span>
+      <button id="mpAiCancel">Отмена</button>
+      <button class="primary" id="mpAiApply" data-icon="done" title="Заполнить (Ctrl+Enter)">Заполнить</button>
+    </div>
+  </dialog>
+
   <div id="refPick" class="ui-pop" role="dialog" aria-labelledby="rpTitle" hidden>
     <div class="dlg-head" id="rpHead">
       <h2 id="rpTitle">Места Писания</h2>
@@ -3646,7 +4026,7 @@
       <button id="zoomAdd" data-icon="keyframe" title="Запомнить текущий крупный план как точку (клавиша P). Щелчок по точке — плавный перелёт к ней, правая кнопка — заменить или удалить">Точка</button>
       <button id="zoomNext" data-icon="show" title="Перелететь к следующей точке (→ или PageDown; ← — назад)">Дальше</button>
       <span class="spacer"></span>
-      <button id="animStepMode" data-icon="show" aria-pressed="false" title="По NEXT: после «Готово» шаги не играют сами — каждый следующий запускает кнопка NEXT над предпросмотром (или пробел в этом окне). Выключено — «Готово» играет всё подряд">По NEXT</button>
+      <button id="animStepMode" data-icon="keyframe" aria-pressed="false" title="По точкам: каждое действие в окне — увеличение, перемещение, рисунок, маркер — само становится точкой (0 — весь слайд). Щелчок по точке — зрители видят переход к ней с предыдущей; NEXT над предпросмотром или пробел — следующая точка. Правая кнопка по точке — открыть, переделать, удалить">По точкам</button>
       <label class="field-inline" title="Сколько длится плавный наплыв и перелёт">Наплыв
         <select id="zoomMs">
           <option value="500">0,5 с</option>
@@ -3682,6 +4062,9 @@
         <span>Под стихами на экране:</span>
         <label class="check"><input type="radio" name="trShow" value="1"> Место и название перевода <span class="hint">(Ин 3:16 · Синодальный)</span></label>
         <label class="check"><input type="radio" name="trShow" value="0"> Только место Писания <span class="hint">(Ин 3:16)</span></label>
+      </div>
+      <div class="tr-show">
+        <label class="check"><input type="checkbox" id="refShort"> Место Писания сокращённо <span class="hint">(1 Пет 3:5 вместо 1 Петра 3:5 — и с переводом, и без)</span></label>
       </div>
       <div class="tr-show">
         <label class="check"><input type="checkbox" id="trShort"> Названия переводов сокращённо <span class="hint">(RST вместо Russian Synodal Translation — в кнопках переводов и на экране)</span></label>
@@ -3740,8 +4123,12 @@
   <script src="lang.js"></script>
   <script src="icons.js"></script>
   <script src="notify.js"></script>
+  <script src="glide.js"></script>
+  <script src="motion.js"></script>
   <script src="iconlib.js"></script>
+  <script src="colorfly.js"></script>
   <script src="colorpicker.js"></script>
+  <script src="mapview.js"></script>
   <script src="scene.js"></script>
   <script src="compose.js"></script>
   <script src="bible.js"></script>
@@ -3762,6 +4149,7 @@
   <script src="macros.js"></script>
   <script src="screens.js"></script>
   <script src="audioeditor.js"></script>
+  <script src="wheel.js"></script>
   <script src="stage.js"></script>
   <script src="qr.js"></script>
   <script src="remote.js"></script>
@@ -3771,6 +4159,8 @@
   <script src="opcast.js"></script>
   <script src="voice.js"></script>
   <script src="voicepack.js"></script>
+  <script src="mapsai.js"></script>
+  <script src="maps.js"></script>
   <script src="splash.js"></script>
 </body>
 </html>

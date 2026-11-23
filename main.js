@@ -574,6 +574,49 @@ async function sheetsFrom({ file, buf, name, pdf }) {
   } finally { if (tmp) fs.rmSync(tmp, { force: true }); }
 }
 
+/* ---------- Карты (maps.js): PNG/JPEG → userData\maps ----------
+   Оригинал хранится как есть (полное разрешение, имя — по содержимому), рядом — облегчённые копии JPEG:
+   t (миниатюра для списка), p (≤ 2048 — редактор и превью), b (≤ 4096 — вывод, если оригинал больше).
+   Точки и маршруты лежат в library.json (lib.maps) в долях 0–1 от картинки — от файла не зависят. */
+const MAP_SIZES = [['t', 360, 80], ['p', 2048, 86], ['b', 4096, 90]];
+const mapDir = () => path.join(app.getPath('userData'), 'maps');
+async function mapImport({ file, small }) {
+  const buf = await fs.promises.readFile(file);
+  const png = buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47;
+  const jpg = buf[0] === 0xff && buf[1] === 0xd8;
+  if (!png && !jpg) throw new Error('подходят только PNG и JPEG');
+  const img = nativeImage.createFromBuffer(buf);
+  if (img.isEmpty()) throw new Error('картинка не открылась');
+  const { width: w, height: h } = img.getSize();
+  const hash = crypto.createHash('sha1').update(buf).digest('hex').slice(0, 16);
+  await fs.promises.mkdir(mapDir(), { recursive: true });
+  const orig = path.join(mapDir(), hash + (png ? '.png' : '.jpg'));
+  if (!fs.existsSync(orig)) await fs.promises.writeFile(orig, buf);
+  const ref = (f) => ({ path: f, url: pathToFileURL(f).href });
+  const out = { name: path.basename(file, path.extname(file)).slice(0, 120), w, h, img: ref(orig) };
+  for (const [k, max, q] of MAP_SIZES) {
+    if (small && k === 'b') continue; // картинка к точке — хватит превью
+    if (Math.max(w, h) <= max && k !== 't') { out[k] = out.img; continue; }
+    const f = path.join(mapDir(), `${hash}-${k}.jpg`);
+    if (!fs.existsSync(f)) {
+      const s = Math.min(1, max / Math.max(w, h));
+      const r = s < 1 ? img.resize({ width: Math.max(1, Math.round(w * s)), height: Math.max(1, Math.round(h * s)), quality: k === 't' ? 'good' : 'best' }) : img;
+      await fs.promises.writeFile(f, r.toJPEG(q));
+    }
+    out[k] = ref(f);
+    await new Promise((r) => setImmediate(r)); // большая картинка — по шагу: главный процесс не стоит одним куском
+  }
+  return out;
+}
+async function mapsFrom(paths, small) {
+  const maps = [];
+  const errors = [];
+  for (const f of (paths || []).filter((x) => /\.(png|jpe?g)$/i.test(String(x)))) {
+    try { maps.push(await mapImport({ file: f, small })); } catch (err) { errors.push(`${path.basename(f)}: ${err.message}`); }
+  }
+  return { maps, errors };
+}
+
 async function describeFiles(paths, opts) {
   const slideWidth = Math.min(7680, Math.max(800, Number(opts && opts.slideWidth) || 2560));
   const items = [];
@@ -1560,10 +1603,10 @@ app.whenReady().then(() => {
     { id: 'macros', lib: ['macros', 'fileMacros'] },
     { id: 'screens', lib: ['screens', 'scenes', 'scenePresets', 'timers'], ls: ['cp.sceneEditor'] },
     { id: 'bibles' },
-    { id: 'bibleSet', lib: ['verseSplits'], set: ['bibleId', 'bSlots', 'vSplit', 'vMinFont', 'vMaxChars', 'vMaxParts', 'trShort', 'showTr', 'textFont', 'textScale', 'textColor', 'textBg'] },
+    { id: 'bibleSet', lib: ['verseSplits'], set: ['bibleId', 'bSlots', 'vSplit', 'vMinFont', 'vMaxChars', 'vMaxParts', 'trShort', 'showTr', 'refShort', 'textFont', 'textScale', 'textColor', 'textBg'] },
     { id: 'bookmarks', ls: ['cp.bookmarks'] },
     { id: 'settings' },
-    { id: 'layout', set: ['sizes', 'asideOrder', 'prevH', 'prevScreen', 'bmOpen', 'bmDock', 'bmSizeV', 'bmSizeH', 'lyFold', 'tmFold', 'sideFold', 'contentFold', 'poolOpen', 'poolH', 'poolSrc', 'scaleBible', 'scaleScreen'], ls: ['cp.themeEditor', 'cp.zoomPts'] },
+    { id: 'layout', set: ['sizes', 'asideOrder', 'prevH', 'prevScreen', 'bmOpen', 'bmDock', 'bmSizeV', 'bmSizeH', 'lyFold', 'tmFold', 'sideFold', 'contentFold', 'poolOpen', 'poolH', 'poolSrc', 'scaleBible', 'scaleScreen'], ls: ['cp.themeEditor', 'cp.zoomPts', 'cp.animPts'] },
     { id: 'look', set: ['uiTheme', 'uiColors', 'uiGlow', 'uiGlass', 'uiRadius', 'uiAlpha', 'uiFont', 'uiCaps'], ls: ['cp.look'] },
     { id: 'keys', set: ['keys'] },
     { id: 'presets', ls: ['cp.presets'] },
@@ -2089,6 +2132,19 @@ app.whenReady().then(() => {
     notify('');
     return { sheets, errors };
   });
+
+  // Карты (maps.js): выбрать PNG/JPEG → { maps: [{ name, w, h, img, t, p, b }], errors }; small — картинки к точке (без b)
+  ipcMain.handle('maps:pick', async (e, opts) => {
+    const small = !!(opts && opts.small);
+    const res = await dialog.showOpenDialog(BrowserWindow.fromWebContents(e.sender), {
+      title: small ? 'Картинки к точке' : 'Карта: PNG или JPEG', properties: ['openFile', 'multiSelections'],
+      filters: [{ name: 'Картинки (PNG, JPEG)', extensions: ['png', 'jpg', 'jpeg'] }],
+    });
+    if (res.canceled) return null;
+    return mapsFrom(res.filePaths, small);
+  });
+  // Файлы, брошенные на вкладку «Карты»
+  ipcMain.handle('maps:import', (_e, opts) => mapsFrom(opts && Array.isArray(opts.paths) ? opts.paths : [], !!(opts && opts.small)));
 
   /* ---------- Песни: импорт и экспорт открытыми форматами (TXT, ChordPro, JSON) ---------- */
 
@@ -3012,6 +3068,16 @@ function rmThumbOpen() {
   rmThumbWin.on('closed', () => { rmThumbWin = null; });
   return new Promise((ok) => { rmThumbWin.webContents.once('did-finish-load', () => ok(rmThumbWin)); rmThumbWin.loadFile('thumb.html'); });
 }
+// Скрытое окно миниатюр — целый процесс (~100 МБ): минута без работы — закрываем, понадобится — откроется снова
+let rmThumbIdleT = null;
+function rmThumbIdle() {
+  clearTimeout(rmThumbIdleT);
+  rmThumbIdleT = setTimeout(() => rmThumbQ.then(() => {
+    if (rmThumbWin && !rmThumbWin.isDestroyed()) rmThumbWin.destroy();
+    rmThumbWin = null;
+    rmThumbFrame = null;
+  }), 60000);
+}
 function rmThumb(s) {
   if (rmThumbs.has(s.v)) return Promise.resolve(rmThumbs.get(s.v));
   const job = rmThumbQ.then(async () => {
@@ -3034,6 +3100,7 @@ function rmThumb(s) {
     return buf;
   });
   rmThumbQ = job.catch(() => {});
+  rmThumbIdle();
   return job.catch(() => null);
 }
 

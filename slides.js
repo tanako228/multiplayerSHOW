@@ -16,14 +16,16 @@
      custom { elements: [...] }            — свой слайд: блоки текста и картинок
      live   { src: { type, id, label }, name, fit? } — живой источник из «Медиапул → Источники»
                                            (type: camera | screen | mic | ndi …, см. Scene.LIVE)
+     map    { map, pt?, layout?, route?, name } — точка карты (вкладка «Карты», maps.js): ссылка на lib.maps по id;
+                                           что рисовать, собирает mapsSlideContent в момент показа — правки точки видны сразу
    Слайды любого вида можно копировать и вставлять в любую презентацию.
    Подключается и в окне оператора, и в редакторе. */
 
 const Slides = (() => {
   const newId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 
-  const SLIDE_NAMES = { text: 'Текст', bible: 'Библия', image: 'Картинка', video: 'Видео', audio: 'Музыка', custom: 'Свой слайд', live: 'Источник' };
-  const PRES_NAMES = { song: 'Песня', bible: 'Библия', media: 'Медиа', deck: 'Презентация', audio: 'Музыка', custom: 'Слайды', mixed: 'Презентация' };
+  const SLIDE_NAMES = { text: 'Текст', bible: 'Библия', image: 'Картинка', video: 'Видео', audio: 'Музыка', custom: 'Свой слайд', live: 'Источник', map: 'Карта' };
+  const PRES_NAMES = { song: 'Песня', bible: 'Библия', media: 'Медиа', deck: 'Презентация', audio: 'Музыка', custom: 'Слайды', mixed: 'Презентация', map: 'Карта' };
 
   // Какая «общая» тема действует для слайда этого вида (Настройки темы по умолчанию)
   const themeKind = (s) => ({ text: 'song', bible: 'bible', custom: 'custom', image: 'media', video: 'media', live: 'media' })[s.k] || '';
@@ -47,6 +49,8 @@ const Slides = (() => {
       case 'live': return { type: 'live', src: slide.src || {}, fit: slide.fit || opt.fit, sound: !!(slide.src && ['mic', 'ndi'].includes(slide.src.type)), style };
       // Музыку на экран не выводим; эта картинка — только для редактора
       case 'audio': return { type: 'text', text: '♪ ' + (slide.name || 'Музыка'), style: { bg: '#0d212b', color: '#aa7452', font: 'segoe', weight: 600, scale: 0.6 } };
+      // Карта: собирает окно оператора (maps.js); карты нет (удалили, другое окно) — надпись вместо пустого экрана
+      case 'map': return (typeof mapsSlideContent === 'function' && mapsSlideContent(slide)) || { type: 'text', text: slide.name || 'Карта', style: { ...style, scale: 0.6 } };
       default: return { type: 'text', text: ' ', style };
     }
   }

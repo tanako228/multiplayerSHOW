@@ -36,6 +36,10 @@ const Icons = (() => {
     editor: ['#ffa04a', '#d4570c', `<path d="M5.8 18.2l.9-3.8 8.8-8.8a1.7 1.7 0 0 1 2.4 0l.5.5a1.7 1.7 0 0 1 0 2.4l-8.8 8.8z" fill="${W}"/><path d="M14 7.1l2.9 2.9" stroke="{d}" stroke-width="1.4"/>`],
     settings: ['#93a3bb', '#46566f', `<circle cx="12" cy="12" r="6.4" fill="none" stroke="${W}" stroke-width="2.8" stroke-dasharray="2.55 2.48"/><circle cx="12" cy="12" r="4.9" fill="${W}"/><circle cx="12" cy="12" r="1.9" fill="{d}"/>`],
     web: ['#3fc8ff', '#1470dc', `<circle cx="12" cy="12" r="6.8" fill="none" stroke="${W}" stroke-width="1.7"/><ellipse cx="12" cy="12" rx="2.9" ry="6.8" fill="none" stroke="${W}" stroke-width="1.5"/>` + line('M5.4 12h13.2M6.4 8.6h11.2M6.4 15.4h11.2', 1.3)],
+    // Карты (maps.js): развёрнутая карта с меткой; маршрут — точки и путь между ними; точка — булавка
+    map: ['#5fd68a', '#16864a', `<path d="M4.6 7.2l4.6-1.9 5.6 1.9 4.6-1.9v11.5l-4.6 1.9-5.6-1.9-4.6 1.9z" fill="${W}"/><path d="M9.2 5.3v11.5M14.8 7.2v11.5" stroke="{d}" stroke-width="1.1" opacity=".5"/><path d="M14.8 9.1a1.9 1.9 0 1 0-3.8 0c0 1.5 1.9 3.4 1.9 3.4s1.9-1.9 1.9-3.4z" fill="{d}"/>`],
+    route: ['#ff8f6b', '#d2452a', `<circle cx="6.6" cy="16.6" r="2.1" fill="${W}"/><circle cx="17.4" cy="7.4" r="2.1" fill="${W}"/>` + line('M8.4 15.4c3.4-1.7.6-5.4 3.8-6.8 1.4-.6 2.6-.6 3.4-.9', 1.7)],
+    pin: ['#ffc24a', '#c47d0a', `<path d="M12 4.6a5 5 0 0 0-5 5c0 3.6 5 8.8 5 8.8s5-5.2 5-8.8a5 5 0 0 0-5-5z" fill="${W}"/><circle cx="12" cy="9.6" r="1.9" fill="{d}"/>`],
     // Действия
     add: ['#4fe08a', '#14994d', line('M12 6.6v10.8M6.6 12h10.8', 2.6)],
     library: ['#f5be52', '#b56f15', `<rect x="5.3" y="6" width="3.3" height="12" rx=".8" fill="${W}"/><rect x="9.5" y="4.9" width="3.3" height="13.1" rx=".8" fill="${W}" opacity=".8"/><rect x="13.6" y="6.4" width="3.3" height="11.6" rx=".8" fill="${W}" transform="rotate(-14 15.3 12.2)"/>` + line('M5 19.2h14', 1.5)],

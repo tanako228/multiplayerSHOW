@@ -14,6 +14,7 @@ const DEFAULTS = {
   res: 'auto', resW: 3840, resH: 2160,
   videoSound: false, videoLoop: true, outFit: 'fit', outDisplay: 0,
   textFont: 'segoe', textScale: 100, textColor: '#ffffff', textBg: '#000000', showTr: true,
+  refShort: false, // место Писания на экране сокращённо: «1 Пет 3:5» вместо «1 Петра 3:5»
   trShort: false, // переводы сокращённо: «RST» вместо «Russian Synodal Translation»
   bibleId: null,
   // Переводы на экране, до 4 строк { id, text, ref }; первая — открытый перевод (id не нужен).
@@ -73,7 +74,7 @@ const BINDINGS = [
   ['guardCursor', 'check'], // защита экранов показа (main.js: guardSync)
 ];
 
-const VISUAL_KEYS = ['fit', 'videoSound', 'videoLoop', 'textFont', 'textScale', 'textColor', 'textBg', 'showTr', 'trShort'];
+const VISUAL_KEYS = ['fit', 'videoSound', 'videoLoop', 'textFont', 'textScale', 'textColor', 'textBg', 'showTr', 'trShort', 'refShort'];
 
 BINDINGS.forEach(([key, kind, id]) => {
   const el = $(id || key);
@@ -115,7 +116,7 @@ function onSettingChanged(key) {
   if (['ssOn', 'ssMin', 'ssKind'].includes(key)) sendSaver();
   if (key === 'guardCursor') sendGuard();
   if (key === 'trShort' && typeof renderChips === 'function' && typeof bibleIndex !== 'undefined') renderChips();
-  if (key === 'showTr' || key === 'trShort') {
+  if (key === 'showTr' || key === 'trShort' || key === 'refShort') {
     syncTrShow();
     // Подпись видна и на миниатюрах — перерисовываем их
     if (typeof bible !== 'undefined' && bible && bOpen && slidesMode()) renderVerses();
@@ -127,7 +128,14 @@ function onSettingChanged(key) {
 function syncTrShow() {
   document.querySelectorAll('input[name=trShow]').forEach((r) => { r.checked = r.value === (settings.showTr ? '1' : '0'); });
   $('trShort').checked = !!settings.trShort;
+  $('refShort').checked = !!settings.refShort;
 }
+$('refShort').addEventListener('change', () => {
+  settings.refShort = $('refShort').checked;
+  saveSettings();
+  onSettingChanged('refShort');
+  flashStatus(settings.refShort ? 'Место Писания — сокращённо (1 Пет 3:5)' : 'Место Писания — полностью (1 Петра 3:5)');
+});
 $('trShort').addEventListener('change', () => {
   settings.trShort = $('trShort').checked;
   saveSettings();
@@ -772,11 +780,6 @@ function setOutputState({ open, displayId }) {
   // Галочка в шапке «Предпросмотра»
   if (typeof lib !== 'undefined' && lib) outGroupsSync();
   if (open && displayId != null) displaySel.value = displayId;
-  const hint = $('outHint');
-  hint.classList.toggle('on', open);
-  hint.textContent = open
-    ? `Вывод идёт на: ${displaySel.selectedOptions[0] ? displaySel.selectedOptions[0].textContent : 'монитор'}`
-    : 'Вывод выключен. Картинка показана только здесь.';
 }
 
 // На монитор с окном программы выводить нельзя (решение владельца) — main.js тоже не откроет
@@ -810,11 +813,11 @@ function outGroupMembers(g) {
   const list = [];
   for (const s of L.screens) {
     if (outGroupOf(s, false) !== g) continue;
-    if (s.id === 'main') list.push({ name: s.name || 'Основной', on: mainOutOn(), set: (v) => mainOutSet(v, true) });
-    else if ((s.outputs || []).length) list.push({ name: s.name || 'Экран', on: !!s.enabled, set: (v) => { s.enabled = v; } });
+    if (s.id === 'main') list.push({ name: s.name || 'Основной', on: mainOutOn(), set: (v) => mainOutSet(v, true), src: s });
+    else if ((s.outputs || []).length) list.push({ name: s.name || 'Экран', on: !!s.enabled, set: (v) => { s.enabled = v; }, src: s });
   }
   for (const sc of L.scenes || []) {
-    if (outGroupOf(sc, true) === g && (sc.outputs || []).length) list.push({ name: sc.name || 'Сцена', on: !!sc.on, set: (v) => { sc.on = v; } });
+    if (outGroupOf(sc, true) === g && (sc.outputs || []).length) list.push({ name: sc.name || 'Сцена', on: !!sc.on, set: (v) => { sc.on = v; }, src: sc, scene: true });
   }
   return list;
 }
@@ -845,11 +848,71 @@ function outGroupsSync() {
     b.disabled = !list.length;
     b.classList.toggle('on', on);
     b.setAttribute('aria-pressed', String(on));
-    const names = (l) => l.map((x) => '«' + x.name + '»').join(', ');
-    b.title = !list.length ? `${OUT_GROUPS[g]}: в группе нет экранов и сцен с выходами — назначьте группу в Редакторе сцен`
-      : on ? `${OUT_GROUPS[g]}: выключить вывод (${names(list)})` : `${OUT_GROUPS[g]}: включить вывод (${names(list)})`;
+    b.removeAttribute('title'); // вместо подсказки — карточка «куда идёт картинка» (outInfoShow)
+    b.setAttribute('aria-label', `${OUT_GROUPS[g]}: ${on ? 'выключить' : 'включить'} вывод`);
   }
+  if (outInfoG) outInfoShow(outInfoG);
 }
+
+/* ----- Карточка «куда идёт картинка»: наведение на «Зал» / «Сцена» над «Предпросмотром» -----
+   Для каждого экрана и сцены группы: включён ли вывод, на какой монитор (окно, NDI) и в каком разрешении.
+   Выключено всё — «картинка только здесь, в предпросмотре». */
+const outInfo = Object.assign(document.createElement('div'), { className: 'out-info ui-pop', hidden: true });
+outInfo.setAttribute('role', 'tooltip');
+document.body.append(outInfo);
+let outInfoG = '';
+const outInfoBtn = { hall: 'outToggle', stage: 'stageToggle' };
+function outInfoLines(x) {
+  const dispLabel = (id) => { const d = displays.find((m) => m.id === Number(id)); return d ? d.label : 'монитор не подключён'; };
+  const s = x.src || {};
+  const out = [];
+  let W, H;
+  if (!x.scene && s.id === 'main') {
+    ({ W, H } = outputSize());
+    out.push(`${outputOpen ? '' : '○ '}Монитор зала — ${dispLabel(displaySel.value)}`);
+  } else ({ w: W, h: H } = Compose.screenSize(x.scene ? 'scene:' + s.id : s.id));
+  if (x.scene) { W = Number(s.w) || W; H = Number(s.h) || H; }
+  for (const o of s.outputs || []) {
+    const mark = o.off ? '○ ' : '';
+    if (o.kind === 'display') out.push(`${mark}Монитор — ${dispLabel(o.display)}`);
+    else if (o.kind === 'ndi') out.push(`${mark}NDI в сеть — «${o.name || 'MP Show — ' + x.name}»`);
+    else out.push(`${mark}Окно на рабочем столе`);
+  }
+  return { res: W && H ? `${W}×${H}` : '', out };
+}
+function outInfoShow(g) {
+  outInfoG = g;
+  const b = $(outInfoBtn[g]);
+  if (!b || !b.isConnected || !b.offsetParent) { outInfoHide(); return; }
+  const list = outGroupMembers(g);
+  const on = list.some((x) => x.on);
+  const el = (tag, cls, text) => Object.assign(document.createElement(tag), { className: cls || '', textContent: text || '' });
+  const kids = [el('h4', '', on ? `${OUT_GROUPS[g]}: картинка показывается` : `${OUT_GROUPS[g]}: вывод выключен — картинка только здесь`)];
+  for (const x of list) {
+    const { res, out } = outInfoLines(x);
+    const row = el('div', 'oi-sc' + (x.on ? ' on' : ''));
+    const nm = el('div', 'oi-name');
+    nm.append(el('i'), el('span', '', `${x.scene ? 'Сцена' : 'Экран'} «${x.name}»${res ? ' · ' + res : ''}${x.on ? '' : ' · выключен'}`));
+    row.append(nm, ...out.map((t) => el('div', 'oi-out', t)));
+    kids.push(row);
+  }
+  if (!list.length) kids.push(el('div', 'oi-hint', 'В группе нет экранов и сцен с выходами — назначьте группу в Редакторе сцен.'));
+  else kids.push(el('div', 'oi-hint', on ? 'Щелчок — выключить вывод' : 'Щелчок — включить вывод'));
+  outInfo.replaceChildren(...kids);
+  outInfo.hidden = false;
+  const r = b.getBoundingClientRect();
+  const w = outInfo.offsetWidth;
+  outInfo.style.left = Math.max(8, Math.min(innerWidth - w - 8, r.left)) + 'px';
+  outInfo.style.top = (r.bottom + 6) + 'px';
+}
+function outInfoHide() { outInfoG = ''; outInfo.hidden = true; }
+for (const [g, id] of Object.entries(outInfoBtn)) {
+  const b = $(id);
+  // У выключенной кнопки (нет выходов) mouseenter не приходит — слушаем у обёртки через pointerover
+  b.parentElement.addEventListener('pointerover', (e) => { if (e.target.closest('#' + id) && outInfoG !== g) outInfoShow(g); });
+  b.parentElement.addEventListener('pointerout', (e) => { if (e.target.closest('#' + id) && !(e.relatedTarget && e.relatedTarget.closest && e.relatedTarget.closest('#' + id))) outInfoHide(); });
+}
+window.addEventListener('blur', outInfoHide);
 $('outToggle').addEventListener('click', () => outGroupSet('hall', !outGroupMembers('hall').some((x) => x.on)));
 $('stageToggle').addEventListener('click', () => outGroupSet('stage', !outGroupMembers('stage').some((x) => x.on)));
 
@@ -925,7 +988,7 @@ let lastPlayed = '';    // 'video' | 'audio' — что включили пос�
 
 const transition = () => (settings.transType === 'none' ? { type: 'none', ms: 0 } : { type: settings.transType, ms: settings.transMs });
 const textStyle = () => ({
-  font: settings.textFont, scale: settings.textScale / 100, color: settings.textColor, bg: settings.textBg, showTranslation: settings.showTr,
+  font: settings.textFont, scale: settings.textScale / 100, color: settings.textColor, bg: settings.textBg, showTranslation: settings.showTr, refShort: settings.refShort,
   bible: bibleLook(),
 });
 // Как рисовать стихи (scene.js, style.bible): куда идут текст и ссылка каждого перевода (строки окна «Библия»)
@@ -938,7 +1001,7 @@ const bibleLook = () => ({ slots: settings.bSlots.map((s) => ({ text: s.text, re
 const LAYER_KINDS = {
   source: { name: 'Источники', icon: 'sources', takes: ['live'], sound: true },
   media: { name: 'Медиа', icon: 'image', takes: ['image', 'video'], sound: true },
-  pres: { name: 'Презентации', icon: 'text', takes: ['text', 'custom'], sound: false },
+  pres: { name: 'Презентации', icon: 'text', takes: ['text', 'custom', 'map'], sound: false }, // map — вкладка «Карты» (maps.js): карта сменяет слайд
   // Overlay — поверх основной презентации; сам сюда ничего не идёт (только пункт/макрос с этим слоем).
   // Показ в Overlay не сбивает выделение слайда на экране (plShown), ленту и авто-переключение основной презентации.
   overlay: { name: 'Overlay', icon: 'layers', takes: [], sound: true, over: true },
@@ -1045,6 +1108,7 @@ function layersChanged() {
   if (typeof scStage === 'function') scStage(); // текущий и следующий слайд — элементам сцен
   updateLive();
   if (typeof renderLayers === 'function') renderLayers();
+  if (typeof mpLiveChanged === 'function') mpLiveChanged(); // «Карты»: что из карт на экране (maps.js)
 }
 
 /* ---------- Просмотр без вывода (peek): файл из медиапула или пункт «Содержания» ----------
@@ -1209,6 +1273,7 @@ function setTab(name) {
   if (name === 'screen') name = 'service'; // «Отдельных файлов» больше нет — всё в плейлистах и библиотеках
   if (name === 'screens') name = 'scenes'; // «Экраны» — теперь «Редактор → Редактор сцен»
   if (tab === 'themes' && name !== 'themes' && typeof teSlideTidy === 'function') teSlideTidy(); // нетронутый вид слайда — снова «как в теме»
+  const prevTab = tab;
   tab = name;
   const onScreen = name === 'screen' || name === 'service';
   if (onScreen) screenPart = name;
@@ -1221,6 +1286,14 @@ function setTab(name) {
   $('macrosView').hidden = name !== 'macros';
   $('screensView').hidden = name !== 'scenes';
   $('audioView').hidden = name !== 'audio';
+  $('mapsView').hidden = name !== 'maps';
+  document.body.classList.toggle('maps-mode', name === 'maps');
+  // Сменили раздел — новый плавно проявляется и подъезжает (motion.js), а не возникает рывком
+  if (prevTab !== name && window.UiMotion) {
+    const VIEW = { service: 'screenView', screen: 'screenView', bible: 'bibleView', music: 'musicView', themes: 'themesView', macros: 'macrosView', scenes: 'screensView', audio: 'audioView', maps: 'mapsView' };
+    UiMotion.enter($(VIEW[name]), { dy: 6 });
+  }
+  if (typeof mpTabOpen === 'function') { if (name === 'maps') mpTabOpen(); else mpTabClose(); } // «Карты» (maps.js)
   // Редакторы (темы, сцены, макросы) — во всю ширину: «Предпросмотр» справа прячется
   document.body.classList.toggle('te-mode', name === 'themes');
   document.body.classList.toggle('mc-mode', name === 'macros');
@@ -1244,6 +1317,7 @@ function setTab(name) {
   $('tabScreen').setAttribute('aria-selected', String(onScreen));
   $('tabBible').setAttribute('aria-selected', String(name === 'bible'));
   $('tabMusic').setAttribute('aria-selected', String(name === 'music'));
+  $('tabMaps').setAttribute('aria-selected', String(name === 'maps'));
   $('tabThemes').setAttribute('aria-selected', String(ED_KINDS.some(([k]) => k === name))); // вкладка «Редактор»
   edPickSync();
   $('viewTitle').hidden = name !== 'service' && name !== 'bible'; // название плейлиста — только где видны списки
@@ -1266,7 +1340,7 @@ function syncViewBar(part) {
 /* ---------- Scale: размер слайдов-миниатюр на вкладке (только вид, слайды не меняются) ---------- */
 
 const SCALE = { bible: ['scaleBible', '--bible-tile', 'Библия'], screen: ['scaleScreen', '--svc-tile', 'Экран'] };
-const scalePart = () => (tab === 'bible' ? 'bible' : tab === 'music' || tab === 'themes' || tab === 'macros' || tab === 'scenes' || tab === 'audio' ? null : 'screen');
+const scalePart = () => (tab === 'bible' ? 'bible' : tab === 'music' || tab === 'themes' || tab === 'macros' || tab === 'scenes' || tab === 'audio' || tab === 'maps' ? null : 'screen');
 const scaleGrid = (part) => (part === 'bible' ? $('verses') : tab === 'screen' ? $('grid') : document.querySelector('#svcFeed .svc-slides'));
 
 // Сколько слайдов помещается в ряд при текущем размере и ширине панели
@@ -1313,6 +1387,7 @@ new ResizeObserver(() => { if (!$('viewBar').hidden) applyScale(); }).observe(do
 $('tabScreen').addEventListener('click', () => setTab(screenPart));
 $('tabBible').addEventListener('click', () => setTab('bible'));
 $('tabMusic').addEventListener('click', () => setTab('music'));
+$('tabMaps').addEventListener('click', () => setTab('maps'));
 /* ---------- Вкладка «Редактор»: редактор тем, сцен, макросов (выбор — меню у вкладки и кнопка слева сверху в каждом; ED_KINDS — выше, у setTab) ---------- */
 function edMenu(at) {
   showMenu(at, ED_KINDS.map(([k, name, , key, fn]) => ({ label: (tab === k ? '✓ ' : '   ') + name, key, fn })));
@@ -1522,12 +1597,21 @@ function guessLang(b) {
   return 'other';
 }
 
+// Перевод в памяти — десятки мегабайт строк: держим открытый, переводы строк окна «Библия» и пару недавних,
+// остальные отпускаем (понадобятся — загрузятся с диска снова). Порядок Map — давность использования
+const BIBLE_KEEP = 3;
+function trimBibles() {
+  let slots = [];
+  try { slots = slotBibles; } catch { /* ещё не объявлены — при самом первом запуске */ }
+  const busy = new Set([bible && bible.id, ...slots.map((b) => b && b.id)].filter(Boolean));
+  const spare = [...bibleCache.keys()].filter((k) => !busy.has(k));
+  while (spare.length > BIBLE_KEEP) bibleCache.delete(spare.shift());
+}
 async function loadBible(id) {
   let b = bibleCache.get(id);
-  if (!b) {
-    b = await window.api.bibleLoad(id);
-    if (b) bibleCache.set(id, b);
-  }
+  if (b) { bibleCache.delete(id); bibleCache.set(id, b); return b; }
+  b = await window.api.bibleLoad(id);
+  if (b) { bibleCache.set(id, b); trimBibles(); }
   return b;
 }
 
@@ -2023,12 +2107,19 @@ function bibleDragStart(e, pane) {
   document.body.classList.add('bible-dragging');
 }
 // После перетаскивания — никаких следов: подсветка мест сброса, рамка окна, протягивание выделения
+// Все виды подсветки места сброса: .drop — общая, .drop-slides — пунктир вокруг слайдов презентации,
+// .drop-item — вокруг пункта. Бросили на слайд внутри (он гасит событие) или отменили Esc —
+// своя «уборка» у места сброса не срабатывает, поэтому снимаем всё здесь
+const DROP_MARKS = ['drop', 'drop-slides', 'drop-item', 'drop-before'];
+function clearDropMarksAll() { document.querySelectorAll(DROP_MARKS.map((c) => '.' + c).join(',')).forEach((x) => x.classList.remove(...DROP_MARKS)); }
 document.addEventListener('dragend', () => {
   document.body.classList.remove('bible-dragging', 'dragging');
   document.querySelectorAll('.drag-tag').forEach((t) => t.remove());
-  document.querySelectorAll('.drop').forEach((x) => x.classList.remove('drop'));
+  clearDropMarksAll();
   slideDrag = null;
 });
+// бросили (в том числе файлы снаружи — у них dragend в этом окне нет): после обработчиков мест сброса
+document.addEventListener('drop', () => setTimeout(clearDropMarksAll, 0));
 document.addEventListener('pointerover', (e) => {
   if (!slideDrag || !(e.buttons & 1)) return;
   const row = e.target.closest && e.target.closest('.vslide');
@@ -3032,7 +3123,7 @@ const ACTIONS = [
     ['draw', 'Быстрая анимация: крупный план и рисование поверх слайда', ['Ctrl+KeyE'], () => openInk()],
     ['inkClear', 'Стереть рисунок с экрана', ['Ctrl+Shift+KeyE'], () => inkWipeLive()],
     ['animNext', 'Быстрая анимация: NEXT — следующий шаг', [], () => animNext()],
-    ['animStep', 'Быстрая анимация: включить или выключить режим «По NEXT»', [], () => setAnimStep(!settings.animStep)],
+    ['animStep', 'Быстрая анимация: включить или выключить режим «По точкам»', [], () => setAnimStep(!settings.animStep)],
     ['zoomNext', 'Крупный план: к следующей точке', [], () => zoomStep(1)],
     ['zoomPrev', 'Крупный план: к предыдущей точке', [], () => zoomStep(-1)],
     ['zoomFit', 'Крупный план: плавно весь слайд', [], () => { zoomCur = -1; setViewTo(null); }],
@@ -3056,6 +3147,7 @@ const ACTIONS = [
     ['tabMacros', 'Редактор макросов', ['Ctrl+Digit5'], () => openMacroTab()],
     ['tabScreens', 'Редактор сцен: экраны, сцены, пресеты сцен', ['Ctrl+Digit6'], () => openScreensTab()],
     ['tabAudio', 'Аудиоредактор', ['Ctrl+Digit7'], () => openAudioTab()],
+    ['tabMaps', 'Вкладка «Карты»', ['Ctrl+Digit8'], () => setTab('maps')],
     ['mcDock', 'Панель макросов на «Экране»', [], () => mcToggleDock()],
     ['stagePanel', 'Сценический экран: макеты, сообщение, таймеры', [], () => stPanelToggle()],
     ['stageMsgClear', 'Сценический экран: убрать сообщение', [], () => stSetMsg('')],
@@ -3135,6 +3227,8 @@ window.addEventListener('keydown', (e) => {
   if (!typing && tab === 'themes' && teKey(e)) { e.preventDefault(); return; }
   // «Макросы»: Delete, Ctrl+C/V/D/A/G, F — ноды на холсте (macros.js)
   if (!typing && tab === 'macros' && mcEdKey(e)) { e.preventDefault(); return; }
+  // «Карты»: Delete, Ctrl+D, Esc, F, +/−, Enter — точки и маршруты (maps.js)
+  if (!typing && tab === 'maps' && typeof mpKey === 'function' && mpKey(e)) { e.preventDefault(); return; }
   // Библия: в «Списке» Ctrl+A/C/V работают с текстом, в «Слайдах» — со слайдами
   if (!typing && tab === 'bible') {
     const r = bibleKey(e);

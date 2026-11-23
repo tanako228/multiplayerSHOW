@@ -98,6 +98,38 @@ const Bible = (() => {
 
   const canonName = (canon) => (CANON[canon - 1] ? CANON[canon - 1][0] : '');
 
+  // Короткие названия книг для экрана (по канону): «1 Петра 3:5» → «1 Пет 3:5», «1 Peter 3:5» → «1 Pet 3:5»
+  const SHORT = {
+    ru: ('Быт|Исх|Лев|Чис|Втор|Нав|Суд|Руф|1 Цар|2 Цар|3 Цар|4 Цар|1 Пар|2 Пар|Езд|Неем|Есф|Иов|Пс|Притч|Еккл|Песн|' +
+      'Ис|Иер|Плач|Иез|Дан|Ос|Иоил|Ам|Авд|Ион|Мих|Наум|Авв|Соф|Агг|Зах|Мал|Мф|Мк|Лк|Ин|Деян|Рим|1 Кор|2 Кор|Гал|Еф|Флп|Кол|' +
+      '1 Фес|2 Фес|1 Тим|2 Тим|Тит|Флм|Евр|Иак|1 Пет|2 Пет|1 Ин|2 Ин|3 Ин|Иуд|Откр').split('|'),
+    en: ('Gen|Exod|Lev|Num|Deut|Josh|Judg|Ruth|1 Sam|2 Sam|1 Kgs|2 Kgs|1 Chr|2 Chr|Ezra|Neh|Esth|Job|Ps|Prov|Eccl|Song|' +
+      'Isa|Jer|Lam|Ezek|Dan|Hos|Joel|Amos|Obad|Jonah|Mic|Nah|Hab|Zeph|Hag|Zech|Mal|Matt|Mark|Luke|John|Acts|Rom|1 Cor|2 Cor|Gal|Eph|Phil|Col|' +
+      '1 Thess|2 Thess|1 Tim|2 Tim|Titus|Phlm|Heb|Jas|1 Pet|2 Pet|1 John|2 John|3 John|Jude|Rev').split('|'),
+  };
+  const shortMemo = new Map();
+  // Название книги → короткое. Книга не из канона — номер и первые три буквы («Послание Варнавы» → «Пос»)
+  function shortBook(name) {
+    name = String(name || '').trim();
+    if (shortMemo.has(name)) return shortMemo.get(name);
+    const canon = ALIAS.get(key(name));
+    const list = /[А-Яа-яЁёІіЇїЄє]/.test(name) ? SHORT.ru : SHORT.en;
+    let out = canon && list[canon - 1];
+    if (!out) {
+      const m = name.match(/^(\d)\s*[-‑.]?\s*(.+)$/);
+      const word = m ? m[2] : name;
+      out = word.length > 5 ? (m ? m[1] + ' ' : '') + word.slice(0, 3) : name;
+    }
+    if (shortMemo.size > 500) shortMemo.clear();
+    shortMemo.set(name, out);
+    return out;
+  }
+  // Ссылка целиком: «1 Петра 3:5-7; 4:1; Иуды 1:3» → «1 Пет 3:5-7; 4:1; Иуд 1:3»
+  const shortRef = (ref) => String(ref || '').split('; ').map((seg) => {
+    const m = seg.match(/^(.*?\p{L}.*?)\s+(\d+:.*)$/u);
+    return m ? shortBook(m[1]) + ' ' + m[2] : seg;
+  }).join('; ');
+
   /* ---------- Разбор файлов ---------- */
 
   const clean = (s) => s.replace(/\s+/g, ' ').trim();
@@ -475,5 +507,5 @@ const Bible = (() => {
     return 'Текст';
   }
 
-  return { parse, parseRef, findBook, search, highlightRegex, canonName, fromRows, formatOf };
+  return { parse, parseRef, findBook, search, highlightRegex, canonName, fromRows, formatOf, shortBook, shortRef };
 })();

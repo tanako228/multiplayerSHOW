@@ -57,7 +57,7 @@ function styleFor(kind, item, slide) {
     return kind === 'custom' ? { ...THEME_DEFAULTS, ...base } : base;
   }
   // style.tpls — шаблоны темы; style.tpl — шаблон, выбранный в окне темы (у презентации, иначе общий для вида)
-  return { ...THEME_DEFAULTS, ...Themes.style(t), showTranslation: settings.showTr, bible: bibleLook(), tpl: tplIdFor(kind, item) };
+  return { ...THEME_DEFAULTS, ...Themes.style(t), showTranslation: settings.showTr, refShort: settings.refShort, bible: bibleLook(), tpl: tplIdFor(kind, item) };
 }
 const tplIdFor = (kind, item) => (item && item.tpl) || (lib && lib.tplFor && lib.tplFor[kind]) || undefined;
 
@@ -91,7 +91,7 @@ function flushLib() {
 
 /* ----- Отмена и повтор (Ctrl+Z, Ctrl+Shift+Z): снимки содержимого при каждом сохранении ----- */
 // Правки за 0,3 с до сохранения — один шаг. Открытый список (view) не входит: отмена не переключает вид.
-const HIST_KEYS = ['items', 'libraries', 'playlists', 'themes', 'themeFor', 'tplFor', 'themesLive', 'macros', 'fileMacros', 'screens', 'scenes', 'scenePresets', 'timers', 'verseSplits', 'lowerThirds'];
+const HIST_KEYS = ['items', 'libraries', 'playlists', 'themes', 'themeFor', 'tplFor', 'themesLive', 'macros', 'fileMacros', 'screens', 'scenes', 'scenePresets', 'timers', 'verseSplits', 'lowerThirds', 'maps'];
 const HIST_MAX = 30;           // шагов назад
 const HIST_CHARS = 80e6;       // и не больше ~80 млн символов на всю историю (большие библиотеки), но не меньше 5 шагов
 let histCur = null;            // снимок того, что сохранено сейчас
@@ -186,6 +186,7 @@ function histApply(snap) {
   if (typeof mcAfterUndo === 'function') mcAfterUndo(); // «Макросы» — по вернувшимся макросам
   if (typeof scAfterUndo === 'function') scAfterUndo(); // «Экраны» — экраны и сцены как были
   if (typeof ltAfterUndo === 'function') ltAfterUndo(); // окно «Плашки» (service.js) — по вернувшимся плашкам
+  if (typeof mpAfterUndo === 'function') mpAfterUndo(); // «Карты» (maps.js) — по вернувшимся картам
   if (JSON.stringify(lib.themesLive || null) !== liveWas) refreshLive(); // отменили «Применить тему» — экран с прежней темой
   if (JSON.stringify(lib.verseSplits || null) !== splitsWas) bibleLookChanged(); // вернули деление стиха на части
 }
@@ -352,7 +353,7 @@ function touched(item) {
      берёт для неизменных слайдов уже собранную сцену, а не строит её заново.
    Видео в миниатюрах — общий кадр (Scene.stillFrame), а не <video> на каждый слайд. */
 const slThumbs = new Map(); // JSON содержимого → слой сцены; порядок — давность использования
-const SL_THUMBS_MAX = 600;
+const SL_THUMBS_MAX = 300; // каждая — собранная сцена в памяти; больше двух-трёх лент сразу не нужно
 if (document.fonts) document.fonts.addEventListener('loadingdone', () => slThumbs.clear()); // шрифт догрузился — подогнать заново
 function thumbScene(content) {
   const key = JSON.stringify(content);
@@ -463,6 +464,8 @@ function toggleFold(key) {
   settings[key] = !settings[key];
   saveSettings();
   renderSide();
+  // Развернули — строки выезжают по очереди (motion.js)
+  if (!settings[key] && window.UiMotion) UiMotion.cascade(key === 'sideFold' ? $('sideBox').querySelectorAll('.svc-head, .svc-row') : $('contentBox').querySelectorAll('.svc-head, .svc-row, .svc-sub'));
 }
 
 function renderSide() {
@@ -851,6 +854,10 @@ function renderFeed() {
     openKey = want || (work.kind === 'pl' ? entries[0].key : null);
   }
   const keepScroll = feed.dataset.view === workKey() && (!single || feed.dataset.open === openKey) ? feed.scrollTop : 0;
+  // Открыли другой плейлист/библиотеку или другой пункт — видимые слайды выезжают по очереди (motion.js);
+  // обычная перерисовка того же (показ слайда, правка) — без анимации
+  const fresh = feed.dataset.view !== workKey() || feed.dataset.open !== (single ? openKey || '' : '');
+  if (fresh && window.UiMotion) queueMicrotask(() => UiMotion.cascade(feed.querySelectorAll('.svc-ihead, .sl, .svc-empty'), { max: 20, gap: .018 }));
   feed.dataset.open = single ? openKey || '' : '';
   feed.dataset.view = workKey();
   if (thumbIO) thumbIO.disconnect(); // миниатюры прежней ленты больше не ждут показа
@@ -1025,6 +1032,7 @@ function renderService() {
   renderFeed();
 }
 
+let livePopped = ''; // какой слайд уже «прыгнул», уйдя на экран
 function updatePlaylistLive() {
   if (!lib) return;
   const on = plShown && plShown.view === workKey();      // лента — рабочий список
@@ -1032,7 +1040,10 @@ function updatePlaylistLive() {
   const stale = !!on && plStale === plShown; // на экране — прежний вид этого слайда (сменили перевод)
   document.querySelectorAll('#svcFeed .sl').forEach((el) => {
     const isLive = !!on && el.dataset.key === plShown.key && el.dataset.sid === plShown.sid;
+    const wasLive = el.classList.contains('live');
     el.classList.toggle('live', isLive);
+    // слайд только что ушёл на экран — коротко «прыгает» (motion.js); при перестройке ленты — нет
+    if (isLive && !wasLive && window.UiMotion) { const id = plShown.key + '/' + plShown.sid; if (id !== livePopped) { livePopped = id; UiMotion.slidePop(el); } }
     if (el.classList.toggle('stale', isLive && stale)) el.title = 'На экране — прежний перевод этого слайда. Щёлкните, чтобы показать новый';
     else if (el.title.startsWith('На экране — прежний')) el.title = Slides.SLIDE_NAMES.bible;
     el.classList.toggle('live-ov', Object.values(ovShown).some((o) => o.view === workKey() && o.key === el.dataset.key && o.sid === el.dataset.sid));
@@ -1619,11 +1630,24 @@ function showMenu(e, items) {
   const y = Math.max(6, Math.min(e.clientY, window.innerHeight - r.height - 6));
   ctxMenu.style.left = x - r.left + 'px';
   ctxMenu.style.top = y - r.top + 'px';
+  // кружки цветов выскакивают по очереди и приподнимаются под мышью (colorfly.js)
+  if (typeof ColorFly !== 'undefined') ctxMenu.querySelectorAll('.ctx-colors').forEach((row) => ColorFly.enter(row, 'button'));
+  if (window.Glide) Glide.menu(ctxMenu); // подсветка пункта едет за мышью и стрелками (glide.js)
+  if (window.UiMotion) UiMotion.drop(ctxMenu, { up: y < e.clientY - 1 }); // раскрывается шторкой, пункты падают по очереди (motion.js)
 }
 let menuClosed = { tag: '', t: 0 }; // какое меню закрыли и когда — повторный щелчок по «＋» закрывает, а не открывает снова
 function closeMenu() { if (ctxMenu) { menuClosed = { tag: ctxMenu.dataset.tag || '', t: Date.now() }; ctxMenu.remove(); ctxMenu = null; } }
 window.addEventListener('pointerdown', (e) => { if (ctxMenu && !ctxMenu.contains(e.target)) closeMenu(); }, true);
 window.addEventListener('keydown', (e) => { if (e.key === 'Escape' && ctxMenu) { closeMenu(); e.stopPropagation(); } }, true);
+// Открыто меню — ↑ ↓ Home End ходят по пунктам (а не по слайдам), Enter или пробел — выбрать
+window.addEventListener('keydown', (e) => {
+  const g = ctxMenu && ctxMenu._glide;
+  if (!g || !g.move) return;
+  const d = { ArrowDown: 1, ArrowUp: -1, Home: 'home', End: 'end' }[e.key];
+  if (d === undefined) return;
+  e.preventDefault(); e.stopPropagation();
+  g.move(d);
+}, true);
 window.addEventListener('blur', closeMenu);
 
 function slideMenu(e, key, sid) {

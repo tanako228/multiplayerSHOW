@@ -33,7 +33,7 @@ function opFnv(s) {
 const opVerCache = new Map(); // id → [строка, отпечаток]
 let opLook = { hist: null, key: '', h: '' };
 function opLookSig() {
-  const key = JSON.stringify([textStyle(), settings.fit, outputSize(), settings.showTr]);
+  const key = JSON.stringify([textStyle(), settings.fit, outputSize(), settings.showTr, settings.refShort]);
   if (opLook.hist !== histCur || opLook.key !== key) opLook = { hist: histCur, key, h: opFnv(key + '|' + (histCur ? histCur.rest : '')) };
   return opLook.h;
 }

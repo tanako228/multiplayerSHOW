@@ -260,6 +260,254 @@ const zoomMsVal = () => Number(settings.zoomMs) || 1000;
 // Окно закрыто (горячие клавиши, макросы) — всегда сразу в эфир
 const zoomLive = () => settings.zoomLive !== false || !$('inkDialog').open;
 
+/* ----- Режим «По точкам» (settings.animStep): каждое действие в окне — увеличение, перемещение, рисунок, маркер —
+   само становится точкой. Точка 0 — весь слайд без рисунка. Щелчок по точке k (или NEXT) — зрители видят переход k−1 → k:
+   если у них сейчас не k−1, сначала мгновенно встаёт k−1. Хранится по слайдам в cp.animPts —
+   список шагов: { t: 'view', v, ms? } (камера) или фигура рисунка; состояние точки k — первые k шагов. */
+let ptsStore = {};
+try { ptsStore = JSON.parse(localStorage.getItem('cp.animPts') || '{}'); } catch { ptsStore = {}; }
+const savePtsStore = () => { try { localStorage.setItem('cp.animPts', JSON.stringify(ptsStore)); } catch { /* не страшно */ } };
+const ptsOn = () => !!settings.animStep;
+let ptsSel = 0;        // какая точка открыта в окне — новое действие встаёт сразу после неё
+let ptsAir = 0;        // какая точка сейчас у зрителей (-1 — не точка: стёрли, рисовали без точек)
+let ptsPlaying = null; // { k, ms, t0 } — идёт переход к точке k
+let ptsPop = null;     // { k, t0 } — точка, куда только что пришли (пузырёк)
+let ptsHist = [];      // Ctrl+Z: прошлые списки { key, list, sel }
+const ptsList = () => (inkKey && ptsStore[inkKey]) || [];
+function ptsState(k) {
+  const list = ptsList();
+  let v = null;
+  const s = [];
+  for (let i = 0; i < k && i < list.length; i++) { if (list[i].t === 'view') v = list[i].v || null; else s.push(list[i]); }
+  return { v: v ? { ...v } : null, s };
+}
+// Сохранить новый список; у зрителей точка «та же», только если шаги до неё не поменялись
+function ptsSave(list, hist = true) {
+  if (!inkKey) return;
+  const old = ptsList();
+  if (hist) { ptsHist.push({ key: inkKey, list: old.slice(), sel: ptsSel }); if (ptsHist.length > 60) ptsHist.shift(); }
+  if (list.length) ptsStore[inkKey] = list; else delete ptsStore[inkKey];
+  savePtsStore();
+  ptsAir = ptsFindAir(ptsAir);
+  syncNextBtn();
+}
+// Какая точка сейчас у зрителей — по тому, что реально на экране (камера и рисунок); сначала проверяем прежнюю
+function ptsFindAir(prev) {
+  const v = JSON.stringify(clampView(airView));
+  const s = JSON.stringify(inkShapes);
+  const same = (k) => { const st = ptsState(k); return JSON.stringify(clampView(st.v)) === v && JSON.stringify(st.s) === s; };
+  const n = ptsList().length;
+  if (prev >= 0 && prev <= n && same(prev)) return prev;
+  for (let k = n; k >= 0; k--) if (same(k)) return k;
+  return -1;
+}
+// Открыть точку k в окне (зрители не видят): камера и рисунок как в ней
+function ptsShowLocal(k, ms) {
+  ptsSel = Math.max(0, Math.min(ptsList().length, k));
+  inkView = clampView(ptsState(ptsSel).v);
+  viewLocal(ms);
+  drawInkSvg();
+}
+// Новое действие — новая точка сразу после открытой
+function ptsRecord(step) {
+  if (!inkKey) return;
+  const list = ptsList().slice();
+  list.splice(ptsSel, 0, step);
+  ptsSave(list);
+  ptsSel++;
+  renderZoomBar();
+}
+function ptsRecordView(v) {
+  // Камера не сдвинулась — точка не нужна
+  if (JSON.stringify(clampView(ptsState(ptsSel).v)) === JSON.stringify(v)) { renderZoomBar(); return; }
+  ptsRecord({ t: 'view', v: v ? { ...v } : null });
+}
+function ptsDelete(k) {
+  const list = ptsList().slice();
+  if (!list[k - 1]) return;
+  list.splice(k - 1, 1);
+  ptsSave(list);
+  if ($('inkDialog').open) ptsShowLocal(ptsSel >= k ? ptsSel - 1 : ptsSel, 300);
+  else ptsSel = Math.min(ptsSel, list.length);
+  flashStatus(`Точка ${k} удалена. Ctrl+Z — вернуть`);
+}
+function ptsClear() {
+  const n = ptsList().length;
+  if (!n) return;
+  ptsSave([]);
+  if ($('inkDialog').open) ptsShowLocal(0, 300); else ptsSel = 0;
+  flashStatus(`Удалено точек: ${n}. Ctrl+Z — вернуть`);
+}
+// «Переделать»: точка убирается, открывается предыдущая — следующее действие встанет на её место
+function ptsRedo(k) {
+  const list = ptsList().slice();
+  if (!list[k - 1]) return;
+  list.splice(k - 1, 1);
+  ptsSave(list);
+  ptsShowLocal(k - 1, 300);
+  flashStatus(`Сделайте действие заново — оно станет точкой ${k}`);
+}
+function ptsUndo() {
+  let h;
+  while ((h = ptsHist.pop()) && h.key !== inkKey) { /* чужой слайд — пропустить */ }
+  if (!h) { flashStatus('Отменять нечего'); return; }
+  ptsSave(h.list, false);
+  if ($('inkDialog').open) ptsShowLocal(h.sel, 300); else ptsSel = h.sel;
+}
+// Переход камеры у точки — своя длительность (правая кнопка по точке)
+function ptsSetMs(k, ms) {
+  const list = ptsList().slice();
+  if (!list[k - 1]) return;
+  list[k - 1] = { ...list[k - 1], ms };
+  ptsSave(list);
+  renderZoomBar();
+}
+const ptsWait = (k) => { const s = ptsList()[k - 1]; return s && s.t === 'view' && Number(s.ms) ? Number(s.ms) : zoomMsVal(); };
+
+// Зрителям — точка k: переход с k−1 (камера плавно, рисунок — прорисовкой); в окне — то же
+function ptsPlay(k) {
+  const list = ptsList();
+  if (!inkKey || k < 0 || k > list.length) return false;
+  const tok = ++playTok;
+  clearTimeout(zoomPushT);
+  const from = ptsState(Math.max(0, k - 1));
+  const to = ptsState(k);
+  const step = k > 0 ? list[k - 1] : null;
+  const ms = ptsWait(k);
+  const open = $('inkDialog').open;
+  const go = () => {
+    if (tok !== playTok) return;
+    let dur;
+    if (!step || step.t === 'view') {
+      sendAir(to.v, ms);
+      if (!step) { inkShapes = []; rememberInk(); pushInk(); }
+      dur = ms;
+    } else {
+      inkShapes = to.s;
+      rememberInk();
+      dur = pushInk(to.s.length - 1) || 400;
+    }
+    ptsAir = k;
+    ptsPlaying = { k, ms: dur, t0: performance.now() };
+    ptsPop = null;
+    if (open) {
+      ptsSel = k;
+      inkView = clampView(to.v);
+      viewLocal(step && step.t !== 'view' ? 0 : ms);
+      drawInkSvg();
+      // Новый рисунок и в окне тянется рукой, как у зрителей
+      if (step && step.t !== 'view') {
+        const node = $('inkCam').children[to.s.length - 1];
+        if (node && Scene.animateInk) Scene.animateInk([node], outputSize().H);
+      }
+    } else renderZoomBar();
+    syncNextBtn();
+    setTimeout(() => {
+      if (tok !== playTok || !ptsPlaying || ptsPlaying.k !== k) return;
+      ptsPlaying = null;
+      ptsPop = { k, t0: performance.now() };
+      renderZoomBar();
+    }, dur);
+  };
+  // У зрителей не предыдущая точка — сначала мгновенно поставить её, потом уже переход
+  if (k > 0 && ptsAir !== k - 1) {
+    sendAir(from.v, 0);
+    inkShapes = from.s;
+    rememberInk();
+    pushInk();
+    if (open) { inkView = clampView(from.v); viewLocal(0); ptsSel = k - 1; drawInkSvg(); }
+    setTimeout(go, 70);
+  } else go();
+  return true;
+}
+// NEXT, пробел, →: следующая точка после той, что у зрителей
+function ptsNext() {
+  const n = ptsList().length;
+  if (!n) { flashStatus('Точек нет: откройте «Быструю анимацию» и делайте действия — каждое станет точкой'); return false; }
+  const base = Math.max(0, ptsAir);
+  if (base >= n && ptsAir >= 0) { flashStatus('Это была последняя точка'); return false; }
+  return ptsPlay(ptsAir < 0 ? 1 : base + 1);
+}
+// ←: на точку назад (плавно, без прорисовки)
+function ptsBack() {
+  if (ptsAir <= 0) { if (ptsAir < 0) ptsPlay(0); return; }
+  const k = ptsAir - 1;
+  const st = ptsState(k);
+  playTok++;
+  sendAir(st.v, zoomMsVal());
+  inkShapes = st.s;
+  rememberInk();
+  pushInk();
+  ptsAir = k;
+  ptsPlaying = null;
+  if ($('inkDialog').open) ptsShowLocal(k, zoomMsVal()); else renderZoomBar();
+  syncNextBtn();
+}
+// Подпись точки: что в ней происходит
+function ptsLabel(k) {
+  if (!k) return 'Начало: весь слайд, без рисунка';
+  const s = ptsList()[k - 1];
+  if (!s) return '';
+  if (s.t === 'view') return s.v && s.v.z > 1.01 ? `Крупный план ×${s.v.z.toFixed(1)}` : 'Весь слайд';
+  return { pen: 'Рисунок от руки', mk: 'Маркер', mt: 'Маркер по тексту', line: 'Линия', arrow: 'Стрелка', ellipse: 'Овал', rect: 'Прямоугольник' }[s.t] || 'Рисунок';
+}
+// Лента точек: 0 —•— 1 —•— 2 … Пройденные связи залиты, идущий переход течёт пузырьком
+function renderPts() {
+  const list = ptsList();
+  const now = performance.now();
+  const out = [];
+  for (let k = 0; k <= list.length; k++) {
+    const step = list[k - 1];
+    if (k > 0) {
+      const ln = Object.assign(document.createElement('span'), { className: 'zp-link' });
+      if (ptsPlaying && ptsPlaying.k === k) {
+        ln.classList.add('run');
+        ln.style.setProperty('--d', ptsPlaying.ms + 'ms');
+        ln.style.setProperty('--dl', -(now - ptsPlaying.t0) + 'ms'); // перерисовали посреди перехода — не начинать заново
+      } else if (ptsAir >= k) ln.classList.add('done');
+      out.push(ln);
+    }
+    const b = Object.assign(document.createElement('button'), { className: 'zp pt', textContent: String(k) });
+    b.title = `Точка ${k}: ${ptsLabel(k)} — щелчок: зрители увидят переход к ней${k ? ` с точки ${k - 1}` : ''}. Правая кнопка — открыть, переделать, удалить`;
+    b.dataset.kind = !step ? 'start' : step.t === 'view' ? 'view' : 'ink';
+    if (step && step.t !== 'view') b.style.setProperty('--pc', step.c || '#ff3b30');
+    b.setAttribute('aria-pressed', String(k === ptsSel && $('inkDialog').open));
+    b.classList.toggle('air', k === ptsAir);
+    if (ptsPlaying && ptsPlaying.k === k) { b.classList.add('play'); b.style.setProperty('--d', ptsPlaying.ms + 'ms'); }
+    if (ptsPop && ptsPop.k === k && now - ptsPop.t0 < 600) b.classList.add('pop');
+    b.addEventListener('click', () => ptsPlay(k));
+    if (k > 0) {
+      const x = Object.assign(document.createElement('span'), { className: 'zp-x', textContent: '×', title: 'Удалить точку' });
+      x.addEventListener('click', (e) => { e.stopPropagation(); ptsDelete(k); });
+      b.append(x);
+    }
+    b.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      const items = [
+        { head: `Точка ${k}: ${ptsLabel(k)}` },
+        { label: k ? `Показать зрителям: переход с точки ${k - 1}` : 'Показать зрителям начало', fn: () => ptsPlay(k) },
+        { label: 'Открыть в окне (зрители не видят) — новое действие встанет после неё', fn: () => ptsShowLocal(k, 300) },
+      ];
+      if (k) {
+        items.push({ label: 'Переделать: следующее действие встанет вместо неё', fn: () => ptsRedo(k) });
+        if (step.t === 'view') {
+          items.push('-', { head: 'Переход камеры' });
+          const cur = Number(step.ms) || 0;
+          for (const [v, t] of [[0, 'Как у всех («Наплыв»)'], [500, '0,5 с'], [1000, '1 с'], [1600, '1,6 с'], [2500, '2,5 с'], [4000, '4 с']]) {
+            items.push({ label: t, key: cur === v ? '✓' : '', fn: () => ptsSetMs(k, v || undefined) });
+          }
+        }
+        items.push('-', { label: 'Удалить точку', key: 'Delete', fn: () => ptsDelete(k) });
+      }
+      if (list.length) items.push({ label: 'Удалить все точки слайда', fn: ptsClear });
+      showMenu(e, items);
+    });
+    out.push(b);
+  }
+  $('zoomPts').replaceChildren(...out);
+  $('zoomPts').classList.add('pts');
+}
+
 function clampView(v) {
   if (!v) return null;
   const z = Math.max(1, Math.min(ZOOM_MAX, Number(v.z) || 1));
@@ -289,6 +537,8 @@ function setViewTo(v, ms) {
   if (ms == null) ms = zoomMsVal();
   clearTimeout(zoomPushT);
   inkView = clampView(v);
+  // «По точкам»: движение камеры в окне — новая точка, зрители увидят его по щелчку на точке
+  if (ptsOn() && $('inkDialog').open) { ptsRecordView(inkView); viewLocal(ms); return; }
   if (zoomLive()) sendAir(inkView, ms);
   else { inkPending.push({ t: 'view', v: inkView ? { ...inkView } : null }); drawInkSvg(); }
   viewLocal(ms);
@@ -299,6 +549,9 @@ function viewReset(ms) {
   zoomCur = -1;
   inkView = null;
   sendAir(null, ms);
+  ptsAir = ptsFindAir(0); // весь слайд без рисунка — это точка 0
+  ptsPlaying = null;
+  if (ptsOn() && $('inkDialog').open) inkView = clampView(ptsState(ptsSel).v); // в окне — открытая точка
   viewLocal(ms);
 }
 
@@ -315,6 +568,17 @@ const zoomPts = () => (inkKey && zoomStore[inkKey]) || [];
 function renderZoomBar() {
   $('zoomLevel').textContent = Math.round(camZ() * 100) + '%';
   $('zoomFit').disabled = !inkView;
+  const po = ptsOn();
+  // «По точкам»: точки ставятся сами, «Сразу в эфир / Подготовить» не нужны — показ по щелчку на точке
+  $('zoomAdd').hidden = po;
+  document.querySelector('.zoom-bar .zoom-mode').style.display = po ? 'none' : ''; // у .tool-group свой display — hidden не сработает
+  if (po) {
+    $('zoomNext').disabled = !ptsList().length;
+    $('zoomClearPts').hidden = !ptsList().length;
+    renderPts();
+    return;
+  }
+  $('zoomPts').classList.remove('pts');
   const pts = zoomPts();
   $('zoomNext').disabled = !pts.length;
   $('zoomClearPts').hidden = !pts.length;
@@ -377,6 +641,7 @@ function zoomGo(i) {
   setViewTo(pts[i]);
 }
 function zoomStep(d) {
+  if (ptsOn()) { if (d > 0) ptsNext(); else ptsBack(); return; }
   const n = zoomPts().length;
   if (!n) { flashStatus('Точек нет: сделайте крупный план лупой и нажмите «Точка»'); return; }
   zoomGo(zoomCur < 0 ? (d > 0 ? 0 : n - 1) : (zoomCur + d + n) % n);
@@ -457,48 +722,43 @@ function syncInkButtons() {
   $('inkClear').hidden = !on;
 }
 
-/* ----- Пошаговая анимация (settings.animStep, «По NEXT»): после «Готово» шаги ждут в playQueue,
-   каждый щелчок NEXT над предпросмотром (или пробел в окне) проигрывает один шаг: движение камеры или один рисунок */
-let playQueue = [];
+/* ----- «По точкам» (settings.animStep): NEXT над предпросмотром (и пробел в окне) — следующая точка у зрителей.
+   Сколько осталось — цифрой на кнопке; точки слайда запоминаются (cp.animPts), NEXT работает и при закрытом окне */
 function syncNextBtn() {
-  const on = !!settings.animStep;
-  const n = playQueue.length;
+  const on = ptsOn();
+  const n = on ? Math.max(0, ptsList().length - Math.max(0, ptsAir)) : 0;
   $('animNext').hidden = !on;
   $('animNext').classList.toggle('ready', n > 0);
   $('animNextN').textContent = n ? String(n) : '';
   $('animStepMode').setAttribute('aria-pressed', String(on));
 }
 function animNext() {
-  if (!playQueue.length) { flashStatus('Шагов нет: подготовьте анимацию в «Быстрой анимации» и нажмите «Готово»'); return false; }
-  const s = playQueue.shift();
-  playTok++; // если что-то проигрывалось подряд — остановить
-  if (s.t === 'view') sendAir(s.v, zoomMsVal());
-  else {
-    const from = inkShapes.length;
-    inkShapes = inkShapes.concat([s]);
-    rememberInk();
-    pushInk(from);
-  }
-  syncNextBtn();
-  if ($('inkDialog').open) drawInkSvg();
-  if (!playQueue.length) flashStatus('Это был последний шаг');
-  return true;
+  if (!ptsOn()) return false;
+  return ptsNext();
 }
 function setAnimStep(on) {
+  // Включили, а подготовленное ещё ждёт «Готово» — показать его, чтобы не пропало
+  if (on && inkPending.length) inkConfirm();
   settings.animStep = on;
   saveSettings();
-  // Выключили, а шаги ещё ждут — проиграть их подряд, чтобы не пропали
-  if (!on && playQueue.length) { inkPending = playQueue.concat(inkPending); playQueue = []; inkConfirm(); }
+  ptsAir = ptsFindAir(ptsAir);
+  ptsPlaying = null;
+  if ($('inkDialog').open) {
+    if (on) ptsShowLocal(ptsList().length, 300);
+    else { inkView = airView ? { ...airView } : null; viewLocal(300); drawInkSvg(); }
+  }
   syncNextBtn();
-  if ($('inkDialog').open) drawInkSvg();
-  flashStatus(on ? 'По NEXT: после «Готово» каждый шаг — по кнопке NEXT над предпросмотром' : 'Пошаговый режим выключен: «Готово» играет всё подряд');
+  renderZoomBar();
+  flashStatus(on ? 'По точкам: каждое действие в окне — новая точка. Щелчок по точке или NEXT — зрители видят переход к ней' : 'Режим «По точкам» выключен');
 }
 $('animNext').addEventListener('click', animNext);
 $('animNext').addEventListener('contextmenu', (e) => {
   e.preventDefault();
   showMenu(e, [
-    { label: 'Выключить пошаговый режим (NEXT)', fn: () => setAnimStep(false) },
-    { label: `Сбросить оставшиеся шаги (${playQueue.length})`, disabled: !playQueue.length, fn: () => { playQueue = []; syncNextBtn(); if ($('inkDialog').open) drawInkSvg(); flashStatus('Оставшиеся шаги сброшены'); } },
+    { label: 'Начать сначала (точка 0)', disabled: !ptsList().length, fn: () => ptsPlay(0) },
+    { label: 'На точку назад', disabled: ptsAir <= 0, fn: ptsBack },
+    '-',
+    { label: 'Выключить режим «По точкам»', fn: () => setAnimStep(false) },
   ]);
 });
 $('animStepMode').addEventListener('click', () => setAnimStep(!settings.animStep));
@@ -506,17 +766,8 @@ syncNextBtn();
 
 // «Готово» / пробел: подготовленное проигрывается зрителям по порядку —
 // движение камеры (ждём наплыв), подряд идущие рисунки (ждём прорисовку), снова камера…
-// В режиме «По NEXT» — только встаёт в очередь, играет по кнопке NEXT
 function inkConfirm() {
   if (!inkPending.length) return false;
-  if (settings.animStep) {
-    playQueue = playQueue.concat(inkPending);
-    inkPending = [];
-    syncNextBtn();
-    if ($('inkDialog').open) drawInkSvg();
-    flashStatus(`Готово к показу шагов: ${playQueue.length} — жмите NEXT`);
-    return true;
-  }
   const steps = inkPending;
   inkPending = [];
   const tok = ++playTok;
@@ -561,9 +812,9 @@ function inkSlideChanged(content) {
   // Новый слайд — сразу целиком (крупный план прошлого слайда к нему не относится)
   zoomDrag = null;
   zoomUndo = null;
-  playQueue = [];
-  syncNextBtn();
+  ptsSel = ptsList().length; // «По точкам»: окно открывает последнюю точку — новое действие встанет в конец
   viewReset(0);
+  syncNextBtn();
   if ($('inkDialog').open) {
     if (key) inkLayout(); else $('inkDialog').close();
   }
@@ -574,7 +825,8 @@ function inkWipeLive() {
   // Убрали и подготовленные движения камеры — камера окна к тому, что видят зрители
   if (inkPending.some((s) => s.t === 'view')) { inkView = airView ? { ...airView } : null; viewLocal(300); }
   inkPending = [];
-  playQueue = [];
+  ptsAir = ptsFindAir(0);
+  ptsPlaying = null;
   syncNextBtn();
   rememberInk();
   pushInk();
@@ -585,6 +837,8 @@ function openInk() {
   document.querySelectorAll('input[name=inkMode]').forEach((r) => { r.checked = r.value === (settings.inkKeep ? 'keep' : 'temp'); });
   $('zoomMs').value = String(settings.zoomMs);
   if (!$('zoomMs').value) $('zoomMs').value = '1000';
+  // «По точкам»: открыть последнюю точку слайда
+  if (ptsOn()) { ptsSel = ptsList().length; inkView = clampView(ptsState(ptsSel).v); }
   $('inkDialog').showModal();
   syncInkButtons();
   inkLayout();
@@ -617,21 +871,29 @@ new ResizeObserver(() => { if ($('inkDialog').open) inkLayout(); }).observe($('i
 // В окне рисования видно всё: показанное и подготовленное (оно с пунктирной рамкой-подсказкой)
 function drawInkSvg() {
   const { W, H } = outputSize();
+  if (ptsOn()) {
+    // «По точкам»: в окне — открытая точка (её рисунок), а не то, что у зрителей
+    const nodes = ptsState(ptsSel).s.concat(inkDraft ? [inkDraft] : []).map((s) => Scene.shapeNode(s, W, H)).filter(Boolean);
+    $('inkCam').replaceChildren(...nodes);
+    const np = ptsList().length;
+    $('inkState').textContent = np
+      ? `Открыта точка ${ptsSel} из ${np} — новое действие встанет после неё. Щелчок по точке, пробел или NEXT — показать зрителям`
+      : 'По точкам: увеличивайте, двигайте, рисуйте — каждое действие станет точкой. Щелчок по точке — зрители увидят переход к ней';
+    $('inkState').classList.toggle('on', !!ptsPlaying);
+    return;
+  }
   const shown = inkShapes.map((s) => Scene.shapeNode(s, W, H)).filter(Boolean);
   // Шаги камеры в очереди не рисуются (shapeNode их пропускает)
-  // Ждущие NEXT — тоже мерцают: зрители их ещё не видели
-  const prep = playQueue.concat(inkPending, inkDraft ? [inkDraft] : []).map((s) => Scene.shapeNode(s, W, H)).filter(Boolean);
+  const prep = inkPending.concat(inkDraft ? [inkDraft] : []).map((s) => Scene.shapeNode(s, W, H)).filter(Boolean);
   prep.forEach((n) => n.classList.add('ink-prep'));
   $('inkCam').replaceChildren(...shown, ...prep);
   const nv = inkPending.filter((s) => s.t === 'view').length;
   const n = inkPending.length - nv;
   const parts = [n ? `рисунков: ${n}` : '', nv ? `движений камеры: ${nv}` : ''].filter(Boolean).join(', ');
-  const wait = playQueue.length ? ` Ждут NEXT: ${playQueue.length}.` : '';
-  $('inkState').textContent = parts ? `Подготовлено — ${parts}. Зрители пока не видят. «Готово» или пробел — ${settings.animStep ? 'в очередь для NEXT' : 'проиграть по порядку'}.${wait}`
-    : wait ? `Ждут NEXT: ${playQueue.length} — кнопка NEXT над предпросмотром или пробел здесь`
-      : settings.zoomLive !== false ? 'Лупа — крупный план сразу у зрителей. Рисунок и маркер — после «Готово» или пробела'
-        : 'Подготовка: увеличивайте, рисуйте, двигайте — зрители увидят всё по порядку после «Готово» или пробела';
-  $('inkState').classList.toggle('on', !!(parts || wait));
+  $('inkState').textContent = parts ? `Подготовлено — ${parts}. Зрители пока не видят. «Готово» или пробел — проиграть по порядку.`
+    : settings.zoomLive !== false ? 'Лупа — крупный план сразу у зрителей. Рисунок и маркер — после «Готово» или пробела'
+      : 'Подготовка: увеличивайте, рисуйте, двигайте — зрители увидят всё по порядку после «Готово» или пробела';
+  $('inkState').classList.toggle('on', !!parts);
 }
 
 // Где мышь в окне (доли видимого)
@@ -751,6 +1013,7 @@ const inkEnd = () => {
   }
   if (!inkDraft) return;
   if (inkDraft.t === 'mk') inkDraft = markerOnText(inkDraft) || (straightenMarker(inkDraft), inkDraft);
+  if (ptsOn()) { const d = inkDraft; inkDraft = null; ptsRecord(d); drawInkSvg(); return; } // рисунок — новая точка
   inkPending.push(inkDraft);
   inkDraft = null;
   drawInkSvg();
@@ -761,6 +1024,7 @@ $('inkSvg').addEventListener('pointercancel', inkEnd);
 // Отменить: сначала подготовленное, потом уже показанное.
 // Отменили шаг камеры — камера в окне возвращается к прошлому подготовленному виду (или к тому, что у зрителей)
 function inkUndo() {
+  if (ptsOn()) { ptsUndo(); return; } // «По точкам» — отменить последнее изменение точек
   if (inkPending.length) {
     const s = inkPending.pop();
     if (s.t === 'view') {
@@ -772,7 +1036,6 @@ function inkUndo() {
     drawInkSvg();
     return;
   }
-  if (playQueue.length) { playQueue.pop(); syncNextBtn(); drawInkSvg(); return; } // убрать последний шаг, ждущий NEXT
   inkShapes.pop();
   rememberInk();
   pushInk();
@@ -800,7 +1063,7 @@ $('inkArea').addEventListener('wheel', (e) => {
 }, { passive: false });
 $('zoomFit').addEventListener('click', () => { zoomCur = -1; setViewTo(null); });
 $('zoomAdd').addEventListener('click', zoomAdd);
-$('zoomClearPts').addEventListener('click', zoomClearAll);
+$('zoomClearPts').addEventListener('click', () => (ptsOn() ? ptsClear() : zoomClearAll()));
 // Режим: «Сразу в эфир» или «Подготовить» (проиграть по «Готово»)
 function setZoomLive(on) {
   settings.zoomLive = on;
@@ -817,14 +1080,19 @@ $('inkOpen').addEventListener('click', openInk);
 $('inkDone').addEventListener('click', () => { inkConfirm(); $('inkDialog').close(); });
 $('inkDialog').addEventListener('keydown', (e) => {
   // Ctrl+Z: сначала вернуть только что удалённые точки, иначе — отменить рисунок / шаг
-  if (e.ctrlKey && e.code === 'KeyZ') { e.preventDefault(); if (!zoomRestore()) inkUndo(); }
+  if (e.ctrlKey && e.code === 'KeyZ') { e.preventDefault(); if (ptsOn() || !zoomRestore()) inkUndo(); }
   // Крупный план: 1–9 — к точке, 0 — весь слайд, P — запомнить точку, Delete — удалить текущую точку,
   // + / − — ближе / дальше, стрелки / PageUp-PageDown — по точкам
   const typing = ['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName) && e.target.type !== 'radio';
   if (!e.ctrlKey && !e.altKey && !e.metaKey && !typing) {
     const dg = /^(Digit|Numpad)([0-9])$/.exec(e.code);
     let ok = true;
-    if (dg && dg[2] === '0') { zoomCur = -1; setViewTo(null); } else if (dg) zoomGo(Number(dg[2]) - 1);
+    // «По точкам»: цифра — показать эту точку зрителям, Delete — удалить открытую, P не нужна (точки ставятся сами)
+    if (ptsOn() && (dg || e.code === 'KeyP' || e.code === 'Delete')) {
+      if (dg) ptsPlay(Number(dg[2]));
+      else if (e.code === 'KeyP') flashStatus('По точкам: точки ставятся сами — каждое действие становится точкой');
+      else if (ptsSel > 0) ptsDelete(ptsSel);
+    } else if (dg && dg[2] === '0') { zoomCur = -1; setViewTo(null); } else if (dg) zoomGo(Number(dg[2]) - 1);
     else if (e.code === 'KeyP') zoomAdd();
     else if (e.code === 'Delete') { if (zoomCur >= 0) zoomDelete(zoomCur); else flashStatus('Сначала выберите точку (щелчок по номеру)'); }
     else if (e.code === 'Equal' || e.code === 'NumpadAdd') zoomBy(1.5);
@@ -838,7 +1106,8 @@ $('inkDialog').addEventListener('keydown', (e) => {
   if (e.code === 'Space' && !e.ctrlKey && !e.altKey && !['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName)) {
     e.preventDefault();
     // Подготовленного нет, а шаги ждут NEXT — пробел и есть NEXT
-    if (!inkConfirm() && !(playQueue.length && animNext())) flashStatus('Нечего показывать — сначала увеличьте, нарисуйте или выделите маркером');
+    if (ptsOn()) ptsNext();
+    else if (!inkConfirm()) flashStatus('Нечего показывать — сначала увеличьте, нарисуйте или выделите маркером');
   }
 });
 $('inkDialog').addEventListener('close', () => {
@@ -871,22 +1140,66 @@ function setInkWidth(w) {
   inkWidth = w;
   document.querySelectorAll('#inkWidths button').forEach((b) => b.setAttribute('aria-pressed', String(Number(b.dataset.w) === w)));
 }
-function setInkColor(c) {
+// quiet — только отметить выбранный (пока крутят палитру, кнопки не пересоздаём — окно «Цвета» держится за свою)
+function setInkColor(c, quiet) {
   if (inkTool === 'mk') mkColor = c; else inkColor = c;
-  renderInkColors();
+  if (!quiet) { renderInkColors(); return; }
+  let hit = false;
+  $('inkColors').querySelectorAll('.swatch[data-c]').forEach((b) => { const on = b.dataset.c === c; hit = hit || on; b.setAttribute('aria-pressed', String(on)); });
+  const more = $('inkColors').querySelector('.swatch.more');
+  if (more) { more.setAttribute('aria-pressed', String(!hit)); more.firstChild.style.background = hit ? '' : c; }
 }
-function renderInkColors() {
+// Свои цвета из палитры — последние 4 рядом с готовыми (у ручки и маркера общие)
+if (!Array.isArray(settings.inkRecent)) settings.inkRecent = [];
+function inkRecentAdd(c) {
+  if (!c || INK_COLORS.includes(c) || MK_COLORS.includes(c)) return;
+  settings.inkRecent = [c, ...settings.inkRecent.filter((x) => x !== c)].slice(0, 4);
+  saveSettings();
+}
+// Ряд цветов с анимацией (colorfly.js): новый свой цвет прилетает из окна «Цвета», соседи отъезжают
+const inkRow = typeof ColorFly !== 'undefined' ? ColorFly.row($('inkColors')) : null;
+function renderInkColors(hold = null) {
   const mk = inkTool === 'mk';
   const cur = mk ? mkColor : inkColor;
+  const base = mk ? MK_COLORS : INK_COLORS;
   $('inkColors').classList.toggle('mk', mk);
-  $('inkColors').replaceChildren(...(mk ? MK_COLORS : INK_COLORS).map((c) => {
-    const b = Object.assign(document.createElement('button'), { className: 'swatch', title: mk ? 'Цвет маркера' : c });
+  const list = base.concat(settings.inkRecent.filter((c) => !base.includes(c)));
+  const btns = list.map((c, i) => {
+    const b = Object.assign(document.createElement('button'), { className: 'swatch' + (i >= base.length ? ' own' : ''), title: mk ? 'Цвет маркера' : c });
     b.dataset.c = c;
+    b.dataset.cfk = c;
     b.style.background = c;
     b.setAttribute('aria-pressed', String(c === cur));
-    b.addEventListener('click', () => setInkColor(c));
+    b.addEventListener('click', () => { const was = c === (inkTool === 'mk' ? mkColor : inkColor); setInkColor(c); if (inkRow && !was) inkRow.pick(inkRow.el(c)); });
     return b;
-  }));
+  });
+  // Палитра — то же окно «Цвета», что во всей программе (спектр, яркость, HEX, пипетка…)
+  const more = Object.assign(document.createElement('button'), { className: 'swatch more', title: 'Другой цвет: палитра' });
+  more.dataset.cfk = '+';
+  more.append(document.createElement('i'));
+  const own = !list.includes(cur);
+  more.setAttribute('aria-pressed', String(own));
+  if (own) more.firstChild.style.background = cur;
+  more.addEventListener('click', () => {
+    const pick = () => (inkTool === 'mk' ? mkColor : inkColor);
+    ColorPicker.open({
+      hex: pick(),
+      at: more,
+      onInput: (h) => setInkColor(h, true),
+      // закрыли — цвет прилетает на своё место в ряду (новый свой — в конец, остальные отъезжают)
+      onClose: () => {
+        const c = pick();
+        const had = $('inkColors').querySelector(`.swatch[data-cfk="${CSS.escape(c)}"]`);
+        inkRecentAdd(c);
+        renderInkColors(had ? null : c);
+      },
+      flyTo: () => (inkRow && (inkRow.el(pick()) || inkRow.el('+'))),
+      onLand: () => { if (inkRow) inkRow.land(pick()); },
+    });
+  });
+  if (inkRow) inkRow.before();
+  $('inkColors').replaceChildren(...btns, more);
+  if (inkRow) inkRow.after({ hold });
 }
 document.querySelectorAll('#inkTools button, #zoomTools button').forEach((b) => b.addEventListener('click', () => setInkTool(b.dataset.tool)));
 document.querySelectorAll('#inkWidths button').forEach((b) => b.addEventListener('click', () => setInkWidth(Number(b.dataset.w))));
@@ -991,7 +1304,9 @@ async function renderPool() {
   if (old) { poolData = old; drawPoolGrid(''); }
   const res = await window.api.poolList(cur);
   if ((settings.poolCur || settings.poolFolders[0] || '') !== cur) return; // пока читали, открыли другую папку
+  poolSeen.delete(cur);
   poolSeen.set(cur, res);
+  if (poolSeen.size > 40) poolSeen.delete(poolSeen.keys().next().value); // давние папки — из памяти
   if (old && res.ok && JSON.stringify(res) === JSON.stringify(old)) return;
   poolData = res;
   drawPoolGrid(res.ok ? '' : `Не удалось открыть: ${res.error}`);
@@ -1600,8 +1915,6 @@ function applyUiColors() {
   // Непрозрачный цвет поля — для выпадающих списков: у стекла --field полупрозрачный, и Windows рисовала список светлым
   root.setProperty('--field-solid', p['--field']);
   root.colorScheme = p.scheme;
-  // Логотип: на светлом фоне программы — тёмные буквы (logo-light-…), на тёмном — светлые
-  $('brandLogo').src = p.scheme === 'light' ? 'brand/logo-light-transparent.svg' : 'brand/logo-dark-transparent.svg';
   applyUiFx(p);
   // Запасная копия оформления: если настройки когда-нибудь испортятся, тема не пропадёт
   const fx = Object.fromEntries(UI_FX.map((k) => [k, settings[k]]));

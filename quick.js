@@ -1,11 +1,11 @@
 /* ===== Быстрый поиск медиафайлов (Ctrl+S — окно, Ctrl+F — сразу поиск) =====
    Всё сразу: песни и презентации всех библиотек и плейлистов + файлы закреплённых папок
-   медиапула и папки «Музыки» со всеми подпапками. Стрелки — выбор и предпросмотр,
+   медиапула и папки «Музыки» со всеми подпапками. Карты: точки и маршруты всех карт (Enter — открыть на «Картах»). Стрелки — выбор и предпросмотр,
    Ctrl+Enter — в выбранный плейлист (только плейлисты). Щелчок мимо окна — закрыть.
    В строке — библиотека пункта; правая кнопка — «Открыть в библиотеке» (gotoItem) и «Показать в проводнике». */
 
 const Q_ROW = 30; // высота строки списка (список рисуется только видимой частью — песен тысячи)
-const Q_KINDS = [['all', 'Все'], ['song', 'Песни'], ['pres', 'Презентации'], ['image', 'Фото'], ['video', 'Видео'], ['audio', 'Музыка']];
+const Q_KINDS = [['all', 'Все'], ['song', 'Песни'], ['pres', 'Презентации'], ['image', 'Фото'], ['video', 'Видео'], ['audio', 'Музыка'], ['map', 'Карты']];
 
 let qAll = [];        // все пункты: { item } из библиотеки или { file } с диска
 let qFiles = null;    // файлы с диска (читаются при открытии окна)
@@ -20,6 +20,7 @@ const qNorm = (s) => String(s || '').toLowerCase().replace(/ё/g, 'е');
 
 // Вид пункта для фильтра: песня, презентация, фото, видео, музыка
 function qKindOf(r) {
+  if (r.mp) return 'map';
   if (r.file) return r.file.type === 'presentation' ? 'pres' : r.file.type;
   const k = r.item.kind;
   if (k === 'song') return 'song';
@@ -51,6 +52,7 @@ function qMenu(e, i) {
   const pl = lib.playlists.find((p) => p.id === qPlId);
   const add = pl ? [{ label: `Добавить в плейлист «${pl.name}»`, key: 'Ctrl+Enter', fn: quickAdd }] : [];
   if (r.file) { showMenu(e, [...add, ...revealItems(r.file.path)]); return; }
+  if (r.mp) { showMenu(e, [{ label: `Открыть на карте «${r.mp.m.name}»`, key: 'Enter', fn: () => qMapGoto(r) }, ...(add.length ? ['-', ...add] : [])]); return; }
   const places = itemPlaces(r.item).map((p) => ({ label: `${p.kind === 'lib' ? 'Открыть в библиотеке' : 'Открыть в плейлисте'} «${p.name}»`, fn: () => qGoto(p.kind, p.id, r.item) }));
   showMenu(e, [
     ...(places.length ? places : [{ label: 'Нет ни в одной библиотеке', disabled: true, fn() {} }]),
@@ -63,13 +65,35 @@ function qMenu(e, i) {
 function qCollect() {
   const items = Object.values(lib.items).filter((it) => it && Array.isArray(it.slides)).map((item) => ({ item, name: item.name || '' }));
   const files = (qFiles || []).map((file) => ({ file, name: file.name }));
-  qAll = items.concat(files);
+  qAll = items.concat(files, qMapRows());
   qText = new WeakMap();
   for (const r of qAll) {
     r.kind = qKindOf(r);
-    r.key = qNorm(r.name + ' ' + (r.item && r.item.song ? (r.item.song.number || '') + ' ' + (r.item.song.genre || '') : ''));
+    r.key = r.mp ? qNorm(r.name + ' ' + r.mp.m.name) : qNorm(r.name + ' ' + (r.item && r.item.song ? (r.item.song.number || '') + ' ' + (r.item.song.genre || '') : ''));
   }
   qAll.sort((a, b) => a.name.localeCompare(b.name, 'ru', { numeric: true }));
+}
+
+// Карты (maps.js): каждая точка (город, место) и каждый маршрут — своя строка
+function qMapRows() {
+  if (typeof mpNorm !== 'function' || !lib || !Array.isArray(lib.maps)) return [];
+  mpNorm();
+  const out = [];
+  for (const m of lib.maps) {
+    for (const p of m.points) out.push({ mp: { m, pt: p }, name: p.name || '' });
+    for (const r of m.routes) out.push({ mp: { m, rt: r }, name: r.name || '' });
+  }
+  return out;
+}
+const qMpText = (r) => (r.mp.pt ? qNorm(mpPtText(r.mp.pt)) : qNorm(r.mp.rt.stops.map((id) => (mpPt(r.mp.m, id) || {}).name || '').join(' ')));
+const qMpTarget = (r) => (r.mp.pt ? { map: r.mp.m.id, pt: r.mp.pt.id, layout: r.mp.m.look.layout || 'side' } : { map: r.mp.m.id, route: r.mp.rt.id, layout: 'map' });
+
+// Закрыть поиск и открыть точку (маршрут) на вкладке «Карты»
+function qMapGoto(r) {
+  closeQuick();
+  setTab('maps');
+  mpOpenMap(r.mp.m.id);
+  mpSelect(r.mp.pt ? { kind: 'pt', id: r.mp.pt.id } : { kind: 'rt', id: r.mp.rt.id }, { center: true });
 }
 
 function qSongText(item) {
@@ -91,6 +115,7 @@ function qSearch() {
       else if (r.key.startsWith(q)) tiers[1].push(r);
       else if (words.every((w) => r.key.includes(w))) tiers[2].push(r);
       else if (r.item && words.every((w) => qSongText(r.item).includes(w))) tiers[3].push(r);
+      else if (r.mp && words.every((w) => qMpText(r).includes(w))) tiers[3].push(r);
     }
     qRes = tiers.flat();
   }
@@ -112,6 +137,7 @@ function qRenderKinds() {
 }
 
 function qIcon(r) {
+  if (r.mp) return r.mp.pt ? mpDot(MapView.colorOf(r.mp.pt), MapView.iconOf(r.mp.pt), 'q-mpdot') : Object.assign(mpEl('span', 'q-mpsw'), { style: '--c:' + r.mp.rt.color });
   if (r.item) return itemIcon(r.item);
   return ico({ image: 'image', video: 'video', audio: 'audio', presentation: 'deck' }[r.file.type] || 'custom');
 }
@@ -128,12 +154,12 @@ function qRenderList() {
     const r = qRes[i];
     const row = Object.assign(document.createElement('div'), { className: 'q-row' + (i === qSel ? ' sel' : '') });
     row.style.top = i * Q_ROW + 'px';
-    const where = r.item ? qWhereShort(r.item) : baseName(r.file.dir || '');
+    const where = r.mp ? 'Карта «' + r.mp.m.name + '»' : r.item ? qWhereShort(r.item) : baseName(r.file.dir || '');
     row.append(qIcon(r), Object.assign(document.createElement('span'), { className: 'n', textContent: r.name }),
       Object.assign(document.createElement('span'), { className: 'w', textContent: where }));
     row.addEventListener('mousedown', (e) => { e.preventDefault(); if (e.button === 0) qPick(i); });
     row.addEventListener('contextmenu', (e) => { e.preventDefault(); qMenu(e, i); });
-    row.addEventListener('dblclick', () => quickAdd());
+    row.addEventListener('dblclick', () => (r.mp ? qMapGoto(r) : quickAdd()));
     rows.push(row);
   }
   if (!qRes.length) rows.push(Object.assign(document.createElement('div'), { className: 'q-none', textContent: qAll.length ? 'Ничего не найдено' : 'Пока нет ни песен, ни файлов' }));
@@ -193,6 +219,7 @@ function qPreview() {
   const r = qRes[qSel];
   if (!r) return;
   box.append(qEl('h3', 'q-title', r.name));
+  if (r.mp) { qMapPreview(box, r); return; }
   if (r.item) {
     // Где лежит — ссылки: щелчок открывает библиотеку (плейлист) и показывает в ней этот пункт
     const places = itemPlaces(r.item);
@@ -227,6 +254,28 @@ function qPreview() {
   box.append(w);
 }
 
+function qMapPreview(box, r) {
+  const { m, pt: p, rt } = r.mp;
+  const where = qEl('div', 'q-where');
+  const a = qEl('button', 'q-place', 'Карта «' + m.name + '»');
+  a.title = 'Открыть на вкладке «Карты» (Enter)';
+  a.addEventListener('click', () => qMapGoto(r));
+  where.append(a);
+  box.append(where);
+  if (rt) {
+    const stops = rt.stops.map((id) => mpPt(m, id)).filter(Boolean);
+    box.append(qEl('div', 'q-meta', `Маршрут · остановок: ${stops.length}`));
+    if (stops.length) box.append(qEl('div', 'q-sub', 'Остановки'), qEl('div', 'q-text', stops.map((s, i) => `${i + 1}. ${s.name}`).join('\n')));
+    return;
+  }
+  const type = (MapView.TYPES || {})[p.type];
+  box.append(qEl('div', 'q-meta', [type && (type.name || type), p.dates].filter(Boolean).join(' · ') || 'Точка на карте'));
+  if (p.short) box.append(qEl('div', 'q-text', p.short));
+  if (p.desc) box.append(qEl('div', 'q-text', p.desc));
+  if (p.refs.length) box.append(qEl('div', 'q-sub', 'Места Писания'), qEl('div', 'q-text', p.refs.join('; ')));
+  if (p.events.length) box.append(qEl('div', 'q-sub', 'События'), qEl('div', 'q-text', p.events.map((e) => e.t + (e.ref ? ' — ' + e.ref : '')).join('\n')));
+}
+
 function qRenderPl() {
   const s = $('qPl');
   if (!lib.playlists.some((p) => p.id === qPlId)) { const p = curPl(); qPlId = p ? p.id : ''; }
@@ -243,7 +292,8 @@ async function quickAdd() {
   if (!r) return;
   if (!pl) { qMsg('Сначала создайте плейлист'); return; }
   let added = [];
-  if (r.item) added = [r.item];
+  if (r.mp) { const sl = mpSlideOf(qMpTarget(r)); added = [{ id: newId(), type: 'pres', kind: 'map', name: sl.name, slides: [sl] }]; lib.items[added[0].id] = added[0]; }
+  else if (r.item) added = [r.item];
   else {
     const res = await window.api.describeFiles([r.file.path], { slideWidth: slideWidth(), groupDecks: true });
     res.items.forEach((i) => { if (i.type === 'image' || i.type === 'video') i.fit = poolFitValue(); });
@@ -299,6 +349,8 @@ function closeQuick() {
 
 const toggleQuick = () => (quickOpen() ? closeQuick() : openQuick(false));
 
+// Лупа в строке вкладок — то же, что Ctrl+F (повторный щелчок закрывает)
+$('quickBtn').addEventListener('click', () => (quickOpen() ? closeQuick() : openQuick(true)));
 $('qInput').addEventListener('input', qSearch);
 $('qList').addEventListener('scroll', qRenderList);
 $('qPl').addEventListener('change', () => { qPlId = $('qPl').value; $('qInput').focus(); });
@@ -314,6 +366,7 @@ window.addEventListener('keydown', (e) => {
     PageDown: () => qPick(qSel + page),
     PageUp: () => qPick(qSel - page),
     Escape: () => closeQuick(),
+    Enter: () => { const r = qRes[qSel]; if (r && r.mp) qMapGoto(r); },
     Tab: () => { const i = Q_KINDS.findIndex(([k]) => k === qKind); qKind = Q_KINDS[(i + (e.shiftKey ? Q_KINDS.length - 1 : 1)) % Q_KINDS.length][0]; qSearch(); },
   };
   let fn = !e.ctrlKey && !e.altKey ? own[e.code] || own[e.key] : null;

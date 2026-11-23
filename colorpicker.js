@@ -45,6 +45,14 @@ const ColorPicker = (() => {
   let st = null; // { hex, op (число или null), on, close, ring }
   let briBase = null; // цвет до сдвига ползунка «Яркость»
   let specNear = null; // (hex) → [x, y] в долях спектра
+  const FX = typeof ColorFly !== 'undefined' ? ColorFly : null;
+  let swRow = null; // ряд «Свои цвета» с анимацией
+  let swN = null; // строчка «7 цветов» / цвет под мышью
+  let swEnter = false; // окно только открыли — кружки выскакивают по очереди
+  let swOn = null; // какой свой цвет был выбран (чтобы он подпрыгнул, когда выбор сменится)
+  const swFly = new Set(); // цвета, которые ещё летят на своё место
+  const swKey = (c, o) => c + '|' + Math.round(o * 100);
+  const nWord = (n) => { const a = n % 10; const b = n % 100; return a === 1 && b !== 11 ? '{0} цвет' : a >= 2 && a <= 4 && (b < 12 || b > 14) ? '{0} цвета' : '{0} цветов'; };
   let tab = 'grid';
   try { const t = localStorage.getItem('cp.tab'); if (['grid', 'spec', 'sl'].includes(t)) tab = t; } catch { /* нет */ }
   const q = (id) => dlg.querySelector('#' + id);
@@ -83,9 +91,15 @@ const ColorPicker = (() => {
       </div>
       <div class="cpk-foot">
         <div class="cpk-cur" id="cpkCur"><i></i></div>
-        <div class="cpk-sw" id="cpkSw"></div>
+        <div class="cpk-swc">
+          <div class="cpk-swh"><b>Свои цвета</b><span id="cpkSwN"></span></div>
+          <div class="cpk-sw" id="cpkSw"></div>
+        </div>
       </div>`;
     document.body.append(dlg);
+    if (window.Glide) Glide.seg(q('cpkTabs')); // выбранная вкладка — плашка на пружине (glide.js)
+    // свои цвета: новый прилетает «таблеткой», соседи отъезжают, убранный сжимается (colorfly.js)
+    if (FX) { swRow = FX.row(q('cpkSw')); swN = FX.roll(q('cpkSwN'), 16); }
     // сетка
     const g = q('cpkGrid');
     for (const c of GRID) { const i = document.createElement('i'); i.style.background = c; i.dataset.c = c; g.append(i); }
@@ -154,7 +168,7 @@ const ColorPicker = (() => {
       const up = () => { head.removeEventListener('pointermove', mv); head.removeEventListener('pointerup', up); head.removeEventListener('pointercancel', up); };
       head.addEventListener('pointermove', mv); head.addEventListener('pointerup', up); head.addEventListener('pointercancel', up);
     });
-    for (const b of q('cpkTabs').children) b.onclick = () => { tab = b.dataset.t; try { localStorage.setItem('cp.tab', tab); } catch { /* нет */ } paint(); };
+    for (const b of q('cpkTabs').querySelectorAll('button')) b.onclick = () => { tab = b.dataset.t; try { localStorage.setItem('cp.tab', tab); } catch { /* нет */ } paint(); };
     for (const k of ['R', 'G', 'B']) {
       q('cpk' + k).oninput = () => set(toHex(+q('cpkR').value, +q('cpkG').value, +q('cpkB').value), null, 'sl');
       q('cpk' + k + 'n').oninput = () => set(toHex(...['R', 'G', 'B'].map((z) => Math.max(0, Math.min(255, Number(q('cpk' + z + 'n').value) || 0)))), null, 'num');
@@ -196,7 +210,7 @@ const ColorPicker = (() => {
   }
 
   function paint(from) {
-    for (const b of q('cpkTabs').children) b.setAttribute('aria-pressed', String(b.dataset.t === tab));
+    for (const b of q('cpkTabs').querySelectorAll('button')) b.setAttribute('aria-pressed', String(b.dataset.t === tab));
     q('cpkGrid').hidden = tab !== 'grid';
     q('cpkSpec').hidden = tab !== 'spec';
     q('cpkSl').hidden = tab !== 'sl';
@@ -228,34 +242,87 @@ const ColorPicker = (() => {
     }
     q('cpkCur').style.setProperty('--cur', rgba(st.hex, o));
     const box = q('cpkSw');
-    box.replaceChildren(...swGet().map((s, n) => {
+    const list = swGet();
+    const name = (s) => s.c.toUpperCase() + (hasOp && s.o < 1 ? ` · ${Math.round(s.o * 100)}%` : '');
+    const count = () => { if (swN) swN.set(nWord(list.length).replace('{0}', list.length)); };
+    const drop = (n) => {
+      const a = swGet(); a.splice(n, 1); swSet(a); paint();
+      if (window.flashStatus) flashStatus('Цвет убран из своих');
+    };
+    let onKey = null;
+    if (swRow) swRow.before();
+    box.replaceChildren(...list.map((s, n) => {
       const sw = el('button');
       sw.type = 'button';
+      sw.dataset.cfk = swKey(s.c, s.o);
       sw.style.setProperty('--c', rgba(s.c, hasOp ? s.o : 1));
-      sw.classList.toggle('on', s.c === st.hex && (!hasOp || Math.abs(s.o - o) < 0.01));
+      const on = s.c === st.hex && (!hasOp || Math.abs(s.o - o) < 0.01);
+      sw.classList.toggle('on', on);
+      if (on) onKey = sw.dataset.cfk;
       sw.title = s.c + (s.o < 1 ? ` · ${Math.round(s.o * 100)}%` : '') + ' — правый щелчок: убрать';
       sw.append(document.createElement('i'));
-      sw.onclick = () => set(s.c, hasOp ? s.o : null, 'sw');
-      sw.oncontextmenu = (e) => { e.preventDefault(); const a = swGet(); a.splice(n, 1); swSet(a); paint(); if (window.flashStatus) flashStatus('Цвет убран из своих'); };
+      // крестик под мышью — убрать этот цвет из своих
+      const x = el('span', 'cpk-swx', '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7l10 10M17 7L7 17"/></svg>');
+      x.title = 'Убрать из своих';
+      x.addEventListener('pointerdown', (e) => e.stopPropagation());
+      x.onclick = (e) => { e.stopPropagation(); drop(n); };
+      sw.append(x);
+      sw.onpointerenter = () => { if (swN) swN.set(name(s)); };
+      sw.onpointerleave = count;
+      sw.onclick = () => {
+        // цвет из своих перелетает в большой образец слева
+        if (FX && !on) FX.fly({ from: sw, to: q('cpkCur'), color: rgba(s.c, hasOp ? s.o : 1), onLand: () => FX.bump(q('cpkCur')) });
+        set(s.c, hasOp ? s.o : null, 'sw');
+      };
+      sw.oncontextmenu = (e) => { e.preventDefault(); drop(n); };
       return sw;
     }));
     const add = el('button', 'cpk-add', '<svg viewBox="0 0 24 24" width="18" height="18"><path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg>');
     add.type = 'button';
+    add.dataset.cfk = '+';
     add.title = 'Добавить этот цвет в свои';
     add.onclick = () => {
       const a = swGet();
       if (a.some((s) => s.c === st.hex && Math.abs(s.o - o) < 0.01)) { if (window.flashStatus) flashStatus('Этот цвет уже есть'); return; }
-      a.push({ c: st.hex, o: Math.round(o * 100) / 100 });
+      const s = { c: st.hex, o: Math.round(o * 100) / 100 };
+      a.push(s);
       swSet(a);
+      const k = swKey(s.c, s.o);
+      swFly.add(k);
       paint();
+      // цвет выходит из образца «таблеткой» с кодом, сжимается в кружок и дугой садится в ряд
+      if (FX) FX.fly({ from: q('cpkCur'), to: () => swRow && swRow.el(k), color: rgba(s.c, hasOp ? s.o : 1), label: '#' + s.c.slice(1).toUpperCase(), onLand: () => { swFly.delete(k); if (swRow) swRow.land(k); } });
+      else swFly.delete(k);
     };
     box.append(add);
+    if (swRow) {
+      swRow.after({ hold: swFly, enter: swEnter });
+      if (onKey && onKey !== swOn && from === 'sw') swRow.pick(swRow.el(onKey));
+    }
+    swOn = onKey;
+    swEnter = false;
+    if (!box.matches(':hover')) count();
   }
 
   const isOpen = () => !!dlg && dlg.matches(':popover-open');
   // Окно закрыли — сообщить тому, кто открывал
   function done() { const f = st && st.close; st = null; anchor = null; if (f) f(); }
-  function hide() { if (!isOpen()) return; dlg.hidePopover(); done(); }
+  // Закрыли, а цвет поменялся — он «прилетает» из окна в свою кнопку (у кого открывали)
+  function hide() {
+    if (!isOpen()) return;
+    const s = st;
+    const changed = s && (s.hex !== s.hex0 || s.op !== s.op0);
+    const from = FX && changed ? q('cpkCur').getBoundingClientRect() : null;
+    const to = s && (s.flyTo || anchor);
+    dlg.hidePopover();
+    done();
+    if (!from || !to) return;
+    const tgt = typeof to === 'function' ? to : () => (to.isConnected ? to : null);
+    FX.fly({
+      from, to: tgt, color: rgba(s.hex, s.op == null ? 1 : s.op), label: '#' + s.hex.slice(1).toUpperCase(),
+      onLand: () => { if (s.onLand) s.onLand(); else FX.bump(tgt()); },
+    });
+  }
 
   // Поставить окно в (x, y), не вылезая за край окна программы
   function place(x, y) {
@@ -277,11 +344,14 @@ const ColorPicker = (() => {
     else place(r.left - 8 - w, r.top - h / 2);
   }
 
-  function open({ hex, op = null, onInput, onClose, at = null }) {
+  // flyTo — куда прилетает цвет при закрытии (элемент или функция; по умолчанию кнопка at), onLand — когда сел
+  function open({ hex, op = null, onInput, onClose, at = null, flyTo = null, onLand = null }) {
     if (!dlg) build();
     hide();
-    st = { hex: norm(hex) || '#000000', op: op == null ? null : Math.max(0, Math.min(1, Number(op))), on: onInput, close: onClose, ring: null };
+    st = { hex: norm(hex) || '#000000', op: op == null ? null : Math.max(0, Math.min(1, Number(op))), on: onInput, close: onClose, ring: null, flyTo, onLand };
+    st.hex0 = st.hex; st.op0 = st.op;
     anchor = at;
+    swEnter = true;
     // кнопка внутри модального окна — кладём в него (иначе окно «Цвета» не будет нажиматься), а показываем поверх него
     const host = (at && at.closest && at.closest('dialog[open]:not(.cpk)')) || document.body;
     if (dlg.parentNode !== host) host.append(dlg);

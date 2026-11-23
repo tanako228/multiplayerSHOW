@@ -45,25 +45,12 @@ const Notify = (() => {
     const bar = document.querySelector('body > .tabs');
     const r = bar && bar.offsetParent !== null ? bar.getBoundingClientRect() : null;
     h.style.setProperty('--isle-top', (r && r.bottom > 0 && r.bottom < 120 ? Math.round(r.bottom + 6) : 8) + 'px');
-    place();
     if (!h.showPopover) return;
     try { if (h.matches(':popover-open')) h.hidePopover(); h.showPopover(); } catch { /* старый движок */ }
   }
 
-  // По горизонтали — по центру названия открытого плейлиста/библиотеки в верхней строке (#viewTitle),
-  // но не за краем окна; названия нет — по центру окна
-  function place() {
-    if (!host) return;
-    const t = document.getElementById('viewTitle');
-    // середина самого текста (видимые части: вид и имя), а не всего блока
-    const parts = t && t.offsetParent !== null ? [...t.children].map((c) => c.getBoundingClientRect()).filter((q) => q.width > 0) : [];
-    if (!parts.length) { host.style.removeProperty('--isle-x'); return; }
-    const mid = (Math.min(...parts.map((q) => q.left)) + Math.max(...parts.map((q) => q.right))) / 2;
-    const half = host.offsetWidth / 2 || 220;
-    const x = Math.max(half + 8, Math.min(innerWidth - half - 8, mid));
-    host.style.setProperty('--isle-x', Math.round(x) + 'px');
-  }
-  window.addEventListener('resize', () => { if (items.size) place(); });
+  // По горизонтали — всегда ровно по центру окна программы (left: 50% + translateX(-50%) в index.html):
+  // окно 2000 px — середина на 1000, окно сжато до 1000 px — на 500; при изменении размера окна следует само
 
   // Угадать вид по тексту (для старых вызовов flashStatus без вида)
   function guessKind(text) {

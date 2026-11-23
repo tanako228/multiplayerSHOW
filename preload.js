@@ -142,6 +142,8 @@ contextBridge.exposeInMainWorld('api', {
   saveJson: (opts) => ipcRenderer.invoke('json:save', opts),
   openJson: (opts) => ipcRenderer.invoke('json:open', opts),
   songsOpen: (opts) => ipcRenderer.invoke('songs:open', opts), // opts.other — базы и файлы других программ
+  mapsPick: (opts) => ipcRenderer.invoke('maps:pick', opts), // карты (maps.js): PNG/JPEG → { maps: [{ name, w, h, img, t, p, b }], errors }; opts.small — картинки к точке
+  mapsImport: (opts) => ipcRenderer.invoke('maps:import', opts), // то же для брошенных файлов: { paths, small }
   sheetsPick: () => ipcRenderer.invoke('sheets:pick'), // ноты песни: фото/PDF → { sheets: [{ file, name, w, h }], errors }
   songSave: (opts) => ipcRenderer.invoke('songs:save', opts),
   songsSaveMany: (songs) => ipcRenderer.invoke('songs:saveMany', songs),
