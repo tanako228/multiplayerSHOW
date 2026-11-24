@@ -151,7 +151,7 @@ window.Glide = (() => {
 
   // Постоянные группы главного окна
   function boot() {
-    seg(document.querySelector('.tabs-side:not(.end)'), { items: ':scope > .tab', inset: { t: 5 } });
+    seg(document.querySelector('.tabs-side:not(.end)'), { items: ':scope > .tab', inset: { t: 5 }, hover: false }); // под мышью подложки нет — оживают значок и надпись (index.html, motion.js)
     document.querySelectorAll('.view-toggle, .dock-pos, #inkTools, #zoomTools, #inkWidths, #cpkTabs').forEach((b) => seg(b));
     document.querySelectorAll('.set-nav').forEach((b) => seg(b, { axis: 'y' }));
     document.documentElement.classList.add('gl-ready');

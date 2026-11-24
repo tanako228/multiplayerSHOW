@@ -57,9 +57,16 @@
     [data-icon][hidden] { display: none; }
     .mp-icon { width: 18px; height: 18px; flex: none; display: inline-flex; }
     .mp-icon svg { width: 100%; height: 100%; display: block; filter: drop-shadow(0 1px 1.5px rgba(0, 0, 0, .35)); }
-    .tab .mp-icon { width: 20px; height: 20px; transition: filter .15s, transform .15s; }
+    /* Вкладки наверху и лупа: без подложки под мышью — значок подпрыгивает и чуть поворачивается, надпись приподнимается;
+       нажали — значок приседает. Пружинная кривая (перелёт), только transform/translate — без перерисовки */
+    .tab .mp-icon { width: 20px; height: 20px; transition: filter .2s, transform .42s cubic-bezier(.3, 1.8, .45, 1); }
+    .tab { transition: color .2s, translate .35s cubic-bezier(.3, 1.6, .5, 1); }
     .tab[aria-selected=false] .mp-icon { filter: saturate(.45) opacity(.75); }
-    .tab:hover .mp-icon { filter: none; transform: translateY(-1px); }
+    .tab:hover { translate: 0 -1px; color: var(--text); }
+    .tab:hover .mp-icon { filter: none; transform: translateY(-2px) scale(1.14) rotate(-6deg); }
+    .tab:active .mp-icon, .quick-btn:active .mp-icon { transform: translateY(0) scale(.86) rotate(0deg); transition-duration: .12s; }
+    .quick-btn .mp-icon { transition: transform .42s cubic-bezier(.3, 1.8, .45, 1); }
+    .quick-btn:hover .mp-icon { transform: scale(1.14) rotate(-14deg); }
     .icon-only { padding: 4px 6px; }
     .icon-only .mp-icon { width: 20px; height: 20px; }
     #voiceOpen.listen { box-shadow: inset 0 0 0 2px var(--live); } /* Библия по голосу слушает */
@@ -1681,6 +1688,24 @@
     .set-part .mp-icon { width: 20px; height: 20px; }
     .repo-state { padding: 8px 10px; border: 1px solid var(--line); border-radius: calc(6px * var(--rk, 1)); background: var(--field); margin: 0 0 10px !important; word-break: break-all; }
     .repo-state.off { color: var(--warn); }
+    #dataBoth { word-break: normal; }
+    .set-sec[data-sec="data"] button:disabled { opacity: .45; cursor: default; filter: saturate(.4); }
+    .set-sec[data-sec="data"] details summary { cursor: pointer; color: var(--muted); margin-bottom: 6px; }
+    .set-sec[data-sec="data"] .set-group h2 { display: flex; align-items: center; gap: 7px; }
+    /* Знак «i»: навели — снизу подсказка (motion.js, без задержки и пошире) */
+    .info-i { display: inline-grid; place-items: center; width: 16px; height: 16px; flex: none; border-radius: 50%; box-sizing: border-box;
+      border: 1.5px solid var(--muted); color: var(--muted); font: italic 700 10.5px/1 Georgia, 'Times New Roman', serif; cursor: help;
+      transition: color .15s, border-color .15s, background .15s, transform .25s cubic-bezier(.3, 1.6, .5, 1); user-select: none; }
+    .info-i:hover { color: var(--live-ink, #fff); background: var(--live); border-color: var(--live); transform: scale(1.12); }
+    /* «Что сохранять»: одна таблица — строка на часть данных, две галочки: облако и резервная копия */
+    .data-parts { display: grid; grid-template-columns: 1fr 64px 64px; margin: 0 0 10px; border: 1px solid var(--line);
+      border-radius: calc(8px * var(--rk, 1)); overflow: hidden; background: var(--field); }
+    .data-parts > * { padding: 5px 10px; border-top: 1px solid var(--line); display: flex; align-items: center; min-height: 22px; }
+    .data-parts > .dp-h { border-top: 0; color: var(--muted); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
+    .data-parts > .dp-c { justify-content: center; padding: 5px 0; }
+    .data-parts > .dp-n { color: var(--text); line-height: 1.3; }
+    .data-parts > .dp-n small { color: var(--muted); font-size: 11px; margin-left: 6px; }
+    .data-parts > .dp-hov { background: color-mix(in srgb, var(--text) 5%, transparent); }
     .danger-btn:not(:disabled) { color: var(--warn); }
     .danger-btn:not(:disabled):hover { border-color: var(--warn); }
     .out-screens-head { max-width: none; margin-bottom: 8px; }
@@ -2513,6 +2538,9 @@
     .tabs-side.gl .gl-pill { border-radius: calc(8px * var(--rk, 1)) calc(8px * var(--rk, 1)) 0 0; }
     .tabs-side.gl .gl-sel::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 2px; border-radius: 2px 2px 0 0; background: var(--gl-bar, var(--live)); }
     .tabs .tabs-side.gl .tab[aria-selected=true] { border-bottom-color: transparent; border-image: none; }
+    /* Выбранная вкладка — только черта снизу, она и едет; заливки-«подложки» нет. Подсветку фона под мышью в оформлениях тоже убираем */
+    .tabs .tabs-side.gl .gl-sel { background: none; }
+    .tabs .tabs-side.gl .tab:hover { background-color: transparent !important; }
     .tabs .tabs-side.gl .tab[aria-selected]::after { display: none; }
     html[data-ui-deco=aura] { --gl-bar: linear-gradient(90deg, var(--live), var(--brown)); }
     html[data-ui-deco=sunset] { --gl-bar: linear-gradient(90deg, #fffaf4, #ff9a7a); }
@@ -3307,7 +3335,7 @@
         <button data-sec="keys" data-icon="keys">Горячие клавиши</button>
         <button data-sec="look" data-icon="theme">Оформление</button>
         <button data-sec="profiles" data-icon="profile">Профили</button>
-        <button data-sec="data" data-icon="database">Репозиторий</button>
+        <button data-sec="data" data-icon="cloud">Данные и облако</button>
         <button data-sec="update" data-icon="update">Обновление</button>
       </nav>
       <div class="set-body">
@@ -3432,46 +3460,96 @@
         </section>
         <section class="set-sec" data-sec="data" hidden>
           <div class="set-group">
-            <h2>Репозиторий</h2>
-            <p class="hint" style="margin-bottom:10px">Папка, куда программа сама складывает все ваши данные: библиотеки, медиафайлы, темы, макросы, экраны, переводы и настройки. Сделали правку — через несколько секунд она уже в папке. Папку можно в любой момент перенести (на флешку, в облачную папку, на другой компьютер) и снова подключить здесь.</p>
+            <p class="hint repo-state" id="dataBoth"></p>
+          </div>
+          <div class="set-group">
+            <h2>Облако <span class="info-i" title="Одни и те же песни, плейлисты, темы и файлы на нескольких компьютерах — например, дома и в церкви.&#10;&#10;На каждом компьютере войдите в один и тот же аккаунт — правка на одном сама попадёт на другие.&#10;&#10;Поправили одно и то же на двух компьютерах сразу — останется последняя правка, другая ляжет в «Папку конфликтов».">i</span></h2>
+            <p class="hint repo-state" id="clState"></p>
+            <div class="field"><span>Где хранить</span>
+              <select id="clPlace">
+                <option value="gdrive">Google Диск</option>
+                <option value="folder">Папка (флешка, сетевой диск)</option>
+              </select>
+            </div>
+            <div id="clGoogle">
+              <p class="hint" id="clGoogleState"></p>
+              <div class="btns-row">
+                <button id="clSignIn" class="primary">Войти в Google…</button>
+                <button id="clSignOut">Выйти из аккаунта</button>
+              </div>
+            </div>
+            <div id="clFolder" hidden>
+              <p class="hint" id="clDir" style="word-break:break-all"></p>
+              <div class="btns-row"><button id="clPickDir">Выбрать папку…</button></div>
+            </div>
+            <div class="btns-row">
+              <button id="clNow" class="primary" data-icon="update">Синхронизировать сейчас</button>
+            </div>
+            <div id="clChoice" class="set-group" hidden>
+              <p class="hint"><b>В облаке уже есть данные с другого компьютера.</b> Что сделать?</p>
+              <div class="btns-row">
+                <button id="clTakeAll" class="primary" title="Для нового компьютера: здесь станет то же, что в облаке. Ваше, чего в облаке нет, отложится в «Папку конфликтов»">Взять как в облаке</button>
+                <button id="clTakeCloud" title="Соединить: новое с обеих сторон останется. Где одно и то же отличается — возьмётся облачное">Соединить</button>
+                <button id="clTakeMine" title="Соединить, но где одно и то же отличается — останется ваше">Соединить, моё главнее</button>
+                <button id="clChoiceNo">Отмена</button>
+              </div>
+            </div>
+            <div class="field"><label class="check" title="При запуске программы — забирать новое; во время работы и при закрытии — отправлять своё"><input type="checkbox" id="clAuto"> Синхронизировать автоматически</label></div>
+          </div>
+          <div class="set-group">
+            <h2>Резервная копия <span class="info-i" title="Копия всех ваших данных в папке — на флешке, втором диске или в облачной папке. Страховка, если с компьютером что-то случится.&#10;&#10;Программа сама обновляет её через несколько секунд после каждой правки.&#10;&#10;«Сделать снимок» — отдельная папка с датой: её уже ничто не меняет. Вернуться к ней — «Восстановить» ниже.">i</span></h2>
             <p class="hint repo-state" id="repoState"></p>
             <div class="btns-row">
               <button id="repoPick" class="primary" data-icon="library">Выбрать папку…</button>
-              <button id="repoNow" data-icon="export" title="Записать в папку сейчас: в ней будет то же, что в программе. Если в папке были данные с другого компьютера — первый раз они не удаляются, ваши добавятся">Отправить в репозиторий</button>
+              <button id="repoNow" data-icon="export" title="Записать в папку сейчас: в ней будет то же, что в программе">Сохранить сейчас</button>
+              <button id="repoSnap" title="Отдельная папка рядом: «… — снимок &lt;дата&gt;». Её не трогают ни автосохранение, ни облако">Сделать снимок</button>
               <button id="repoOpen">Открыть папку</button>
-              <button id="repoOff">Отключить</button>
+              <button id="repoOff" title="Перестать сохранять в эту папку. Сама папка останется">Отключить</button>
             </div>
-            <div class="field"><label class="check"><input type="checkbox" id="repoAuto"> Сохранять изменения автоматически</label><small> — в папке всегда то же, что в программе: удалённое убирается и оттуда</small></div>
-            <p class="hint"><b>Защита:</b> отправка и автосохранение только дополняют папку — песни, темы и файлы, которые там уже есть (например, с другого компьютера), не удаляются, даже если в программе их нет.</p>
-            <div class="btns-row"><button id="repoReplace" class="danger-btn" title="Очистить папку и записать в неё только то, что сейчас в программе">Заменить содержимое папки…</button></div>
+            <div class="field"><label class="check" title="В папке всегда то же, что в программе: удалённое убирается и оттуда. Данные с других компьютеров, которых здесь нет, не удаляются"><input type="checkbox" id="repoAuto"> Сохранять автоматически</label></div>
           </div>
           <div class="set-group">
-            <h2>Что хранить в репозитории</h2>
-            <div id="repoParts" class="parts"></div>
+            <h2>Что сохранять <span class="info-i" title="Галочки — что отправлять в облако и что класть в резервную копию.&#10;&#10;Экраны, расположение панелей, папки медиапула и «Настройки программы» по умолчанию в облако не идут: у каждого компьютера свои мониторы, звук и папки.&#10;&#10;Файлы больше 500 МБ в облако не отправляются. Снятое в копии больше не обновляется, но уже сохранённое остаётся.">i</span></h2>
+            <div id="dataParts" class="data-parts"></div>
             <div class="btns-row">
-              <button id="repoAll">Отметить всё</button>
-              <button id="repoNone">Снять всё</button>
+              <button id="partsDefault" title="Облако — без экранов, панелей, папок медиапула и настроек программы; резервная копия — всё">Как по умолчанию</button>
+              <button id="partsAll">Отметить всё</button>
             </div>
-            <p class="hint">Снятое больше не обновляется в папке (то, что уже там, остаётся).</p>
           </div>
           <div class="set-group">
-            <h2>Восстановить</h2>
-            <div class="btns-row"><button id="restorePick">Из папки репозитория или резервной копии…</button></div>
+            <h2>Восстановить <span class="info-i" title="Вернуть данные из резервной копии, снимка или старой резервной копии программы.&#10;&#10;«Добавить» — к вашему добавится то, что в папке; ничего не удаляется.&#10;&#10;«Заменить» — у отмеченного останется только то, что в папке. Прежнее программа не стирает, а откладывает в папку «прежние данные &lt;дата&gt;».">i</span></h2>
+            <div class="btns-row"><button id="restorePick">Выбрать папку…</button></div>
             <div id="restoreBox" hidden>
               <p class="hint" id="restoreInfo"></p>
               <div id="restoreParts" class="parts"></div>
               <div class="btns-row">
                 <button id="restoreGo" class="primary" title="Добавить к тому, что есть в программе. Ничего не удаляется">Добавить в программу</button>
-                <button id="restoreReplace" class="danger-btn" title="Отмеченное в программе заменится тем, что в папке">Заменить данные программы…</button>
+                <button id="restoreReplace" class="danger-btn" title="Отмеченное в программе заменится тем, что в папке. Прежнее отложится в папку «прежние данные &lt;дата&gt;»">Заменить данные программы…</button>
               </div>
-              <p class="hint" id="restoreHint"><b>Добавить</b> — песни, плейлисты, темы, макросы, экраны, переводы и файлы из папки добавятся к вашим; ваше не удаляется (то же самое с тем же номером обновится). <b>Заменить</b> — у отмеченных пунктов в программе останется только то, что в папке; прежние данные программа отложит в папку «прежние данные &lt;дата&gt;» рядом со своими данными. После восстановления окно обновится.</p>
             </div>
           </div>
           <div class="set-group">
-            <h2>Где хранятся ваши данные</h2>
-            <p class="hint">Всё, что вы добавили (переводы, песни, плейлисты, темы, настройки), хранится в отдельной папке и не пропадает при обновлении программы.</p>
-            <p class="hint" id="dataPath" style="margin:6px 0;word-break:break-all"></p>
-            <div class="btns-row"><button id="dataOpen">Открыть папку с данными</button></div>
+            <h2>Папка программы <span class="info-i" title="Здесь программа держит всё ваше: переводы, песни, плейлисты, темы, настройки. При обновлении программы ничего не пропадает.">i</span></h2>
+            <p class="hint" id="dataPath" style="margin:0 0 6px;word-break:break-all"></p>
+            <div class="btns-row"><button id="dataOpen">Открыть папку</button></div>
+          </div>
+          <div class="set-group">
+            <details>
+              <summary>Дополнительно</summary>
+              <p class="hint" id="clName"></p>
+              <div class="btns-row">
+                <button id="clConflicts" title="Версии, которые уступили при одновременной правке на двух компьютерах">Папка конфликтов облака</button>
+                <button id="repoReplace" class="danger-btn" title="Очистить папку резервной копии и записать в неё только то, что сейчас в программе. Удалённое из папки не вернуть">Заменить содержимое копии…</button>
+              </div>
+              <p class="hint" style="margin-top:12px"><b>Пропуск Google</b> — для разработчиков: идентификатор клиента OAuth типа «Приложение для ПК» из Google Cloud Console. Каждый человек всё равно входит в свой аккаунт.</p>
+              <p class="hint" id="clDevOwn"></p>
+              <div class="field"><span>Идентификатор клиента</span><input id="clDevId" type="text" placeholder="…apps.googleusercontent.com" autocomplete="off" spellcheck="false"></div>
+              <div class="field"><span>Секрет клиента</span><input id="clDevSecret" type="text" autocomplete="off" spellcheck="false"></div>
+              <div class="btns-row">
+                <button id="clDevSave">Сохранить пропуск</button>
+                <button id="clDevClear">Убрать свой пропуск</button>
+              </div>
+            </details>
           </div>
         </section>
         <section class="set-sec" data-sec="profiles" hidden>
@@ -4141,6 +4219,7 @@
   <script src="songimport.js"></script>
   <script src="tools.js"></script>
   <script src="profpanel.js"></script>
+  <script src="cloud.js"></script>
   <script src="music.js"></script>
   <script src="sources.js"></script>
   <script src="layers.js"></script>

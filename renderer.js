@@ -2280,14 +2280,21 @@ function isShown(bi, ci, v) {
   return bShown.bi === bi && bShown.ci === ci && v >= bShown.v1 && v <= bShown.v2;
 }
 
+let biblePopped = ''; // какое место уже «прыгнуло», уйдя на экран (motion.js)
 function updateBibleHighlight() {
+  const popNow = [];
+  // Место на экране сменилось — новые подсвеченные стихи коротко «прыгают»; перерисовка того же — нет
+  const shownId = bShown && bible && bShown.bid === bible.id ? [bShown.bi, bShown.ci, bShown.v1, bShown.v2, bShown.part, bShown.keys ? [...bShown.keys].join(',') : ''].join('/') : '';
+  const fresh = shownId && shownId !== biblePopped;
   const mark = (container, pane, extra) => {
     const picked = new Set(slidesMode() ? vsel[pane] : []);
     container.querySelectorAll('[data-v]').forEach((row) => {
       const bi = Number(row.dataset.bi), ci = Number(row.dataset.ci), v = Number(row.dataset.v);
       // У части длинного стиха (7A, 7B) подсвечена только та часть, что на экране
       const partOk = row.dataset.part == null || !bShown || bShown.parts < 2 || Number(row.dataset.part) === bShown.part;
-      row.classList.toggle('live', isShown(bi, ci, v) && partOk);
+      const on = isShown(bi, ci, v) && partOk;
+      if (on && fresh && !row.classList.contains('live') && row.offsetParent) popNow.push(row);
+      row.classList.toggle('live', on);
       row.classList.toggle('picked', picked.has(rowKey(row)));
       if (extra) row.classList.toggle('marked', extra(v));
       // refSel.keys — место из нескольких глав или с пропусками (иконка Библии у презентации, brefReveal)
@@ -2296,6 +2303,7 @@ function updateBibleHighlight() {
   };
   mark(versesEl, 'main', null);
   if (bmView) mark(bmVersesEl, 'bm', (v) => bmView.v1 != null && v >= bmView.v1 && v <= bmView.v2);
+  if (popNow.length && window.UiMotion) { biblePopped = shownId; UiMotion.slidePopAll(popNow); }
 }
 
 function scrollToVerse(n, container = versesEl, bi = container === versesEl ? bBi : null, ci = container === versesEl ? bCi : null) {
@@ -3318,7 +3326,7 @@ function showSettingsSection(sec) {
   if (sec === 'keys') renderKeys();
   if (sec === 'output') fillAudioSinks();   // звук — в «Экран и вывод»
   if (sec === 'look') { renderUiColors(); renderPresets(); } // tools.js (пресеты настроек — в «Оформлении»)
-  if (sec === 'data') renderRepo();         // tools.js
+  if (sec === 'data') { renderRepo(); renderCloud(); } // «Данные и облако»: локальная копия — tools.js, облако — cloud.js
   if (sec === 'profiles') renderProfiles(); // profpanel.js
   if (sec === 'update') renderUpdate();     // tools.js
 }
@@ -3408,6 +3416,7 @@ if (window.api.onAskClose) window.api.onAskClose(() => {
     if (dlg.returnValue !== 'ok') return;
     // Последняя правка — на диск и в репозиторий, потом закрыть (не дольше 15 с, чтобы не зависнуть на отключённой флешке)
     if (typeof repoFinal === 'function') await Promise.race([repoFinal(), new Promise((r) => setTimeout(r, 15000))]).catch(() => {});
+    if (typeof cloudFinal === 'function') await Promise.race([cloudFinal(), new Promise((r) => setTimeout(r, 15000))]).catch(() => {}); // облако (cloud.js)
     window.api.closeOk();
   }, { once: true });
 });

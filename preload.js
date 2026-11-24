@@ -114,11 +114,21 @@ contextBridge.exposeInMainWorld('api', {
   repoSync: (opts) => ipcRenderer.invoke('repo:sync', opts),
   repoPick: () => ipcRenderer.invoke('repo:pick'),
   repoReveal: (dir) => ipcRenderer.invoke('repo:reveal', dir),
+  repoSnapshot: (dir) => ipcRenderer.invoke('repo:snapshot', dir), // снимок локальной копии → { ok, dir, marker }
   revealFile: (p) => ipcRenderer.invoke('file:reveal', p),
   repoExists: (dir) => ipcRenderer.invoke('repo:exists', dir),
   repoOpen: () => ipcRenderer.invoke('repo:open'),
   repoRestore: (opts) => ipcRenderer.invoke('repo:restore', opts),
   backupRestore: (opts) => ipcRenderer.invoke('backup:restore', opts),
+  // Облако (cloudsrv.js): cfg — settings.cloud окна ({ provider: 'gdrive'|'folder', dir, parts, auto })
+  cloudState: (cfg) => ipcRenderer.invoke('cloud:state', cfg),
+  cloudSync: (opts) => ipcRenderer.invoke('cloud:sync', opts), // { cfg, ls, parts, prefer?, pushOnly? }
+  cloudSignIn: (cfg) => ipcRenderer.invoke('cloud:signin', cfg),
+  cloudSignOut: (cfg) => ipcRenderer.invoke('cloud:signout', cfg),
+  cloudClient: (x) => ipcRenderer.invoke('cloud:client', x), // свой пропуск Google { cfg, clientId, clientSecret }
+  cloudPickDir: () => ipcRenderer.invoke('cloud:pickDir'),
+  cloudConflicts: () => ipcRenderer.invoke('cloud:conflicts'),
+  onCloudProgress: (cb) => on('cloud:progress', cb),
   dataOpen: () => ipcRenderer.invoke('data:open'),
   dataPath: () => ipcRenderer.invoke('data:path'),
   appVersion: () => ipcRenderer.invoke('app:version'),

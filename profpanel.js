@@ -20,6 +20,7 @@ async function profFlush() {
     if (typeof repoFinal === 'function') await repoFinal();
     else if (typeof lib !== 'undefined' && lib) { clearTimeout(saveTimer); saveTimer = 0; await window.api.libSave(lib); }
   } catch { /* дальше всё равно попробуем */ }
+  try { if (typeof cloudFinal === 'function') await Promise.race([cloudFinal(), new Promise((r) => setTimeout(r, 15000))]); } catch { /* облако — в следующий раз */ }
   if (typeof saveTimer !== 'undefined') { clearTimeout(saveTimer); saveTimer = 0; }
   if (typeof repoClosing !== 'undefined') repoClosing = true; // перезагрузка не отправит старое в репозиторий
   try { window.api.profFlushLs(); } catch { /* не страшно */ }

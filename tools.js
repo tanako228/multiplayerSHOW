@@ -2467,7 +2467,7 @@ async function repoSyncNow(manual, mode) {
   repoBusy = true;
   repoLibDirty = false;
   repoLastLs = lsStr;
-  if (manual) $('repoState').textContent = 'Сохраняю в репозиторий…';
+  if (manual) $('repoState').textContent = 'Сохраняю в резервную копию…';
   let res = null;
   try { res = await window.api.repoSync({ dir: r.dir, parts: r.parts, ls, mode }); } catch (err) { res = { ok: false, error: String(err) }; }
   repoBusy = false;
@@ -2481,8 +2481,8 @@ async function repoSyncNow(manual, mode) {
     if (!repoWarned || manual) {
       repoWarned = true;
       showNotice(res && res.missing
-        ? `Папка репозитория не найдена: ${r.dir}. Подключите флешку или диск, или выберите папку заново (Настройки → Репозиторий).`
-        : 'Не удалось сохранить в репозиторий' + (res && res.error ? ': ' + res.error : ''), true);
+        ? `Папка резервной копии не найдена: ${r.dir}. Подключите флешку или диск, или выберите папку заново (Настройки → Данные и облако).`
+        : 'Не удалось сохранить резервную копию' + (res && res.error ? ': ' + res.error : ''), true);
     }
   }
   if ($('setDialog').open) renderRepoState();
@@ -2493,8 +2493,8 @@ function renderRepoState() {
   const r = repo();
   const st = $('repoState');
   st.classList.toggle('off', !r.dir || r.hold);
-  if (!r.dir) st.textContent = 'Репозиторий не подключён. Нажмите «Выбрать папку…» — например, папку на флешке или в облачном диске.';
-  else if (r.hold) st.textContent = `Папка: ${r.dir}. В ней уже есть данные — возьмите нужное ниже («Восстановить») или нажмите «Отправить в репозиторий»: ваши данные добавятся к тем, что в папке, ничего не удалится.`;
+  if (!r.dir) st.textContent = 'Не подключена. Нажмите «Выбрать папку…» — например, на флешке или втором диске.';
+  else if (r.hold) st.textContent = `Папка: ${r.dir}. В ней уже есть данные — возьмите нужное через «Восстановить» или нажмите «Сохранить сейчас»: ваше добавится, ничего не удалится.`;
   else {
     const when = repoLast && repoLast.date ? new Date(repoLast.date).toLocaleString(I18n.loc) : 'ещё не сохранялось';
     st.textContent = `Папка: ${r.dir} · последнее сохранение: ${when}` + (repoLast && repoLast.files ? ` · файлов: ${repoLast.files}` : '') + (r.auto ? '' : ' · автосохранение выключено');
@@ -2502,19 +2502,16 @@ function renderRepoState() {
   for (const id of ['repoNow', 'repoOpen', 'repoOff', 'repoReplace']) $(id).disabled = !r.dir;
   $('repoAuto').checked = !!r.auto;
   $('repoAuto').disabled = !r.dir;
+  $('repoSnap').disabled = !r.dir;
+  if (typeof dataBothPaint === 'function') dataBothPaint(); // cloud.js
 }
 
 async function renderRepo() {
   renderRepoState();
-  partBoxes($('repoParts'), REPO_NAMES, REPO_ALL, repo().parts, () => {
-    repo().parts = checkedParts($('repoParts'));
-    saveSettings();
-  });
+  if (typeof dataPartsPaint === 'function') dataPartsPaint(); // cloud.js: «Что сохранять» — облако и копия в одной таблице
   $('dataPath').textContent = await window.api.dataPath();
 }
 
-$('repoAll').addEventListener('click', () => { repo().parts = REPO_ALL.slice(); saveSettings(); renderRepo(); });
-$('repoNone').addEventListener('click', () => { repo().parts = []; saveSettings(); renderRepo(); });
 $('repoAuto').addEventListener('change', () => {
   repo().auto = $('repoAuto').checked;
   saveSettings();
@@ -2532,7 +2529,7 @@ $('repoPick').addEventListener('click', async () => {
   renderRepoState();
   if (res.existing) { openRestore({ ok: true, kind: 'repo', dir: res.dir, date: res.existing.date, parts: res.existing.parts }); return; }
   const done = await repoSyncNow(true);
-  if (done && done.ok) flashStatus('Репозиторий подключён — данные сохранены в папку');
+  if (done && done.ok) flashStatus('Резервная копия подключена — данные сохранены в папку');
 });
 
 $('repoNow').addEventListener('click', async () => {
@@ -2547,19 +2544,32 @@ $('repoNow').addEventListener('click', async () => {
 $('repoReplace').addEventListener('click', async () => {
   const r = repo();
   if (!r.dir) return;
-  if (!(await askYes(`Вы точно хотите заменить содержимое репозитория?\n\n${r.dir}\n\nВсё, что сейчас лежит в этой папке (песни, темы, файлы — в том числе с других компьютеров), будет удалено, и туда запишется только то, что есть в программе сейчас. Вернуть удалённое из папки будет нельзя.`, 'Заменить', true))) return;
+  if (!(await askYes(`Вы точно хотите заменить содержимое резервной копии?\n\n${r.dir}\n\nВсё, что сейчас лежит в этой папке (песни, темы, файлы — в том числе с других компьютеров), будет удалено, и туда запишется только то, что есть в программе сейчас. Вернуть удалённое из папки будет нельзя.`, 'Заменить', true))) return;
   r.hold = false;
   saveSettings();
   const res = await repoSyncNow(true, 'replace');
-  if (res && res.ok) flashStatus('Репозиторий записан заново — в нём только текущие данные программы');
+  if (res && res.ok) flashStatus('Резервная копия записана заново — в ней только текущие данные программы');
 });
 $('repoOpen').addEventListener('click', () => window.api.repoReveal(repo().dir));
+// Снимок: локальную копию — сначала свежей, потом целиком в соседнюю папку с датой (её не трогают ни автосохранение, ни облако)
+$('repoSnap').addEventListener('click', async () => {
+  const r = repo();
+  if (!r.dir) return;
+  $('repoSnap').disabled = true;
+  $('repoState').textContent = 'Делаю снимок…';
+  if (!r.hold) await repoSyncNow(true);
+  const res = await window.api.repoSnapshot(r.dir).catch((err) => ({ ok: false, error: String(err) }));
+  $('repoSnap').disabled = false;
+  renderRepoState();
+  if (res && res.ok) { flashStatus('Снимок сохранён: ' + res.dir); window.api.revealFile(res.marker); }
+  else showNotice('Не удалось сделать снимок' + (res && res.error ? ': ' + res.error : ''), true);
+});
 $('repoOff').addEventListener('click', () => {
   repo().dir = '';
   repo().hold = false;
   saveSettings();
   renderRepoState();
-  flashStatus('Репозиторий отключён — папка с данными осталась на месте');
+  flashStatus('Резервная копия отключена — папка осталась на месте');
 });
 
 // Раз в полминуты — не поменялось ли что-то, что пишется мимо saveSettings (закладки, рисунки, списки)
@@ -2578,7 +2588,7 @@ let restoreSrc = null; // { kind, dir }
 function openRestore(res) {
   restoreSrc = { kind: res.kind, dir: res.dir };
   const table = res.kind === 'repo' ? REPO_NAMES : OLD_PARTS;
-  $('restoreInfo').textContent = (res.kind === 'repo' ? 'Репозиторий' : 'Резервная копия') + ` от ${new Date(res.date).toLocaleString(I18n.loc)} (${res.dir}). Что в нём есть:`;
+  $('restoreInfo').textContent = (res.kind === 'repo' ? 'Резервная копия' : 'Старая резервная копия') + ` от ${new Date(res.date).toLocaleString(I18n.loc)} (${res.dir}). Что в ней есть:`;
   partBoxes($('restoreParts'), table, res.parts, res.parts);
   $('restoreReplace').hidden = res.kind !== 'repo'; // старые копии — только как раньше
   $('restoreGo').textContent = res.kind === 'repo' ? 'Добавить в программу' : 'Восстановить выбранное';
@@ -2588,7 +2598,7 @@ function openRestore(res) {
 $('restorePick').addEventListener('click', async () => {
   const res = await window.api.repoOpen();
   if (!res) return;
-  if (!res.ok) { showNotice('В этой папке нет репозитория или резервной копии multiplayerSHOW', true); return; }
+  if (!res.ok) { showNotice('В этой папке нет резервной копии multiplayerSHOW', true); return; }
   openRestore(res);
 });
 
@@ -2601,7 +2611,7 @@ async function restoreRun(mode) {
   const ask = restoreSrc.kind === 'backup'
     ? `Восстановить из копии:\n${list}\n\n${parts.includes('library') ? 'Текущие библиотеки и плейлисты будут заменены.\n' : ''}Окно программы обновится.`
     : mode === 'replace'
-      ? `Вы точно хотите ЗАМЕНИТЬ данные программы?\n\n${list}\n\nУ этих пунктов в программе останется только то, что есть в папке репозитория, — всё остальное уберётся. Прежние данные программа отложит в папку «прежние данные <дата>» рядом со своими данными. Окно программы обновится.`
+      ? `Вы точно хотите ЗАМЕНИТЬ данные программы?\n\n${list}\n\nУ этих пунктов в программе останется только то, что есть в папке, — всё остальное уберётся. Прежние данные программа отложит в папку «прежние данные <дата>» рядом со своими данными. Окно программы обновится.`
       : `Добавить в программу из папки:\n${list}\n\nВаше не удаляется: новое добавится, то же самое обновится. Окно программы обновится.`;
   if (!(await askYes(ask, restoreSrc.kind === 'backup' ? 'Восстановить' : mode === 'replace' ? 'Заменить' : 'Добавить', mode === 'replace'))) return;
   if (!restoreSrc) return; // пока спрашивали, источник сбросили

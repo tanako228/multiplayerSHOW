@@ -857,7 +857,8 @@ function renderFeed() {
   // Открыли другой плейлист/библиотеку или другой пункт — видимые слайды выезжают по очереди (motion.js);
   // обычная перерисовка того же (показ слайда, правка) — без анимации
   const fresh = feed.dataset.view !== workKey() || feed.dataset.open !== (single ? openKey || '' : '');
-  if (fresh && window.UiMotion) queueMicrotask(() => UiMotion.cascade(feed.querySelectorAll('.svc-ihead, .sl, .svc-empty'), { max: 20, gap: .018 }));
+  // Перелистали стрелками в следующую презентацию — каскад вдвое мягче (короче сдвиг и шаг), щелчком открыли — полный
+  if (fresh && window.UiMotion) { const soft = !UiMotion.clicked(); queueMicrotask(() => UiMotion.cascade(feed.querySelectorAll('.svc-ihead, .sl, .svc-empty'), soft ? { max: 20, gap: .009, dy: 5 } : { max: 20, gap: .018 })); }
   feed.dataset.open = single ? openKey || '' : '';
   feed.dataset.view = workKey();
   if (thumbIO) thumbIO.disconnect(); // миниатюры прежней ленты больше не ждут показа
@@ -1630,6 +1631,9 @@ function showMenu(e, items) {
   const y = Math.max(6, Math.min(e.clientY, window.innerHeight - r.height - 6));
   ctxMenu.style.left = x - r.left + 'px';
   ctxMenu.style.top = y - r.top + 'px';
+  // Всё меню помещается — прокрутки нет вовсе. Иначе полоса на миг вылезала сама: подсветка пункта, вытянутая
+  // на ходу (glide.js), и пункты, падающие при раскрытии (motion.js), выходят за нижний край
+  if (ctxMenu.scrollHeight <= ctxMenu.clientHeight + 1) ctxMenu.style.overflowY = 'hidden';
   // кружки цветов выскакивают по очереди и приподнимаются под мышью (colorfly.js)
   if (typeof ColorFly !== 'undefined') ctxMenu.querySelectorAll('.ctx-colors').forEach((row) => ColorFly.enter(row, 'button'));
   if (window.Glide) Glide.menu(ctxMenu); // подсветка пункта едет за мышью и стрелками (glide.js)

@@ -62,7 +62,8 @@ const SHORT_NAME = 'MP Show'; // короткое имя — заголовок 
 const APP_ID = app.isPackaged ? 'org.multiplayershow.app' : 'org.multiplayershow.dev';
 app.setName(APP_NAME);
 if (process.platform === 'win32') app.setAppUserModelId(APP_ID);
-app.setPath('userData', path.join(app.getPath('appData'), 'church-presenter'));
+// MPS_USER_DATA — другая папка данных (проверки: второй «компьютер» на этом же ПК, не трогая настоящие данные)
+app.setPath('userData', process.env.MPS_USER_DATA ? path.resolve(process.env.MPS_USER_DATA) : path.join(app.getPath('appData'), 'church-presenter'));
 
 // Профили (profiles.js): у каждого свои библиотеки, плейлисты и настройки окна, часть данных может быть общей.
 // Переключение — окно оператора перезагружается с другим профилем, программа и окна показа работают дальше
@@ -1790,6 +1791,17 @@ app.whenReady().then(() => {
     return { dir };
   });
 
+  // Снимок локальной копии: вся папка — в соседнюю «<имя> — снимок <дата>» (восстанавливается как обычный репозиторий)
+  ipcMain.handle('repo:snapshot', async (_e, dir) => {
+    if (!dir || !fs.existsSync(repoFile(dir))) return { ok: false, error: 'нет локальной копии' };
+    while (repoBusy) await repoBusy.catch(() => {});
+    const stamp = new Date().toLocaleString('ru-RU').replace(/[/:]/g, '-').replace(/,/g, '');
+    const dst = path.join(path.dirname(dir), `${path.basename(dir)} — снимок ${stamp}`);
+    try {
+      await fs.promises.cp(dir, dst, { recursive: true, errorOnExist: true, force: false });
+      return { ok: true, dir: dst, marker: repoFile(dst) };
+    } catch (err) { return { ok: false, error: String(err && err.message || err) }; }
+  });
   ipcMain.handle('repo:reveal', (_e, dir) => (dir && fs.existsSync(dir) ? shell.openPath(dir) : 'нет папки'));
   // «Показать в проводнике»: открыть папку файла и выделить его
   ipcMain.handle('file:reveal', (_e, p) => {
@@ -2592,6 +2604,23 @@ app.whenReady().then(() => {
       console.warn('Профили:', e.message);
       return { ok: false, error: e.message, state: profiles.catalog() };
     }
+  });
+
+  /* ---------- Облако (cloudsrv.js, окно — cloud.js): синхронизация открытого профиля через Google Диск или папку ---------- */
+  require('./cloudsrv.js').setup(ipcMain, {
+    app, ud: () => app.getPath('userData'),
+    profile: () => { const id = profiles.active(); const p = (profiles.state().list || []).find((x) => x.id === id); return { id, name: p && p.name }; },
+    libView, saveLib: (o) => { profiles.save(o); team.libSaved(o); },
+    readIndex: () => readIndex(), writeIndex: (l) => writeIndex(l), bibleDir: () => bibleDir(), owner: (kind, k) => repoOwner(kind, k),
+    seal: (s) => (safeStorage.isEncryptionAvailable() ? 'dp:' + safeStorage.encryptString(s).toString('base64') : 'raw:' + Buffer.from(s).toString('base64')),
+    unseal: (s) => (s.startsWith('dp:') ? safeStorage.decryptString(Buffer.from(s.slice(3), 'base64')) : s.startsWith('raw:') ? Buffer.from(s.slice(4), 'base64').toString() : ''),
+    openUrl: (u) => shell.openExternal(u), openPath: (p) => shell.openPath(p),
+    pickDir: async (sender) => {
+      const res = await dialog.showOpenDialog(BrowserWindow.fromWebContents(sender), { title: 'Папка для синхронизации', properties: ['openDirectory', 'createDirectory'] });
+      return res.canceled ? null : res.filePaths[0] || null;
+    },
+    blocked: () => profSwitching,
+    send: (ch, data) => { if (control && !control.isDestroyed()) control.webContents.send(ch, data); },
   });
 
   /* ---------- Библия ---------- */

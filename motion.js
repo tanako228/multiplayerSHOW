@@ -49,7 +49,8 @@ window.UiMotion = (() => {
     let box, tail, labs = [], cur = null, prev = null, curText = '', showT = 0, hideT = 0, lastHide = 0, below = true, muted = null;
     const LEAD = [620, 36], TRAIL = [190, 19];
     const L = S(0, ...LEAD), R = S(0, ...LEAD), T = S(0, 300, 24), H = S(0, 300, 24), X = S(0, 300, 22), A = S(0, 420, 24);
-    const GAP = 8, PADX = 9, PADY = 5, MAXW = 300;
+    const GAP = 8, PADX = 9, PADY = 5, MAXW = 300, INFOW = 340;
+    let maxw = MAXW; // у знака «i» (.info-i) — пошире: там пара абзацев
 
     function build() {
       box = Object.assign(document.createElement('div'), { className: 'mo-tip' });
@@ -65,7 +66,7 @@ window.UiMotion = (() => {
     function measure(text) {
       // меряем вне подсказки: закрытая (popover) она display: none и ширины не даёт
       const m = Object.assign(document.createElement('span'), { className: 'mo-tip-lab', textContent: text });
-      m.style.cssText = 'position:fixed;visibility:hidden;left:0;top:0;transform:none;max-width:' + (MAXW - PADX * 2) + 'px';
+      m.style.cssText = 'position:fixed;visibility:hidden;left:0;top:0;transform:none;max-width:' + (maxw - PADX * 2) + 'px';
       document.body.append(m);
       const tw = Math.ceil(m.getBoundingClientRect().width) + 1;
       const r = { tw, w: tw + PADX * 2, h: Math.ceil(m.offsetHeight) + PADY * 2 };
@@ -94,6 +95,7 @@ window.UiMotion = (() => {
     function show(el, text) {
       clearTimeout(hideT); hideT = 0;
       if (!box) build();
+      maxw = el.classList.contains('info-i') ? INFOW : MAXW;
       const was = clamp(A.x, 0, 1) > .3 && prev && prev.isConnected;
       let dir = 0;
       if (was) {
@@ -187,10 +189,11 @@ window.UiMotion = (() => {
       return false;
     }
     const IDLE = 1500; // мышь стоит на месте полторы секунды — тогда подсказка
+    const INFO_IDLE = 180; // знак «i» для того и наведён — почти сразу
     let mx = 0, my = 0;
     function arm(el, text) {
       clearTimeout(showT);
-      showT = setTimeout(() => { showT = 0; if (held === el && el.isConnected && muted !== el && heldTitle) show(el, heldTitle); }, IDLE);
+      showT = setTimeout(() => { showT = 0; if (held === el && el.isConnected && muted !== el && heldTitle) show(el, heldTitle); }, el.classList.contains('info-i') ? INFO_IDLE : IDLE);
     }
     function over(e) {
       // внутри кнопки, у которой title уже снят, — это всё ещё она
@@ -523,13 +526,33 @@ window.UiMotion = (() => {
     foldWatch($('mcQuick'), () => [...$('mcQuick').children].slice(1));
     iconSwap($('playPause')); iconSwap($('vPlay'));
     seekTip($('seek'), $('timeEnd')); seekTip($('vSeek'), $('vTimeEnd'));
+    // Выбрали вкладку наверху — её значок «подпрыгивает» (сжался и отпружинил)
+    document.querySelectorAll('.tabs-side .tab').forEach((t) => {
+      new MutationObserver(() => { if (t.getAttribute('aria-selected') === 'true') pop(t.querySelector('.mp-icon'), .7); })
+        .observe(t, { attributes: true, attributeFilter: ['aria-selected'] });
+    });
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
 
   // Слайд щёлкнули мышью только что — «прыжок» полный; листают стрелками — слабее
-  let slideClickT = -1e9;
-  document.addEventListener('pointerdown', (e) => { if (e.target.closest && e.target.closest('.sl')) slideClickT = performance.now(); }, true);
-  const slidePop = (el) => pop(el, performance.now() - slideClickT < 700 ? .965 : .979);
+  // Полный «прыжок» (96,5 %) — только когда по слайду (стиху) щёлкнули мышью после паузы.
+  // Листают (стрелки, пульт, кликер, щелчки подряд быстрее чем через 1,2 с) — вдвое слабее (98,25 %)
+  let clickT = -1e9, popT = -1e9, downT = -1e9;
+  document.addEventListener('pointerdown', (e) => { downT = performance.now(); if (e.target.closest && e.target.closest('.sl, [data-v]')) clickT = downT; }, true);
+  const clicked = () => performance.now() - downT < 700; // только что щёлкнули мышью где угодно (открыли пункт, плейлист)
+  const paging = () => { const now = performance.now(); return now - clickT > 700 || now - popT < 1200; };
+  function slidePop(el) {
+    const soft = paging();
+    popT = performance.now();
+    pop(el, soft ? .9825 : .965);
+  }
+  // Сразу несколько (место Писания из нескольких стихов) — одним решением о силе, не больше 6 строк
+  function slidePopAll(els) {
+    if (!els.length) return;
+    const soft = paging();
+    popT = performance.now();
+    els.slice(0, 6).forEach((el) => pop(el, soft ? .9825 : .965));
+  }
 
-  return { drop, tip, enter, pop, slidePop, cascade, roll };
+  return { drop, tip, enter, pop, slidePop, slidePopAll, paging, clicked, cascade, roll };
 })();
