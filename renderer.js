@@ -1109,6 +1109,7 @@ function layersChanged() {
   updateLive();
   if (typeof renderLayers === 'function') renderLayers();
   if (typeof mpLiveChanged === 'function') mpLiveChanged(); // «Карты»: что из карт на экране (maps.js)
+  livePush(); // удалённый режим: окно A узнает, что на экране
 }
 
 /* ---------- Просмотр без вывода (peek): файл из медиапула или пункт «Содержания» ----------
@@ -1191,6 +1192,44 @@ function buildStep() {
 
 // Тема для текста, картинок или своих слайдов (см. playlist.js); без неё — «Текст Библии» из настроек
 const styleOf = (kind, item, slide) => (typeof styleFor === 'function' ? styleFor(kind, item, slide) : textStyle());
+
+/* ---------- Удалённый режим (workplace.js, R5): что на экране — окну, которое продолжит показ ----------
+   Перехват: окно A отдаёт снимок (wpui.js → wpFlushed), окно B после перезагрузки его восстанавливает; пока B
+   управляет, каждая смена уходит на A (wpShowPut), и окно A, вернувшись, продолжает с того же места.
+   На экраны ничего заново не выводится — они и так показывают это; восстанавливаются слои, «Предпросмотр»,
+   подсветка в списках. Пересобрать по новым настройкам такие слои нельзя: показываются как были */
+function liveSnap() {
+  const layers = {};
+  for (const [id, x] of Object.entries(layerOn)) layers[id] = { label: x.label || '', content: x.content, marks: x.marks || null };
+  return { layers, live, bShown, plShown, at: Date.now() };
+}
+function liveRestore(s) {
+  if (!s || !s.layers || typeof s.layers !== 'object') return;
+  const same = (a, b) => a && b && JSON.stringify(a) === JSON.stringify(b);
+  live = typeof s.live === 'number' ? s.live : -1;
+  bShown = s.bShown || null;
+  plShown = s.plShown || null;
+  const tr = { type: 'none', ms: 0 };
+  for (const [id, x] of Object.entries(s.layers)) {
+    if (!x || !x.content || !layerById(id)) continue;
+    const content = x.content;
+    // Подсветка сравнивается по ссылке (renderer.js: clearLayer) — та же, что у восстановленных live/bShown/plShown
+    const m = x.marks && typeof x.marks === 'object' ? { ...x.marks } : null;
+    if (m && same(m.bShown, bShown)) m.bShown = bShown;
+    if (m && same(m.plShown, plShown)) m.plShown = plShown;
+    layerOn[id] = { build: () => content, label: x.label || '', content, marks: m };
+    Scene.show(prevStage, Compose.lookFor('main', { ...content, sound: content.type === 'video' && !!content.sound }), tr, id);
+    Compose.progShow({ ...content, sound: false }, tr, id);
+  }
+  layersChanged(); // updateLive — подсветка в списках
+}
+// B: показ сменился — снимок на A (не чаще раза в 0,3 с)
+let liveSnapT = 0;
+function livePush() {
+  if (!(window.wpIsClient && window.wpIsClient()) || !window.api.wpShowPut) return;
+  clearTimeout(liveSnapT);
+  liveSnapT = setTimeout(() => { try { window.api.wpShowPut(liveSnap()); } catch { /* не клонируется — в следующий раз */ } }, 300);
+}
 
 // Настройки поменялись — пересобрать слои (кроме живых источников: их не перезапускаем)
 function refreshLive() {

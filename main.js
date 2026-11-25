@@ -1,4 +1,7 @@
-const { app, BrowserWindow, ipcMain, dialog, screen, nativeImage, clipboard, shell, desktopCapturer, powerMonitor, safeStorage } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, screen, nativeImage, clipboard, shell, desktopCapturer, powerMonitor, safeStorage, protocol, net, session } = require('electron');
+// Удалённый режим (workplace.js): подмена ipcMain — до первого обработчика, иначе его вызовы не уйдут на компьютер A
+const wp = require('./workplace');
+wp.hook(ipcMain);
 const dgram = require('dgram');
 const ndi = require('./ndi');
 const cast = require('./cast');
@@ -46,7 +49,12 @@ const trDlg = (o) => {
 for (const k of ['showOpenDialog', 'showSaveDialog', 'showMessageBox']) {
   try {
     const f = dialog[k].bind(dialog);
-    dialog[k] = (w, o) => (o === undefined ? f(trDlg(w)) : f(w, trDlg(o)));
+    dialog[k] = (w, o) => {
+      // Этим компьютером управляют с другого (workplace.js): окно выбора здесь никто не увидит — его показывает
+      // управляющий компьютер своим окном обзора папок ЭТОГО компьютера (wpbrowse.js), ответ — как у Electron
+      if (wp.hostLocked()) return wp.remoteDialog(k, o === undefined ? w : o);
+      return o === undefined ? f(trDlg(w)) : f(w, trDlg(o));
+    };
   } catch { /* не вышло — окна останутся по-русски */ }
 }
 
@@ -91,6 +99,8 @@ app.on('second-instance', () => {
 const lsBackupFile = () => profiles.lsFile(); // своя у каждого профиля
 ipcMain.on('ls:backup', (e, data) => {
   if (profSwitching) { e.returnValue = true; return; } // уходящее окно — это настройки старого профиля
+  // Окно работает с данными другого компьютера (workplace.js) — копия настроек в его файл, не в свой
+  if (wp.isClient()) { if (data && typeof data === 'object' && data['cp.settings']) wp.sendLs(data); e.returnValue = true; return; }
   try {
     if (!data || typeof data !== 'object' || !data['cp.settings']) return; // пустое не пишем — не затереть копию
     const f = lsBackupFile();
@@ -100,12 +110,19 @@ ipcMain.on('ls:backup', (e, data) => {
   e.returnValue = true; // для sendSync при закрытии окна
 });
 ipcMain.on('ls:restore', (e) => {
+  if (wp.isClient()) { e.returnValue = wp.clientLs(); return; } // снимок настроек окна компьютера A
   try { e.returnValue = JSON.parse(fs.readFileSync(lsBackupFile(), 'utf8')); } catch { e.returnValue = null; }
 });
 // Окно оператора загружается (preload.js): какой профиль открыт. С этого момента окно снова пишет
+// Удалённый режим: у окна, управляющего компьютером A, — «профиль» wp:<имя A> (preload.js отдаёт свои настройки в
+// свой файл и берёт снимок A, как при смене профиля). fresh — окно A вернулось после чужого управления: его
+// localStorage устарел, настройки брать из файла (туда писал управлявший компьютер)
+let wpFresh = false;
 ipcMain.on('profile:boot', (e) => {
   profSwitching = false;
-  e.returnValue = { id: profiles.active() };
+  const fresh = wpFresh;
+  wpFresh = false;
+  e.returnValue = wp.isClient() ? { id: 'wp:' + wp.clientName(), remote: wp.clientName() } : { id: profiles.active(), fresh };
 });
 // Настройки окна, оставшиеся от другого профиля (переключили — а окно не успело записать) — в его файл
 ipcMain.on('ls:backupFor', (e, { id, data } = {}) => {
@@ -121,6 +138,7 @@ ipcMain.on('ls:backupFor', (e, { id, data } = {}) => {
 });
 
 let control = null;      // окно оператора
+let controlSend0 = () => {}; // событие окну оператора в обход пересылки (createControl)
 let output = null;       // окно вывода на внешний монитор
 let outputDisplayId = null;
 let current = {};        // что сейчас на экране: слой → содержимое сцены (Media Layers)
@@ -711,16 +729,22 @@ function openOutput(displayId) {
 }
 
 // Новое окно вывода: всё, что сейчас на экране — без переходов
+// Что сейчас на экране — новому окну вывода (и зрителю удалённого режима, workplace.js): [[канал, данные]]
+function replayList() {
+  const out = [];
+  if (screensCfg) out.push(['screen:config', screensCfg]);
+  if (screenStage) out.push(['screen:stage', screenStage]);
+  if (currentLayers) out.push(['output:layers', { defs: currentLayers }]);
+  for (const [layer, content] of Object.entries(current)) out.push(['output:show', { content, layer, transition: { type: 'none', ms: 0 } }]);
+  if (currentInk) out.push(['output:ink', currentInk]);
+  if (currentView) out.push(['output:view', { view: currentView, ms: 0 }]);
+  // Громкость и устройство звука видео — новому окну вывода тоже
+  for (const m of Object.values(videoAudio)) out.push(['output:video', m]);
+  return out;
+}
 function replayTo(win) {
   const wc = win.webContents;
-  if (screensCfg) wc.send('screen:config', screensCfg);
-  if (screenStage) wc.send('screen:stage', screenStage);
-  if (currentLayers) wc.send('output:layers', { defs: currentLayers });
-  for (const [layer, content] of Object.entries(current)) wc.send('output:show', { content, layer, transition: { type: 'none', ms: 0 } });
-  if (currentInk) wc.send('output:ink', currentInk);
-  if (currentView) wc.send('output:view', { view: currentView, ms: 0 });
-  // Громкость и устройство звука видео — новому окну вывода тоже
-  for (const m of Object.values(videoAudio)) wc.send('output:video', m);
+  for (const [ch, d] of replayList()) wc.send(ch, d);
   if (frozen) wc.send('output:freeze', { on: true, fresh: false }); // стоп-кадр: новое окно берёт уже снятый кадр
 }
 const videoAudio = {}; // последние команды 'volume' и 'sink' проигрывателя
@@ -790,7 +814,7 @@ function openFloatWin({ id, name }) {
   focusBackOnClose(win);
   floatWins.set(sid, win);
 }
-const toOutputs = (channel, msg) => outWins().forEach((w) => w.webContents.send(channel, msg));
+const toOutputs = (channel, msg) => { outWins().forEach((w) => w.webContents.send(channel, msg)); wp.watchEvent(channel, msg); }; // и зрителям удалённого режима
 
 // Какие выходы должны быть открыты сейчас: [{ key, s, o }]
 function wantedOutputs() {
@@ -1178,6 +1202,7 @@ function createControl() {
   control = new BrowserWindow({
     width: 1360, height: 860, minWidth: 1000, minHeight: 600,
     backgroundColor: '#0F1420', // цвет заставки — окно открывается без вспышки
+    show: false, // покажем, когда загрузится (заставка createSplash → revealControl)
     icon: APP_ICON,
     autoHideMenuBar: true,
     title: SHORT_NAME,
@@ -1194,6 +1219,18 @@ function createControl() {
     });
   }
   keepKeyboard(control);
+  // Удалённый режим (workplace.js): всё, что главный процесс шлёт окну оператора, — и управляющему компьютеру B;
+  // на B само окно в это время получает события компьютера A, а свои — только CLIENT_OWN (обновление, вопрос о закрытии…)
+  {
+    const wc = control.webContents;
+    const send0 = wc.send.bind(wc);
+    controlSend0 = (ch, d) => { if (!wc.isDestroyed()) send0(ch, d); };
+    wc.send = (ch, ...a) => {
+      wp.hostEvent(ch, a[0]);
+      if (wp.isClient() && !wp.clientOwn(ch)) return;
+      send0(ch, ...a);
+    };
+  }
   control.loadFile('index.html');
   // Окно программы перенесли на другой монитор: там выводить нельзя — выходы экранов оттуда уходят (и возвращаются,
   // когда окно уберут), вывод зала закрывается; список мониторов в окне программы обновляется
@@ -1276,8 +1313,64 @@ function fixShortcuts() {
   if (fixed) execFile(path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'ie4uinit.exe'), ['-show'], () => {});
 }
 
+/* ---------- Заставка при запуске (brand/splash-win.html) ----------
+   Прозрачное окно без рамки над рабочим столом: иконки инструментов перекидываются, в конце — значок MP Show.
+   Главное — скорость: окно программы скрыто только пока грузится (splash.js → app:ready). Как только готово —
+   заставка пропускает оставшиеся иконки и быстро показывает значок с надписью (~0,7 с), потом окно открывается.
+   Если что-то зависло — через 15 с всё равно. */
+let splashWin = null;
+function createSplash() {
+  const W = 640, H = 360;
+  const b = control && !control.isDestroyed() ? control.getBounds() : screen.getPrimaryDisplay().workArea;
+  splashWin = new BrowserWindow({
+    x: Math.round(b.x + (b.width - W) / 2), y: Math.round(b.y + (b.height - H) / 2), width: W, height: H,
+    frame: false, transparent: true, backgroundColor: '#00000000', resizable: false, movable: false, focusable: false,
+    skipTaskbar: true, alwaysOnTop: true, hasShadow: false, show: false, icon: APP_ICON,
+    webPreferences: { contextIsolation: true, sandbox: true },
+  });
+  splashWin.setIgnoreMouseEvents(true);
+  splashWin.on('closed', () => { splashWin = null; });
+  splashWin.loadFile(path.join(__dirname, 'brand', 'splash-win.html'));
+  splashWin.once('ready-to-show', () => { if (splashWin && !(control && control.isVisible())) splashWin.showInactive(); });
+  const t0 = Date.now();
+  new Promise((ok) => { ipcMain.once('app:ready', ok); setTimeout(ok, 15000); }).then(() => {
+    if (process.env.MPS_SPLASH_LOG) console.log(`[splash] окно программы готово через ${Date.now() - t0} мс`);
+    revealControl();
+  });
+}
+async function revealControl() {
+  const s = splashWin;
+  // Программа готова: заставка быстро досматривается до значка MP Show (window.finish) — его видно хотя бы мгновение;
+  // ждём не больше 1,6 с, что бы ни случилось с окном заставки
+  if (s && !s.isDestroyed()) {
+    const wc = s.webContents;
+    await Promise.race([
+      (async () => {
+        if (wc.isLoading()) await new Promise((ok) => wc.once('did-finish-load', ok));
+        await wc.executeJavaScript('window.finish ? window.finish() : 0');
+      })().catch(() => {}),
+      new Promise((ok) => setTimeout(ok, 1600)),
+    ]);
+  }
+  if (control && !control.isDestroyed() && !control.isVisible()) {
+    // Скрытое окно не рисуется: Windows сначала показал бы старый кадр. Показываем прозрачным, ждём, пока
+    // страница нарисуется заново (два кадра, не дольше 300 мс), и только тогда делаем видимым
+    control.setOpacity(0);
+    control.show(); control.focus();
+    await Promise.race([
+      control.webContents.executeJavaScript('new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))').catch(() => {}),
+      new Promise((ok) => setTimeout(ok, 300)),
+    ]);
+    if (!control.isDestroyed()) control.setOpacity(1);
+  }
+  if (!s || s.isDestroyed()) return;
+  s.webContents.executeJavaScript('window.bye && window.bye()').catch(() => {});
+  setTimeout(() => { if (!s.isDestroyed()) s.close(); }, 340);
+}
+
 app.whenReady().then(() => {
   createControl();
+  createSplash();
   setTimeout(() => { try { fixShortcuts(); } catch { /* не мешать работе */ } }, 5000);
 
   const onDisplaysChanged = () => {
@@ -1323,6 +1416,7 @@ app.whenReady().then(() => {
   ipcMain.handle('output:settings', (_e, st) => {
     outputSettings = { resW: Number(st.resW) || 0, resH: Number(st.resH) || 0 };
     if (output && !output.isDestroyed()) output.webContents.send('output:settings', outputSettings);
+    wp.watchEvent('output:settings', outputSettings);
   });
 
   ipcMain.handle('output:show', (_e, payload) => {
@@ -2379,6 +2473,7 @@ app.whenReady().then(() => {
     opLive: (q) => opLive(q),
   });
   app.on('will-quit', team.shutdown);
+  wpSetup();
   // Окно оператора раз в секунду: эти экраны идут на планшеты видео — держать их зеркала и слать кадры
   ipcMain.handle('team:castKeep', (_e, sids) => {
     for (const sid of (Array.isArray(sids) ? sids : []).slice(0, 4)) {
@@ -2938,6 +3033,125 @@ app.whenReady().then(() => {
   });
 });
 
+/* ---------- Удалённый режим (workplace.js): этим компьютером (A) управляет другой (B), или наоборот ----------
+   A: «Разрешить управление» (Настройки → Удалённое управление) — код из 6 цифр; B подключился → окно оператора A
+   сохраняет всё (wp:flush → profFlush) и становится плашкой wplock.html; B ушёл → окно A грузится с диска (wpFresh).
+   B: «Подключиться» → окно B перезагружается и работает с данными A (profile:boot → wp:<имя>, ls:restore — снимок A). */
+const wpFile = () => path.join(app.getPath('userData'), 'workplace.json');
+function wpSaved() { try { const j = JSON.parse(fs.readFileSync(wpFile(), 'utf8')); return j && typeof j === 'object' ? j : {}; } catch { return {}; } }
+let wpFlushWait = null;
+/* ---------- R5: «Смотреть без управления» — экран компьютера A в обычном окне на B ----------
+   output.html, как у окна вывода, но в своей сессии: её file:// берётся у A (workplace.js: watchFile), окно
+   оператора B этого не касается. Звук выключен. Закрыли окно — перестали смотреть */
+const wpWatch = { win: null, ready: false, queue: [] };
+function wpWatchOpen({ name, replay }) {
+  if (wpWatch.win && !wpWatch.win.isDestroyed()) wpWatch.win.destroy();
+  const ses = session.fromPartition('wpwatch');
+  if (!ses.__wp) { ses.__wp = true; ses.protocol.handle('file', (req) => wp.watchFile(req)); }
+  const win = new BrowserWindow({ width: 960, height: 540 + 32, minWidth: 320, minHeight: 200, backgroundColor: '#000000', title: 'Экран компьютера «' + name + '»', autoHideMenuBar: true, webPreferences: { ...webPreferences, partition: 'wpwatch' } });
+  wpWatch.win = win; wpWatch.ready = false; wpWatch.queue = (replay || []).slice();
+  win.setMenuBarVisibility(false);
+  win.webContents.setAudioMuted(true);
+  win.on('page-title-updated', (e) => e.preventDefault());
+  win.webContents.on('did-finish-load', () => {
+    if (wpWatch.win !== win) return;
+    wpWatch.ready = true;
+    for (const [ch, d] of wpWatch.queue.splice(0)) win.webContents.send(ch, d);
+  });
+  win.on('closed', () => { if (wpWatch.win === win) { wpWatch.win = null; wp.watchStop(); } });
+  win.loadFile('output.html', { query: { screen: 'main' } });
+}
+function wpWatchSend(ch, d) {
+  const w = wpWatch.win;
+  if (!w || w.isDestroyed()) return;
+  if (!wpWatch.ready) { wpWatch.queue.push([ch, d]); return; }
+  w.webContents.send(ch, d);
+}
+
+function wpSetup() {
+  const isOp = () => !!control && !control.isDestroyed() && /\/index\.html$/i.test(new URL(control.webContents.getURL() || 'file:///x').pathname);
+  wp.setup({
+    name: () => os.hostname(),
+    profile: () => profiles.active(),
+    ips: rmIps,
+    port: () => rmPort,
+    want: () => rmWant(),
+    saved: wpSaved,
+    save: (patch) => { try { fs.writeFileSync(wpFile(), JSON.stringify({ ...wpSaved(), ...patch })); } catch { /* не страшно */ } },
+    log: (s) => console.log(s),
+    switching: () => profSwitching,
+    notify: (st) => controlSend0('wp:state', st),
+    toControl: (ch, d) => controlSend0(ch, d),
+    // Вызовы с B выполняются так, будто их сделало окно оператора A (pool:watch шлёт ему события — дойдут до B)
+    event: () => (control && !control.isDestroyed() ? { sender: control.webContents, senderFrame: control.webContents.mainFrame, remote: true } : { sender: null, remote: true }),
+    // Перехват: окно A — всё несохранённое на диск (renderer: wpui.js → profFlush), не дольше 20 с
+    flush: () => new Promise((ok) => {
+      if (!isOp()) { ok(null); return; }
+      const t = setTimeout(() => { wpFlushWait = null; ok(null); }, 20000);
+      wpFlushWait = (r) => { clearTimeout(t); wpFlushWait = null; ok(r || null); };
+      controlSend0('wp:flush', {});
+    }),
+    lock: async () => { if (control && !control.isDestroyed()) await control.loadFile('wplock.html'); },
+    unlock: () => {
+      if (!control || control.isDestroyed() || isOp()) return;
+      wpFresh = true;
+      control.loadFile('index.html').catch(() => {});
+    },
+    lsRead: () => { try { return JSON.parse(fs.readFileSync(lsBackupFile(), 'utf8')); } catch { return null; } },
+    lsWrite: (data) => {
+      try {
+        const f = lsBackupFile();
+        fs.writeFileSync(f + '.tmp', JSON.stringify(data));
+        fs.renameSync(f + '.tmp', f);
+      } catch { /* в следующий раз */ }
+    },
+    // Окно B — с данными A или снова со своими: как при смене профиля, уходящее окно ничего не пишет
+    // Файлы A для окна B (wpfiles.js): папка данных — вся; остальное — если путь или его папка упомянуты в данных
+    fileRoots: () => [app.getPath('userData')],
+    dataFiles: () => [profiles.libFile(), lsBackupFile(), path.join(app.getPath('userData'), 'shared', 'shared.json')],
+    // B: адреса file:// окна — с компьютера A, кроме файлов самой программы
+    appDirs: [__dirname, process.resourcesPath].filter(Boolean),
+    localFetch: (req) => net.fetch(req, { bypassCustomProtocolHandlers: true }),
+    fileProto: (on) => {
+      try { if (protocol.isProtocolHandled('file')) protocol.unhandle('file'); } catch { /* не был */ }
+      if (on) protocol.handle('file', (req) => wp.fileRequest(req));
+    },
+    upDir: () => path.join(app.getPath('userData'), 'remote-files'), // файлы, перетащенные в окно управляющего компьютера
+    // R5: что на экранах на самом деле — сверить снимок окна оператора; всё, что нужно новому окну вывода, — зрителю
+    outCurrent: () => current,
+    outReplay: () => [['output:settings', outputSettings], ...replayList()],
+    watchOpen: (x) => wpWatchOpen(x),
+    watchSend: (ch, d) => wpWatchSend(ch, d),
+    watchClose: () => { const w = wpWatch.win; wpWatch.win = null; if (w && !w.isDestroyed()) w.destroy(); },
+    focus: () => { if (control && !control.isDestroyed()) { if (control.isMinimized()) control.restore(); control.focus(); } },
+    reload: () => { if (!control || control.isDestroyed()) return; profSwitching = true; control.loadFile('index.html').catch(() => {}); },
+  });
+  ipcMain.handle('wp:state', () => wp.state());
+  ipcMain.handle('wp:host', (_e, on) => wp.hostSet(on));
+  ipcMain.handle('wp:connect', (_e, x) => wp.connect(x || {}));
+  ipcMain.handle('wp:disconnect', () => wp.disconnect());
+  ipcMain.handle('wp:take', () => wp.hostTakeBack()); // плашка A: «Забрать управление»
+  ipcMain.handle('wp:find', () => wp.discover(1500)); // B: компьютеры A в сети
+  ipcMain.handle('wp:show', () => wp.takeShow()); // R5: окно оператора загрузилось — что на экране (один раз)
+  ipcMain.on('wp:showPut', (_e, x) => wp.showPut(x)); // R5: B — свежий снимок показа на A
+  ipcMain.handle('wp:watchStop', () => wp.watchStop()); // R5: перестать смотреть экран A
+  ipcMain.handle('wp:forget', (_e, id) => wp.hostForget(String(id || ''))); // A: забыть запомненный компьютер
+  ipcMain.handle('wp:flushed', (_e, r) => { if (wpFlushWait) wpFlushWait(r); return true; });
+  ipcMain.handle('wp:bye', () => wp.takeBye()); // окно B после отключения: почему (один раз)
+  ipcMain.handle('wp:dialogDone', (_e, x) => wp.dialogDone(x)); // окно обзора B ответило
+  ipcMain.on('wp:upmap', (e, p) => { e.returnValue = wp.uploadMap(String(p || '')); }); // перетащенный файл → путь на A
+  // Окно обзора B: папки ЭТОГО компьютера (вызов приходит с B как обычный). Только пока открыт выбор файлов
+  ipcMain.handle('wpfs:list', (_e, dir) => {
+    if (!wp.dialogPending()) throw new Error('Окно выбора уже закрыто');
+    const wf = require('./wpfiles');
+    const places = [['Рабочий стол', 'desktop'], ['Документы', 'documents'], ['Изображения', 'pictures'], ['Видео', 'videos'], ['Музыка', 'music'], ['Загрузки', 'downloads']]
+      .map(([name, k]) => { try { return { name, path: app.getPath(k) }; } catch { return null; } }).filter(Boolean);
+    places.unshift({ name: 'Домашняя папка', path: os.homedir() });
+    return { ...wf.listDir(dir || os.homedir()), places, drives: wf.drives(), sep: path.sep };
+  });
+  app.on('will-quit', wp.shutdown);
+}
+
 /* ---------- Пульт с телефона (remote.js): свой маленький веб-сервер в локальной сети ----------
    Оператор даёт доступ к одной презентации — у доступа свой ключ (token) и QR-код со ссылкой
    http://<адрес ПК>:<порт>/r/<ключ>. Телефон видит только эту презентацию: слайды, что на экране, что дальше,
@@ -2982,7 +3196,8 @@ function rmStart() {
     rmNotify();
   });
   rmSrv.on('listening', () => { rmPort = port; rmNotify(); });
-  rmSrv.on('upgrade', (req, sock, head) => { if (!team.upgrade(req, sock, head)) sock.destroy(); }); // WebSocket группы /ws
+  // WebSocket группы /ws и управляющего компьютера /wp (workplace.js)
+  rmSrv.on('upgrade', (req, sock, head) => { if (!wp.upgrade(req, sock, head) && !team.upgrade(req, sock, head)) sock.destroy(); });
   rmSrv.listen(port, '0.0.0.0');
 }
 function rmStop() {
@@ -2995,11 +3210,11 @@ function rmStop() {
   rmMirrorClose();
   rmNotify();
 }
-const rmNotify = () => { if (control && !control.isDestroyed()) control.webContents.send('remote:info', rmInfo()); team.changed(); };
+const rmNotify = () => { if (control && !control.isDestroyed()) control.webContents.send('remote:info', rmInfo()); team.changed(); wp.changed(); };
 // Сервер нужен, пока есть хоть один доступ к презентации или включён доступ для группы (простой адрес /app/ по Wi-Fi)
 let chordReq = 0;
 const chordWait = new Map(); // ответы окна оператора на аккорды с телефона
-const rmWant = () => { if (rmState.grants.length || team.on()) rmStart(); else rmStop(); };
+const rmWant = () => { if (rmState.grants.length || team.on() || wp.hostOn()) rmStart(); else rmStop(); };
 
 // Что видит телефон: только своя презентация
 function rmView(g) {
@@ -3026,6 +3241,7 @@ function rmHandle(req, res) {
   }
   const u = new URL(req.url, 'http://x');
   if (team.route(req, res, u)) return; // приложение группы: /app/… (teamsrv.js)
+  if (wp.serveFile(req, res, u)) return; // файл этого компьютера для управляющего (workplace.js, wpfiles.js)
   const t = u.searchParams.get('t');
   const m = /^\/r\/([0-9a-z]+)\/?$/.exec(u.pathname);
   if (m) {

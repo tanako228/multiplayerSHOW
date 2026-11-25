@@ -2,6 +2,7 @@ const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
 const on = (channel, cb) => ipcRenderer.on(channel, (_e, data) => cb(data));
 let lsFlush = () => {}; // записать настройки окна в файл профиля сейчас (только окно оператора)
+let wpRemote = false; // окно управляет другим компьютером (workplace.js): перетащенные файлы — туда
 
 // Запасная копия настроек (только окно оператора): localStorage «cp.*» ↔ settings-backup.json (main.js).
 // Хранилище пропало (нет cp.settings) — до запуска скриптов окна возвращаем всё из файла.
@@ -18,13 +19,18 @@ if (/\/index\.html$/i.test(location.pathname)) {
   try {
     const boot = ipcRenderer.sendSync('profile:boot') || {};
     const owner = localStorage.getItem('cp.profile') || 'main';
-    if (boot.id && boot.id !== owner) {
+    if (boot.fresh) {
+      // Окно вернулось после управления с другого компьютера (workplace.js): настройки менял он — в файле свежее
+      const back = ipcRenderer.sendSync('ls:restore');
+      if (back && back['cp.settings']) { for (const k of Object.keys(snap())) localStorage.removeItem(k); fill(back); }
+    } else if (boot.id && boot.id !== owner) {
       const mine = snap();
       if (mine['cp.settings']) ipcRenderer.sendSync('ls:backupFor', { id: owner, data: mine });
       for (const k of Object.keys(mine)) localStorage.removeItem(k);
       fill(ipcRenderer.sendSync('ls:restore'));
     } else if (!localStorage.getItem('cp.settings')) fill(ipcRenderer.sendSync('ls:restore'));
     if (boot.id) localStorage.setItem('cp.profile', boot.id);
+    wpRemote = !!boot.remote;
   } catch { /* нет копии — первый запуск */ }
   // Пишем копию, когда что-то поменялось (проверка раз в 5 секунд) и при закрытии окна
   let last = '';
@@ -51,7 +57,8 @@ contextBridge.exposeInMainWorld('api', {
   describeFiles: (paths, opts) => ipcRenderer.invoke('media:describe', paths, opts),
   addPick: (opts) => ipcRenderer.invoke('add:pick', opts), // «Добавить…»: одно окно для файлов, песен, презентаций, тем
   addRead: (paths, opts) => ipcRenderer.invoke('add:read', paths, opts),
-  pathForFile: (file) => webUtils.getPathForFile(file),
+  // Перетащенный файл. Окно управляет другим компьютером — путь, где файл будет там (он уже едет туда, workplace.js)
+  pathForFile: (file) => { const p = webUtils.getPathForFile(file); return wpRemote && p ? ipcRenderer.sendSync('wp:upmap', p) : p; },
 
   openOutput: (displayId) => ipcRenderer.invoke('output:open', displayId),
   closeOutput: () => ipcRenderer.invoke('output:close'),
@@ -87,6 +94,25 @@ contextBridge.exposeInMainWorld('api', {
   profState: () => ipcRenderer.invoke('profile:state'),
   profDo: (a) => ipcRenderer.invoke('profile:do', a),
   profFlushLs: () => lsFlush(),
+  // Удалённый режим (workplace.js, окно — wpui.js; плашка на A — wplock.html)
+  wpState: () => ipcRenderer.invoke('wp:state'),
+  wpHost: (on) => ipcRenderer.invoke('wp:host', !!on),
+  wpConnect: (x) => ipcRenderer.invoke('wp:connect', x), // { addr, code } → { ok, error?, name? }
+  wpDisconnect: () => ipcRenderer.invoke('wp:disconnect'),
+  wpTake: () => ipcRenderer.invoke('wp:take'),
+  wpFind: () => ipcRenderer.invoke('wp:find'),
+  wpForget: (id) => ipcRenderer.invoke('wp:forget', id),
+  wpFlushed: (r) => ipcRenderer.invoke('wp:flushed', r),
+  wpShow: () => ipcRenderer.invoke('wp:show'), // R5: что на экране — окну после перехвата или возврата
+  wpShowPut: (s) => ipcRenderer.send('wp:showPut', s),
+  wpWatchStop: () => ipcRenderer.invoke('wp:watchStop'),
+  wpBye: () => ipcRenderer.invoke('wp:bye'),
+  onWpState: (cb) => on('wp:state', cb),
+  onWpFlush: (cb) => on('wp:flush', cb),
+  onWpNotice: (cb) => on('wp:notice', cb),
+  onWpDialog: (cb) => on('wp:dialog', cb), // A просит выбрать файлы (wpbrowse.js)
+  wpDialogDone: (x) => ipcRenderer.invoke('wp:dialogDone', x),
+  wpfsList: (dir) => ipcRenderer.invoke('wpfs:list', dir), // папка компьютера A
 
   setInk: (shapes, opts) => ipcRenderer.invoke('output:ink', shapes, opts),
   setView: (view, ms) => ipcRenderer.invoke('output:view', view, ms),
@@ -245,4 +271,5 @@ contextBridge.exposeInMainWorld('api', {
   filesCheck: (paths) => ipcRenderer.invoke('files:check', paths),
   onThumbDraw: (cb) => on('thumb:draw', cb),
   thumbReady: () => ipcRenderer.send('thumb:ready'),
+  appReady: () => ipcRenderer.send('app:ready'), // окно программы загрузилось — убрать заставку (splash.js → main.js)
 });
