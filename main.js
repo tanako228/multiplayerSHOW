@@ -28,7 +28,9 @@ const ALL_EXT = Object.values(EXT).flat();
 // Язык окон выбора файлов: окно оператора сообщает язык (I18n → api.setLang), заголовки и фильтры
 // переводим тем же словарём lang.js, что и интерфейс (i18n.js грузим без окна, нужна только функция t)
 let uiT = (s) => s;
+let uiLangNow = 'ru'; // язык интерфейса — им же говорит страница пульта для телефона (phone.html)
 ipcMain.on('ui:lang', (_e, lang) => {
+  uiLangNow = ['ru', 'en', 'et'].includes(lang) ? lang : 'ru';
   try {
     const vm = require('vm');
     const ctx = { localStorage: { getItem: () => lang, setItem() {} }, document: { readyState: 'loading', addEventListener() {} }, MutationObserver: function () { this.observe = () => {}; }, queueMicrotask() {}, CustomEvent: function () {} };
@@ -3249,8 +3251,9 @@ function rmHandle(req, res) {
   const t = u.searchParams.get('t');
   const m = /^\/r\/([0-9a-z]+)\/?$/.exec(u.pathname);
   if (m) {
-    if (!rmGrant(m[1])) return rmSend(res, 404, 'text/html; charset=utf-8', '<meta name="viewport" content="width=device-width"><p style="font:18px sans-serif">Доступ закрыт или ссылка устарела. Попросите оператора показать новый QR-код.</p>');
-    return fs.readFile(path.join(__dirname, 'phone.html'), (err, buf) => (err ? rmSend(res, 500, 'text/plain', 'нет phone.html') : rmSend(res, 200, 'text/html; charset=utf-8', buf)));
+    if (!rmGrant(m[1])) return rmSend(res, 404, 'text/html; charset=utf-8', '<meta name="viewport" content="width=device-width"><p style="font:18px sans-serif">' + uiT('Доступ закрыт или ссылка устарела. Попросите оператора показать новый QR-код.') + '</p>');
+    // язык страницы — язык программы (словарь — внутри phone.html)
+    return fs.readFile(path.join(__dirname, 'phone.html'), 'utf8', (err, txt) => (err ? rmSend(res, 500, 'text/plain', 'нет phone.html') : rmSend(res, 200, 'text/html; charset=utf-8', txt.replace('<html lang="ru">', `<html lang="${uiLangNow}">`))));
   }
   if (u.pathname === '/icon.png') return fs.readFile(path.join(__dirname, 'brand', 'icon-256.png'), (err, buf) => (err ? rmSend(res, 404, 'text/plain', '') : rmSend(res, 200, 'image/png', buf)));
   const g = rmGrant(t);
@@ -3284,13 +3287,13 @@ function rmHandle(req, res) {
       const cmd = String(msg.cmd || '');
       // Стоп-кадр в зале: включить и отменить — с правом «Листать»
       if (cmd === 'freeze') {
-        if (!g.show) return rmJson(res, { ok: false, error: 'Нет доступа' });
+        if (!g.show) return rmJson(res, { ok: false, error: uiT('Нет доступа') });
         freezeSet(!!msg.on, 'phone:' + g.name);
         return rmJson(res, { ok: true, frozen: !!frozen });
       }
       const okShow = g.show && ['show', 'next', 'prev', 'clear'].includes(cmd);
       const okEdit = g.edit && cmd === 'edit' && typeof msg.text === 'string';
-      if (!okShow && !okEdit) return rmJson(res, { ok: false, error: 'Нет доступа' });
+      if (!okShow && !okEdit) return rmJson(res, { ok: false, error: uiT('Нет доступа') });
       if (control && !control.isDestroyed()) control.webContents.send('remote:cmd', { token: g.token, cmd, sid: String(msg.sid || ''), text: okEdit ? msg.text.slice(0, 20000) : undefined });
       rmJson(res, { ok: true });
     });

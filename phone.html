@@ -94,6 +94,45 @@
   <div class="btns"><button id="shNo">Отмена</button><button id="shOk" class="go">Сохранить</button></div>
 </div></div>
 <script>
+// Язык — язык программы: main.js отдаёт страницу с <html lang="en|et|ru">. Словарь свой — страница без внешних файлов
+const LANG = document.documentElement.lang;
+const DICT = {
+  'MP Show — пульт': ['MP Show — remote', 'MP Show — pult'],
+  'Загрузка…': ['Loading…', 'Laadimine…'],
+  'Связь с программой': ['Connection to the program', 'Ühendus programmiga'],
+  '● Сейчас на экране': ['● On screen now', '● Praegu ekraanil'],
+  'Далее': ['Next', 'Järgmine'],
+  '❄ Стоп-кадр: в зале замер кадр. Листайте дальше — красная рамка в слайдах показывает, что появится в зале после отмены.': ['❄ Freeze: the picture in the hall is frozen. Keep paging — the red frame in the slides shows what will appear in the hall after you cancel.', '❄ Stoppkaader: saalis on pilt peatatud. Lehitse edasi — punane raam slaididel näitab, mis ilmub saali pärast tühistamist.'],
+  'Слайды': ['Slides', 'Slaidid'],
+  '◀ Назад': ['◀ Back', '◀ Tagasi'],
+  'Убрать': ['Clear', 'Eemalda'],
+  '❄ Стоп-<br>кадр': ['❄ Freeze<br>frame', '❄ Stopp-<br>kaader'],
+  'Отменить<br>стоп-кадр': ['Cancel<br>freeze', 'Tühista<br>stoppkaader'],
+  'Вперёд ▶': ['Next ▶', 'Edasi ▶'],
+  'Доступ закрыт. Попросите оператора показать новый QR-код.': ['Access closed. Ask the operator to show a new QR code.', 'Juurdepääs suletud. Paluge operaatoril näidata uut QR-koodi.'],
+  'Текст слайда': ['Slide text', 'Slaidi tekst'],
+  'Отмена': ['Cancel', 'Loobu'],
+  'Сохранить': ['Save', 'Salvesta'],
+  '♪ Музыка': ['♪ Music', '♪ Muusika'],
+  '● Источник': ['● Source', '● Allikas'],
+  '▶ Видео': ['▶ Video', '▶ Video'],
+  'Слайд': ['Slide', 'Slaid'],
+  ' — пульт': [' — remote', ' — pult'],
+  'Слайд {0}': ['Slide {0}', 'Slaid {0}'],
+  'Сейчас на экране не ваша презентация. Нажмите на слайд, чтобы показать свой.': ['Another presentation is on screen now. Tap a slide to show yours.', 'Praegu on ekraanil teine esitlus. Puudutage slaidi, et näidata enda oma.'],
+  'Ваша презентация сейчас не на экране.': ['Your presentation is not on screen now.', 'Teie esitlus pole praegu ekraanil.'],
+  ' Листать нельзя — только смотреть.': [' You cannot page — view only.', ' Lehitseda ei saa — ainult vaadata.'],
+  '❄ Стоп-кадр в зале': ['❄ Freeze in the hall', '❄ Saalis stoppkaader'],
+  'Не получилось': ['Did not work', 'Ei õnnestunud'],
+  'Нет связи с программой': ['No connection to the program', 'Ühendus programmiga puudub'],
+};
+const LI = { en: 0, et: 1 }[LANG];
+const L = (s, a) => { const v = LI == null ? s : (DICT[s] || [])[LI] || s; return a == null ? v : v.replace('{0}', a); };
+if (LI != null) {
+  document.title = L(document.title);
+  for (const el of document.querySelectorAll('h1,h2,h3,button,.cap,#frzNote,#gone')) { const k = el.innerHTML.trim(); if (DICT[k]) el.innerHTML = L(k); }
+  for (const el of document.querySelectorAll('[title]')) el.title = L(el.title);
+}
 const T = (location.pathname.match(/\/r\/([0-9a-z]+)/) || [])[1] || '';
 const $ = (id) => document.getElementById(id);
 let st = null;
@@ -101,13 +140,13 @@ let rev = 0;
 let editSid = '';
 
 const thumbUrl = (s) => `/api/thumb?t=${T}&s=${encodeURIComponent(s.id)}&v=${s.v}`;
-const KIND = { audio: '♪ Музыка', live: '● Источник', video: '▶ Видео' };
+const KIND = { audio: L('♪ Музыка'), live: L('● Источник'), video: L('▶ Видео') };
 
 function picInto(box, s) {
   box.replaceChildren();
   if (!s) { box.append(Object.assign(document.createElement('div'), { className: 'empty', textContent: '—' })); return; }
   if (s.v) { const im = new Image(); im.src = thumbUrl(s); im.alt = ''; box.append(im); }
-  else box.append(Object.assign(document.createElement('div'), { className: 'empty', textContent: KIND[s.k] || s.label || 'Слайд' }));
+  else box.append(Object.assign(document.createElement('div'), { className: 'empty', textContent: KIND[s.k] || s.label || L('Слайд') }));
 }
 
 function nextSlide() {
@@ -117,13 +156,13 @@ function nextSlide() {
 }
 
 function render() {
-  document.title = st.name + ' — пульт';
+  document.title = st.name + L(' — пульт');
   $('name').textContent = st.name;
   document.documentElement.style.setProperty('--ar', String(st.aspect || 16 / 9));
   const nx = nextSlide();
   picInto($('nextPic'), nx);
-  $('note').textContent = st.live ? '' : st.other ? 'Сейчас на экране не ваша презентация. Нажмите на слайд, чтобы показать свой.' : 'Ваша презентация сейчас не на экране.';
-  if (!st.show) $('note').textContent += ' Листать нельзя — только смотреть.';
+  $('note').textContent = st.live ? '' : st.other ? L('Сейчас на экране не ваша презентация. Нажмите на слайд, чтобы показать свой.') : L('Ваша презентация сейчас не на экране.');
+  if (!st.show) $('note').textContent += L(' Листать нельзя — только смотреть.');
   $('bar').style.display = st.show ? '' : 'none';
   $('clr').disabled = !st.live;
   // Стоп-кадр в зале: включён — картинка «Сейчас на экране» замерла вместе с залом
@@ -131,9 +170,9 @@ function render() {
   document.body.classList.toggle('frozen', fz);
   $('frz').classList.toggle('on', fz);
   $('frz').setAttribute('aria-pressed', String(fz));
-  $('frz').innerHTML = fz ? 'Отменить<br>стоп-кадр' : '❄ Стоп-<br>кадр';
+  $('frz').innerHTML = fz ? L('Отменить<br>стоп-кадр') : L('❄ Стоп-<br>кадр');
   $('liveCap').className = 'cap ' + (fz ? 'frz' : 'red');
-  $('liveCap').textContent = fz ? '❄ Стоп-кадр в зале' : '● Сейчас на экране';
+  $('liveCap').textContent = fz ? L('❄ Стоп-кадр в зале') : L('● Сейчас на экране');
   $('livePic').classList.toggle('frz', fz);
   const grid = $('grid');
   grid.replaceChildren();
@@ -160,7 +199,7 @@ function render() {
 
 function openEdit(s, i) {
   editSid = s.id;
-  $('shTitle').textContent = `Слайд ${i + 1}${s.label ? ' — ' + s.label : ''}`;
+  $('shTitle').textContent = L('Слайд {0}', i + 1) + (s.label ? ' — ' + s.label : '');
   $('shText').value = s.text || '';
   $('sheet').classList.add('open');
 }
@@ -171,8 +210,8 @@ async function cmd(m) {
   try {
     const r = await fetch(`/api/cmd?t=${T}`, { method: 'POST', body: JSON.stringify(m) });
     const j = await r.json();
-    if (!j.ok) $('note').textContent = j.error || 'Не получилось';
-  } catch { $('note').textContent = 'Нет связи с программой'; }
+    if (!j.ok) $('note').textContent = j.error || L('Не получилось');
+  } catch { $('note').textContent = L('Нет связи с программой'); }
 }
 $('prev').onclick = () => cmd({ cmd: 'prev' });
 $('next').onclick = () => cmd({ cmd: 'next' });
