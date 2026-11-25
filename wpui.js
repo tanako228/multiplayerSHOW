@@ -357,8 +357,11 @@
       pop();
       layout();
       hint();
-      kick();
+      // Поиск каждые 8 с перерисовывает поле; будим пузырьки, только если что-то и правда поменялось
+      const sig = [...bubs.values()].map((b) => b.key + (b.gone ? '-' : '') + b.html + b.hx.toFixed(0) + b.hy.toFixed(0) + b.r.toFixed(0)).join('|') + (link ? link.key + link.phase : '');
+      if (sig !== lastSig) { lastSig = sig; kick(); }
     }
+    let lastSig = '';
 
     // Прилипнуть: свой и выбранный прижимаются, под ними — окошко
     function stick(key) {
@@ -380,7 +383,7 @@
       if (b) { b.vx += 260; b.vy -= 60; } // отскок
       sync();
     }
-    function shake(b) { b.vx += 380; setTimeout(() => { b.vx -= 520; }, 90); }
+    function shake(b) { b.vx += 380; kick(); setTimeout(() => { b.vx -= 520; kick(); }, 90); }
     function say(text, bad) {
       const ht = $('wpPopHint');
       if (link && !$('wpPop').hidden) { ht.textContent = text; ht.classList.toggle('wp-err', !!bad); }
@@ -396,6 +399,7 @@
       drag = { b, dx: e.clientX - r.left - b.x, dy: e.clientY - r.top - b.y, sx: e.clientX, sy: e.clientY, moved: false, fixed, lx: b.x, ly: b.y, lt: performance.now() };
       if (!fixed) b.lab.setPointerCapture(e.pointerId);
       e.preventDefault();
+      kick();
     }
     function move(e) {
       if (!drag) return;
@@ -442,7 +446,7 @@
         // появление / исчезание — своя пружина
         b.sv += (-170 * (b.s - b.st) - 20 * b.sv) * dt; b.s += b.sv * dt;
         if (drag && drag.b === b && !drag.fixed) continue;
-        const wob = reduce ? 0 : 1;
+        const wob = reduce ? 0 : sway;
         const tx = b.hx + Math.sin(t * 0.55 + b.ph) * 7 * wob;
         const ty = b.hy + Math.cos(t * 0.43 + b.ph * 1.3) * 6 * wob;
         let ax = 34 * (tx - b.x) - 7 * b.vx, ay = 34 * (ty - b.y) - 7 * b.vy;
@@ -494,22 +498,46 @@
         b.lab.style.opacity = Math.min(1, s * 1.4);
       }
     }
+    /* Покачивание идёт SWAY_MS после любого изменения (поиск, связь, щелчок, перетаскивание), потом плавно
+       затихает, пузырьки садятся на места — и кадры останавливаются совсем. Раньше цикл крутился, пока поле
+       видно: SVG-фильтр #wpGoo пересчитывался 120+ раз в секунду — ядро процессора и видеокарта заняты
+       впустую (лаги на слабых ПК). Кадров не больше ~60 в секунду и на мониторах 120/144 Гц. */
+    const SWAY_MS = 5000, FADE_MS = 1500;
+    const clamp01 = (v) => Math.max(0, Math.min(1, v));
+    let sway = 0, awake = 0;
+    function calmAll() {
+      for (const b of bubs.values()) {
+        if (Math.abs(b.s - b.st) > 0.002 || Math.abs(b.sv) > 0.02) return false;
+        if (b.gone) continue;
+        if (Math.hypot(b.vx, b.vy) > 0.6 || Math.hypot(b.x - b.hx, b.y - b.hy) > 0.4) return false;
+      }
+      return true;
+    }
     function loop(now) {
       raf = 0;
       if (!vis) return;
+      if (now - last < 15) { raf = requestAnimationFrame(loop); return; } // 120/144 Гц — каждый второй кадр
       const dt = Math.min((now - last) / 1000, 1 / 30); last = now;
       const t = (now - t0) / 1000;
+      const idle = now - awake - SWAY_MS;
+      const want = idle <= 0 ? 1 : Math.max(0, 1 - idle / FADE_MS);
+      sway = clamp01(sway + Math.max(-dt / 0.6, Math.min(dt / 0.6, want - sway))); // вступает плавно, без рывка
+      if (want === 0 && sway < 0.01) sway = 0;
       for (let i = 0; i < 4; i++) frame(dt / 4, t);
       paint();
+      if (sway === 0 && !drag && calmAll()) return; // всё на местах — тишина до следующего kick()
       raf = requestAnimationFrame(loop);
     }
-    function kick() { if (vis && !raf) { last = performance.now(); raf = requestAnimationFrame(loop); } }
+    function kick() {
+      awake = performance.now();
+      if (vis && !raf) { last = awake - 16; raf = requestAnimationFrame(loop); }
+    }
 
     function measure() {
       const f = field();
       if (!f) return;
       // Размер разметки, а не на экране: окно настроек раскрывается с масштабом — getBoundingClientRect врёт
-      if (f.offsetWidth > 120 && f.offsetHeight > 120) { W = f.offsetWidth; H = f.offsetHeight; layout(); }
+      if (f.offsetWidth > 120 && f.offsetHeight > 120) { W = f.offsetWidth; H = f.offsetHeight; layout(); kick(); }
     }
 
     // Видно поле — кадры и поиск в сети каждые 8 с; не видно — тишина
@@ -517,6 +545,7 @@
       vis = v;
       clearInterval(timer); timer = 0;
       if (!v) return;
+      lastSig = ''; // поле снова видно — пузырьки оживают
       measure();
       const scan = () => { if (st && !st.host.on && !st.client.on && !document.hidden) find(); };
       scan();

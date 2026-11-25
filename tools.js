@@ -1914,6 +1914,7 @@ function applyUiColors() {
   root.setProperty('--live-ink', p['--ink']);
   // Непрозрачный цвет поля — для выпадающих списков: у стекла --field полупрозрачный, и Windows рисовала список светлым
   root.setProperty('--field-solid', p['--field']);
+  root.setProperty('--panel-solid', p['--panel']); // лёгкий вид (perf-lite): окна и меню — плотные, без стекла
   root.colorScheme = p.scheme;
   applyUiFx(p);
   // Запасная копия оформления: если настройки когда-нибудь испортятся, тема не пропадёт
@@ -1947,12 +1948,15 @@ function applyUiFx(p) {
   const mode = uiGlassMode();
   html.classList.toggle('ui-glass', !!mode);
   html.classList.toggle('ui-liquid', mode === 'liquid');
+  // Лёгкий вид (perfui.js, слабый ПК или «Экономно»): без размытия под стеклом, панели почти непрозрачные —
+  // размытие пересчитывается видеокартой при каждом изменении того, что под ним (видео, листание, таймеры)
+  const lite = html.classList.contains('perf-lite');
   if (mode) {
-    const a = Math.max(0, Math.min(60, Number.isFinite(+settings.uiAlpha) ? +settings.uiAlpha : 16));
+    const a = Math.max(0, Math.min(lite ? 6 : 60, Number.isFinite(+settings.uiAlpha) ? +settings.uiAlpha : 16));
     root.setProperty('--panel', `color-mix(in srgb, ${p['--panel']} ${100 - a}%, transparent)`);
     root.setProperty('--field', `color-mix(in srgb, ${p['--field']} ${Math.max(20, 100 - a * 1.4)}%, transparent)`);
   }
-  root.setProperty('--blur', uiBlurPx() + 'px');
+  root.setProperty('--blur', (lite ? 0 : uiBlurPx()) + 'px');
   html.dataset.uiFont = UI_FONTS.some(([id]) => id === settings.uiFont) ? settings.uiFont : '';
   html.dataset.uiDeco = uiTheme().deco || ''; // особое оформление темы (свечение, «таблетки»)
   html.classList.toggle('ui-caps', !!settings.uiCaps);

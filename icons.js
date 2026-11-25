@@ -101,6 +101,8 @@ const Icons = (() => {
     database: ['#62d796', '#1c9a60', `<ellipse cx="12" cy="7.2" rx="6" ry="2.4" fill="${W}"/><path d="M6 9.4c0 1.3 2.7 2.4 6 2.4s6-1.1 6-2.4v3.2c0 1.3-2.7 2.4-6 2.4s-6-1.1-6-2.4z" fill="${W}" opacity=".85"/><path d="M6 14.6c0 1.3 2.7 2.4 6 2.4s6-1.1 6-2.4v2.2c0 1.3-2.7 2.4-6 2.4s-6-1.1-6-2.4z" fill="${W}" opacity=".7"/>`],
     cloud: ['#8fd3ff', '#2f7fe0', `<path d="M8.2 17.6h8.4a3.5 3.5 0 0 0 .5-7 5.1 5.1 0 0 0-9.8-1.1 4.1 4.1 0 0 0 .9 8.1z" fill="${W}"/><path d="M12 15.4v-4.6M10 12.7l2-2 2 2" stroke="{d}" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/>`],
     update: ['#5fd0ff', '#1478d6', line('M17.6 9.4A6 6 0 0 0 6.6 9.8M6.4 14.6a6 6 0 0 0 11 .4', 1.9) + line('M17.8 5.6v3.9h-3.9M6.2 18.4v-3.9h3.9', 1.9)],
+    // Производительность: спидометр
+    perf: ['#7ee08a', '#1f9a4a', line('M5.2 15.8a7 7 0 1 1 13.6 0', 1.9) + line('M12 14.6l3.4-4.4', 2) + `<circle cx="12" cy="14.6" r="1.7" fill="${W}"/>`],
     parts: ['#ff9f6b', '#e0562a', `<rect x="5" y="5.6" width="3" height="3" rx=".8" fill="${W}"/><rect x="5" y="10.5" width="3" height="3" rx=".8" fill="${W}" opacity=".75"/><rect x="5" y="15.4" width="3" height="3" rx=".8" fill="${W}" opacity=".55"/>` + line('M10.6 7.1h8.2M10.6 12h8.2M10.6 16.9h5.6', 1.8)],
     arrange: ['#7ea8ff', '#3557e0', `<rect x="4.4" y="9.2" width="4.4" height="5.6" rx="1.1" fill="${W}"/><rect x="9.8" y="9.2" width="4.4" height="5.6" rx="1.1" fill="${W}" opacity=".7"/><rect x="15.2" y="9.2" width="4.4" height="5.6" rx="1.1" fill="${W}"/>` + line('M6.6 6.6c2.4-2 8.4-2 10.8 0M15.6 5l1.8 1.6-2 1.2', 1.4)],
     // Редактор тем: выравнивание, порядок, привязка (одна серо-синяя гамма — не пестрит)

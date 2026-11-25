@@ -3368,6 +3368,7 @@ function showSettingsSection(sec) {
   if (sec === 'data') { renderRepo(); renderCloud(); } // «Данные и облако»: локальная копия — tools.js, облако — cloud.js
   if (sec === 'profiles') renderProfiles(); // profpanel.js
   if (sec === 'update') renderUpdate();     // tools.js
+  if (typeof perfShow === 'function') perfShow(sec === 'perf'); // perfui.js: замер — только пока раздел открыт
 }
 
 function openSettings(sec) {

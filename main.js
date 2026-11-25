@@ -74,6 +74,9 @@ app.setName(APP_NAME);
 if (process.platform === 'win32') app.setAppUserModelId(APP_ID);
 // MPS_USER_DATA — другая папка данных (проверки: второй «компьютер» на этом же ПК, не трогая настоящие данные)
 app.setPath('userData', process.env.MPS_USER_DATA ? path.resolve(process.env.MPS_USER_DATA) : path.join(app.getPath('appData'), 'church-presenter'));
+// Производительность (perf.js): ключи Chromium — до окон (какая видеокарта рисует); режим — из perf.json
+const perf = require('./perf');
+perf.early(app, app.getPath('userData'));
 
 // Профили (profiles.js): у каждого свои библиотеки, плейлисты и настройки окна, часть данных может быть общей.
 // Переключение — окно оператора перезагружается с другим профилем, программа и окна показа работают дальше
@@ -1569,6 +1572,10 @@ app.whenReady().then(() => {
   ipcMain.handle('data:open', () => shell.openPath(app.getPath('userData')));
   ipcMain.handle('data:path', () => app.getPath('userData'));
   ipcMain.handle('app:version', () => app.getVersion());
+  // Производительность: железо, какая видеокарта рисует, память и процессор по частям программы; режим
+  ipcMain.handle('perf:info', () => perf.info(app, BrowserWindow));
+  ipcMain.handle('perf:mode', (_e, m) => perf.setMode(m));
+  ipcMain.handle('perf:restart', () => { app.relaunch(); app.quit(); });
 
   /* ---------- Обновление программы: новые версии с GitHub (Releases), только в установленной программе.
      Само ничего не качается: окно говорит, можно ли (`update:config` ← settings.updAuto).

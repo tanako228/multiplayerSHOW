@@ -34,7 +34,7 @@ const HEAVY_MAX = 8 * 1024 * 1024;
 // снимок своего окна, редактор (окно редактора открывается на B), сам удалённый режим
 const LOCAL = new Set(['app:close-ok', 'app:version', 'clip:get', 'clip:set', 'output:freezePrev',
   'editor:open', 'editor:save', 'editor:themes']);
-const isLocal = (ch) => LOCAL.has(ch) || ch.startsWith('update:') || ch.startsWith('wp:');
+const isLocal = (ch) => LOCAL.has(ch) || ch.startsWith('update:') || ch.startsWith('wp:') || ch.startsWith('perf:'); // perf: — железо и режим своего ПК
 // Нельзя с B: смена профиля и восстановление (перезаписывают данные A и перезагружают окно), облако,
 // окна Проводника на A (их никто не видит), выбор папки репозитория
 const BLOCK = new Set(['profile:do', 'cloud:sync', 'cloud:signin', 'cloud:signout', 'cloud:client', 'cloud:pickDir',

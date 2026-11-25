@@ -1666,6 +1666,24 @@
     .set-sec[data-sec="data"] .set-group h2 { display: flex; align-items: center; gap: 7px; }
     /* Знак «i»: навели — снизу подсказка (motion.js, без задержки и пошире) */
     /* Удалённое управление (wpui.js) */
+    /* Лёгкий вид (perfui.js): никакого размытия и подкраски под стеклом — даже blur(0) с saturate() видеокарта пересчитывает на каждый кадр */
+    html.perf-lite *, html.perf-lite *::before, html.perf-lite *::after { backdrop-filter: none !important; }
+    /* …а без размытия полупрозрачные окна и меню не читаются поверх слайдов — делаем их плотными */
+    html.perf-lite :is(dialog, .ui-pop, .ctx-menu, .note-pop, .ly-pop, #srcPop, .mc-picker, .il-pop, #mcDock, .st-pop, #quick, .te-pop) { background-color: var(--panel-solid, var(--panel)) !important; }
+    /* Раздел «Производительность» */
+    .set-sec[data-sec="perf"] .pf-sum { display: grid; grid-template-columns: auto 1fr; gap: 4px 14px; font-size: 13px; margin: 0 0 6px; }
+    .set-sec[data-sec="perf"] .pf-sum dt { color: var(--muted); }
+    .set-sec[data-sec="perf"] .pf-sum dd { margin: 0; color: var(--text); overflow-wrap: anywhere; }
+    .set-sec[data-sec="perf"] .pf-warn { color: var(--warn); font-size: 12px; line-height: 1.4; margin: 6px 0 0; }
+    .set-sec[data-sec="perf"] .pf-warn:empty { display: none; }
+    .set-sec[data-sec="perf"] .pf-rows { display: grid; gap: 3px; font-size: 12px; font-variant-numeric: tabular-nums; }
+    .set-sec[data-sec="perf"] .pf-row { display: grid; grid-template-columns: 1fr 74px 64px; gap: 8px; align-items: center; padding: 3px 8px; border-radius: calc(5px * var(--rk, 1)); background: var(--field); }
+    .set-sec[data-sec="perf"] .pf-row > :nth-child(n+2) { text-align: right; }
+    .set-sec[data-sec="perf"] .pf-row.pf-head { background: none; color: var(--muted); }
+    .set-sec[data-sec="perf"] .pf-row.pf-hot > :nth-child(3) { color: var(--warn); font-weight: 600; }
+    .set-sec[data-sec="perf"] .pf-row .pf-n { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .set-sec[data-sec="perf"] .pf-bar { height: 6px; border-radius: 3px; background: var(--field); overflow: hidden; margin: 2px 0 8px; }
+    .set-sec[data-sec="perf"] .pf-bar > i { display: block; height: 100%; background: var(--live); }
     .set-sec[data-sec="wp"] .wp-code { font-size: 20px; letter-spacing: 2px; font-variant-numeric: tabular-nums; }
     .set-sec[data-sec="wp"] .wp-sel { user-select: text; }
     .set-sec[data-sec="wp"] .wp-err { color: var(--warn); }
@@ -3393,6 +3411,7 @@
         <button data-sec="profiles" data-icon="profile">Профили</button>
         <button data-sec="data" data-icon="cloud">Данные и облако</button>
         <button data-sec="wp" data-icon="screen">Удалённое управление</button>
+        <button data-sec="perf" data-icon="perf">Скорость работы</button>
         <button data-sec="update" data-icon="update">Обновление</button>
       </nav>
       <div class="set-body">
@@ -3686,6 +3705,31 @@
                 <p class="hint">Эти компьютеры входят без кода и сами переподключаются, если связь прервалась. «Забыть» — в следующий раз им снова понадобится код.</p>
               </div>
             </div>
+          </div>
+        </section>
+        <section class="set-sec" data-sec="perf" hidden>
+          <div class="set-group">
+            <h2>Режим <span class="info-i" title="Авто — программа сама смотрит на компьютер: мало памяти (меньше 8 ГБ) или видеокарта не работает — включает лёгкий вид: без размытия под стеклом, панели плотнее. Иначе — всё как в выбранной теме.&#10;&#10;Качество — всегда полный вид.&#10;&#10;Экономно — всегда лёгкий вид; на ноутбуке с двумя видеокартами — встроенная (бережёт батарею).&#10;&#10;Во всех режимах, кроме «Экономно», программа рисует на мощной видеокарте (NVIDIA, AMD), если их две.">i</span></h2>
+            <div class="field"><span>Как работать</span>
+              <select id="pfMode">
+                <option value="auto">Авто — по компьютеру</option>
+                <option value="quality">Качество — полный вид</option>
+                <option value="eco">Экономно — лёгкий вид</option>
+              </select>
+            </div>
+            <div class="field" id="pfRestartRow" style="display: none"><span class="hint">Видеокарта сменится после перезапуска программы.</span><button id="pfRestart" data-icon="update">Перезапустить</button></div>
+            <p class="hint" id="pfNow"></p>
+          </div>
+          <div class="set-group">
+            <h2>Этот компьютер</h2>
+            <dl class="pf-sum" id="pfSum"></dl>
+            <div class="pf-bar" title="Занято оперативной памяти на компьютере"><i id="pfRamBar"></i></div>
+            <p class="pf-warn" id="pfWarn"></p>
+          </div>
+          <div class="set-group">
+            <h2>Что сколько берёт <span class="info-i" title="Каждая часть программы — отдельный процесс Windows: окно программы, окна экранов, видеокарта (всё, что рисуется), служебные (сеть, звук).&#10;&#10;Процессор — % одного ядра за последние секунды. Окно, которое долго держит больше 50 %, когда ничего не происходит, — повод написать разработчику: скопируйте этот раздел кнопкой «Копировать».">i</span></h2>
+            <div class="pf-rows" id="pfRows"></div>
+            <div class="field" style="margin-top: 8px"><span class="hint" id="pfTotal"></span><button id="pfCopy">Копировать</button></div>
           </div>
         </section>
         <section class="set-sec" data-sec="update" hidden>
@@ -4378,6 +4422,7 @@
   <script src="maps.js"></script>
   <script src="splash.js"></script>
   <script src="wpui.js"></script>
+  <script src="perfui.js"></script>
   <script src="wpbrowse.js"></script>
 </body>
 </html>

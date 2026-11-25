@@ -159,6 +159,10 @@ contextBridge.exposeInMainWorld('api', {
   dataOpen: () => ipcRenderer.invoke('data:open'),
   dataPath: () => ipcRenderer.invoke('data:path'),
   appVersion: () => ipcRenderer.invoke('app:version'),
+  // Производительность (perf.js): { mode, lite, ram, cpu, gpu, parts }; режим 'auto' | 'quality' | 'eco'
+  perfInfo: () => ipcRenderer.invoke('perf:info'),
+  perfMode: (m) => ipcRenderer.invoke('perf:mode', m),
+  perfRestart: () => ipcRenderer.invoke('perf:restart'),
   // Обновление программы с GitHub
   updGet: () => ipcRenderer.invoke('update:get'),
   updCheck: (o) => ipcRenderer.invoke('update:check', o),
