@@ -34,7 +34,7 @@ function setup(ipcMain, d) {
     if (!m || !/^[\w-]+$/.test(m.id || '')) { m = { id: crypto.randomBytes(6).toString('hex') }; writeJson(f, m); }
     return m.id + '-' + String(d.profile().id || 'main').replace(/[^\w-]/g, '_');
   }
-  const deviceName = () => `${os.hostname()} — ${d.profile().name || 'Основной'}`;
+  const deviceName = () => `${d.devName ? d.devName() : os.hostname()} — ${d.profile().name || 'Основной'}`;
 
   function client() {
     const own = readJson(path.join(root(), 'google-client.json'), null);

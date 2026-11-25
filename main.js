@@ -2703,6 +2703,7 @@ app.whenReady().then(() => {
 
   /* ---------- Облако (cloudsrv.js, окно — cloud.js): синхронизация открытого профиля через Google Диск или папку ---------- */
   require('./cloudsrv.js').setup(ipcMain, {
+    devName: () => devName(),
     app, ud: () => app.getPath('userData'),
     profile: () => { const id = profiles.active(); const p = (profiles.state().list || []).find((x) => x.id === id); return { id, name: p && p.name }; },
     libView, saveLib: (o) => { profiles.save(o); team.libSaved(o); },
@@ -3039,6 +3040,8 @@ app.whenReady().then(() => {
    B: «Подключиться» → окно B перезагружается и работает с данными A (profile:boot → wp:<имя>, ls:restore — снимок A). */
 const wpFile = () => path.join(app.getPath('userData'), 'workplace.json');
 function wpSaved() { try { const j = JSON.parse(fs.readFileSync(wpFile(), 'utf8')); return j && typeof j === 'object' ? j : {}; } catch { return {}; } }
+// Имя этого компьютера для других (удалённое управление, облако): своё из настроек или имя Windows
+const devName = () => String(wpSaved().name || '').trim() || os.hostname();
 let wpFlushWait = null;
 /* ---------- R5: «Смотреть без управления» — экран компьютера A в обычном окне на B ----------
    output.html, как у окна вывода, но в своей сессии: её file:// берётся у A (workplace.js: watchFile), окно
@@ -3071,7 +3074,7 @@ function wpWatchSend(ch, d) {
 function wpSetup() {
   const isOp = () => !!control && !control.isDestroyed() && /\/index\.html$/i.test(new URL(control.webContents.getURL() || 'file:///x').pathname);
   wp.setup({
-    name: () => os.hostname(),
+    name: devName,
     profile: () => profiles.active(),
     ips: rmIps,
     port: () => rmPort,
@@ -3128,6 +3131,7 @@ function wpSetup() {
   });
   ipcMain.handle('wp:state', () => wp.state());
   ipcMain.handle('wp:host', (_e, on) => wp.hostSet(on));
+  ipcMain.handle('wp:setName', (_e, n) => wp.setName(n)); // своё имя компьютера (пусто — имя Windows)
   ipcMain.handle('wp:connect', (_e, x) => wp.connect(x || {}));
   ipcMain.handle('wp:disconnect', () => wp.disconnect());
   ipcMain.handle('wp:take', () => wp.hostTakeBack()); // плашка A: «Забрать управление»

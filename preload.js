@@ -97,6 +97,7 @@ contextBridge.exposeInMainWorld('api', {
   // Удалённый режим (workplace.js, окно — wpui.js; плашка на A — wplock.html)
   wpState: () => ipcRenderer.invoke('wp:state'),
   wpHost: (on) => ipcRenderer.invoke('wp:host', !!on),
+  wpSetName: (n) => ipcRenderer.invoke('wp:setName', String(n || '')),
   wpConnect: (x) => ipcRenderer.invoke('wp:connect', x), // { addr, code } → { ok, error?, name? }
   wpDisconnect: () => ipcRenderer.invoke('wp:disconnect'),
   wpTake: () => ipcRenderer.invoke('wp:take'),

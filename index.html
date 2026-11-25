@@ -1679,6 +1679,54 @@
     .wp-list .wp-tag { margin-left: auto; color: var(--muted); font-size: 12px; white-space: nowrap; }
     .wp-list .wp-tag.ok { color: var(--live); }
     .wp-list .remove { padding: 6px 10px; }
+    /* Пузырьки подключения (wpui.js: Eco). Слой .wp-eco-goo — только круги под фильтром #wpGoo: рядом они слипаются
+       перемычкой; надписи — отдельным слоем сверху, без размытия. Цвета — только переменные темы */
+    .wp-eco { position: relative; height: 340px; margin: 4px 0 10px; border: 1px solid var(--line); border-radius: calc(14px * var(--rk, 1)); overflow: hidden; touch-action: none; user-select: none;
+      background: radial-gradient(120% 90% at 30% 40%, color-mix(in srgb, var(--live) 9%, transparent), transparent 60%), color-mix(in srgb, var(--field) 55%, transparent); }
+    .wp-eco-defs { position: absolute; width: 0; height: 0; }
+    .wp-eco-goo, .wp-eco-top { position: absolute; inset: 0; }
+    .wp-eco-goo { filter: url(#wpGoo) drop-shadow(0 8px 16px rgb(0 0 0 / .22)); }
+    .wp-blob { position: absolute; left: 0; top: 0; border-radius: 50%; background: color-mix(in srgb, var(--text) 9%, var(--field-solid, var(--field))); will-change: transform; transition: background-color .3s; }
+    .wp-blob.me { background: var(--live); }
+    .wp-blob.known { background: color-mix(in srgb, var(--live) 26%, var(--field-solid, var(--field))); }
+    .wp-blob.dim { background: color-mix(in srgb, var(--text) 4%, var(--field-solid, var(--field))); }
+    .wp-blob.on { background: color-mix(in srgb, var(--live) 60%, var(--field-solid, var(--field))); }
+    .wp-bub { position: absolute; left: 0; top: 0; border-radius: 50%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; padding: 0 10px;
+      text-align: center; color: var(--text); cursor: grab; will-change: transform; outline: none;
+      background: radial-gradient(circle at 32% 26%, rgb(255 255 255 / .26), rgb(255 255 255 / 0) 42%), radial-gradient(circle at 70% 85%, rgb(0 0 0 / .10), transparent 55%); }
+    .wp-bub:focus-visible { box-shadow: 0 0 0 2px var(--live); }
+    .wp-bub.me { color: var(--live-ink); }
+    .wp-bub.drag { cursor: grabbing; }
+    .wp-bub.dim { opacity: .6; cursor: default; }
+    .wp-bub .wb-cap { font-size: 10px; letter-spacing: .4px; text-transform: uppercase; opacity: .75; }
+    .wp-bub .wb-n { font-weight: 650; font-size: 13px; line-height: 1.15; max-width: 100%; overflow: hidden; overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+    .wp-bub.me .wb-n { font-size: 14px; }
+    .wp-bub .wb-s { font-size: 11px; opacity: .72; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .wp-bub .wb-code { font-size: 17px; font-weight: 700; letter-spacing: 1.5px; font-variant-numeric: tabular-nums; user-select: text; cursor: text; }
+    /* Кольцо: ждём подключения, подключаемся */
+    .wp-bub::after { content: ''; position: absolute; inset: -6px; border-radius: 50%; border: 2px solid var(--live); opacity: 0; pointer-events: none; }
+    .wp-bub.pulse::after { animation: wpRing 1.6s ease-out infinite; }
+    .wp-bub.me.pulse::after { border-color: var(--live); }
+    .wp-bub.hot::after { opacity: .9; animation: none; inset: -4px; }
+    @keyframes wpRing { 0% { opacity: .7; transform: scale(.94); } 100% { opacity: 0; transform: scale(1.22); } }
+    .wp-eco-hint { position: absolute; left: 12px; right: 12px; bottom: 10px; margin: 0; text-align: center; color: var(--muted); font-size: 12px; pointer-events: none; }
+    .wp-pop { position: absolute; z-index: 3; width: 250px; color: var(--text); background: var(--panel); border: 1px solid var(--line); border-radius: calc(12px * var(--rk, 1)); box-shadow: 0 14px 40px rgb(0 0 0 / .35); animation: wpPopIn .2s ease-out; }
+    .wp-pop[hidden] { display: none; }
+    .wp-pop .dlg-head { padding: 8px 8px 8px 14px; }
+    .wp-pop .dlg-head b { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .wp-pop .dlg-body { padding: 10px 14px; }
+    .wp-pop .dlg-body .hint { margin: 0 0 8px; }
+    .wp-pop .dlg-body .hint:empty { display: none; }
+    .wp-pop #wpCodeIn { width: 100%; box-sizing: border-box; font-size: 20px; letter-spacing: 3px; text-align: center; font-variant-numeric: tabular-nums; }
+    .wp-pop #wpCodeIn[hidden] { display: none; }
+    .wp-pop .dlg-foot { padding: 8px 10px; justify-content: flex-end; flex-wrap: wrap; }
+    .wp-pop .dlg-foot button[hidden] { display: none; }
+    @keyframes wpPopIn { from { opacity: 0; transform: translateY(6px) scale(.97); } }
+    .wp-eco-acts { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-bottom: 8px; }
+    .wp-eco-acts .check { margin-left: auto; }
+    .wp-addr-row { display: flex; gap: 8px; margin-bottom: 8px; }
+    .wp-addr-row[hidden] { display: none; }
+    .wp-addr-row input { flex: 1; min-width: 0; }
     #wpBar { display: flex; align-items: center; margin-right: 6px; border: 1px solid color-mix(in srgb, var(--live) 55%, var(--line));
       border-radius: calc(9px * var(--rk, 1)); background: color-mix(in srgb, var(--live) 14%, var(--field)); overflow: hidden; }
     #wpBar[hidden] { display: none; }
@@ -2622,7 +2670,7 @@
     <div class="tabs-side end">
       <!-- Удалённое управление (wpui.js): это окно управляет другим компьютером -->
       <div id="wpBar" role="status" hidden>
-        <button id="wpBarOpen" title="Это окно управляет другим компьютером: экраны, библиотека и настройки — его. Щелчок — Настройки → Удалённое управление"><span class="wp-dot" aria-hidden="true"></span><span id="wpBarName"></span></button>
+        <button id="wpBarOpen" title="Это окно управляет другим компьютером: экраны, библиотека и настройки — его. Щелчок — Настройки → Удалённое управление"><span class="wp-dot" aria-hidden="true"></span><span id="wpBarName" data-noi18n></span></button>
         <button id="wpBarStop" title="Отключиться: вернуть это окно к данным этого компьютера" aria-label="Отключиться">×</button>
       </div>
     <button id="addMenu" class="tab-btn add-menu" data-icon="add" title="Добавить: песню, импорт, источник, файл, библиотеку…" aria-haspopup="menu">＋</button>
@@ -3593,10 +3641,41 @@
         </section>
         <section class="set-sec" data-sec="wp" hidden>
           <div class="set-group">
-            <h2>Управлять этим компьютером с другого <span class="info-i" title="Например: компьютер с экранами стоит у сцены, а вы ведёте показ с ноутбука в другом конце зала.&#10;&#10;На другом компьютере тоже установлена программа: в этом же разделе введите там адрес и код этого компьютера. Пока управляют оттуда, здесь вместо окна программы — плашка с кнопкой «Забрать управление». Экраны показа не гаснут.&#10;&#10;Оба компьютера — в одной сети (Wi-Fi или кабель).">i</span></h2>
-            <div class="field"><label class="check"><input type="checkbox" id="wpHostOn"> Разрешить управление с других компьютеров</label></div>
+            <h2>Этот компьютер <span class="info-i" title="Так этот компьютер видят другие: в удалённом управлении, в поиске по сети и в облаке.&#10;&#10;Пусто — имя компьютера из Windows.">i</span></h2>
+            <div class="field"><span>Имя для других</span><input id="wpNameIn" type="text" maxlength="40" spellcheck="false" autocomplete="off"></div>
+          </div>
+          <div class="set-group">
+            <h2>Подключение <span class="info-i" title="Каждый пузырёк — компьютер с программой в этой сети. Ваш — цветной.&#10;&#10;Перетащите свой пузырёк на другой: они слипнутся, и это окно станет окном программы того компьютера — его экраны, библиотека и настройки. Свои данные вернутся после «Отключиться». «Смотреть» — только видеть его экран в отдельном окне.&#10;&#10;Код нужен только в первый раз: дальше тот компьютер помнит этот и пускает без кода. Связь прервалась — программа переподключится сама (ждёт до 3 минут), экраны там не гаснут.&#10;&#10;Чтобы управляли этим компьютером — «Разрешить управление этим компьютером»: на вашем пузырьке появится код.&#10;&#10;Оба компьютера — в одной сети (Wi-Fi или кабель). Недоступно при управлении: смена профиля, облако.">i</span></h2>
+            <div id="wpEco" class="wp-eco">
+              <svg class="wp-eco-defs" width="0" height="0" aria-hidden="true" focusable="false"><defs><filter id="wpGoo" x="-30%" y="-30%" width="160%" height="160%" color-interpolation-filters="sRGB"><feGaussianBlur in="SourceGraphic" stdDeviation="9" result="b"/><feColorMatrix in="b" type="matrix" values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 20 -9"/></filter></defs></svg>
+              <div class="wp-eco-goo" id="wpEcoGoo" aria-hidden="true"></div>
+              <div class="wp-eco-top" id="wpEcoTop" role="list" aria-label="Компьютеры в этой сети"></div>
+              <div class="ui-pop wp-pop" id="wpPop" hidden>
+                <div class="dlg-head"><b id="wpPopT" data-noi18n></b><button class="dlg-x" id="wpPopX" title="Отпустить">×</button></div>
+                <div class="dlg-body">
+                  <p class="hint" id="wpPopHint"></p>
+                  <input id="wpCodeIn" type="text" inputmode="numeric" maxlength="7" placeholder="000 000" autocomplete="off" aria-label="Код">
+                </div>
+                <div class="dlg-foot">
+                  <button id="wpWatchGo" data-icon="eye" title="Только смотреть, что на экране того компьютера, — в отдельном окне. Управление остаётся у него">Смотреть</button>
+                  <button id="wpGo" class="primary" data-icon="screen">Управлять</button>
+                  <button id="wpStop" class="primary" hidden>Отключиться</button>
+                  <button id="wpWatchStop" hidden>Не смотреть</button>
+                </div>
+              </div>
+              <p class="wp-eco-hint" id="wpEcoHint"></p>
+            </div>
+            <div class="wp-eco-acts">
+              <button id="wpFind" data-icon="search">Найти</button>
+              <button id="wpAddrBtn" title="Компьютер не нашёлся сам — введите его адрес (он виден на том компьютере, на его пузырьке)">По адресу…</button>
+              <label class="check"><input type="checkbox" id="wpHostOn"> Разрешить управление этим компьютером</label>
+            </div>
+            <div class="wp-addr-row" id="wpAddrRow" hidden>
+              <input id="wpAddrIn" type="text" maxlength="80" placeholder="192.168.1.20:8090" spellcheck="false" aria-label="Адрес компьютера">
+              <button id="wpAddrAdd">Добавить</button>
+            </div>
+            <p class="hint wp-err" id="wpErr"></p>
             <div id="wpHostBox" hidden>
-              <div class="field"><span>Этот компьютер</span><b id="wpMe">—</b></div>
               <div class="field"><span>Адрес</span><b id="wpAddr" class="wp-sel">—</b></div>
               <div class="field"><span>Код для входа</span><b id="wpCode" class="wp-code wp-sel">—</b></div>
               <p class="hint" id="wpHostState"></p>
@@ -3607,28 +3686,6 @@
                 <p class="hint">Эти компьютеры входят без кода и сами переподключаются, если связь прервалась. «Забыть» — в следующий раз им снова понадобится код.</p>
               </div>
             </div>
-          </div>
-          <div class="set-group">
-            <h2>Управлять другим компьютером <span class="info-i" title="Это окно станет окном программы на другом компьютере: его экраны, библиотека, плейлисты и настройки. Свои данные этого компьютера не меняются и вернутся после «Отключиться».&#10;&#10;«Найти» — компьютеры в этой сети, где разрешено управление. Код нужен только в первый раз: дальше тот компьютер помнит этот и пускает без кода. Связь прервалась — программа переподключится сама (ждёт до 3 минут), экраны на том компьютере не гаснут.&#10;&#10;«Смотреть» — только видеть, что на экране того компьютера, в отдельном окне; управление остаётся у него.&#10;&#10;Недоступно отсюда: смена профиля, облако.">i</span></h2>
-            <div id="wpCliForm">
-              <div id="wpCliFields">
-              <div class="field"><span>Компьютеры в этой сети</span><button id="wpFind" data-icon="search">Найти</button></div>
-              <div id="wpFound" class="wp-list" hidden></div>
-              <div class="field"><span>Адрес компьютера</span><input id="wpAddrIn" type="text" maxlength="80" placeholder="192.168.1.20:8090" spellcheck="false"></div>
-              <div class="field"><span>Код</span><input id="wpCodeIn" type="text" inputmode="numeric" maxlength="7" placeholder="000 000" autocomplete="off"></div>
-              <div class="btns-row"><button id="wpGo" class="primary" data-icon="screen">Подключиться</button><button id="wpWatchGo" data-icon="eye" title="Только смотреть, что на экране того компьютера, — в отдельном окне. Управление остаётся у него">Смотреть</button></div>
-              </div>
-              <p class="hint" id="wpGoHint" hidden>Этот компьютер разрешает управлять собой — чтобы управлять другим, снимите галочку выше.</p>
-            </div>
-            <div id="wpCliOn" hidden>
-              <p class="hint" id="wpCliState"></p>
-              <div class="btns-row"><button id="wpStop" class="primary">Отключиться</button></div>
-            </div>
-            <div id="wpWatchOn" hidden>
-              <p class="hint" id="wpWatchState"></p>
-              <div class="btns-row"><button id="wpWatchStop">Не смотреть</button></div>
-            </div>
-            <p class="hint wp-err" id="wpErr"></p>
           </div>
         </section>
         <section class="set-sec" data-sec="update" hidden>

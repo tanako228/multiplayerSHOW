@@ -63,6 +63,13 @@ const eqHex = (a, b) => typeof a === 'string' && typeof b === 'string' && a.leng
 let mem = {};
 const saveP = (patch) => { mem = { ...mem, ...patch }; if (o.save) o.save(patch); };
 const myName = () => (o.name ? o.name() : os.hostname());
+// Своё имя компьютера (main.js: devName читает его из workplace.json). Пусто — имя Windows
+function setName(n) {
+  const v = String(n == null ? '' : n).replace(/[\u0000-\u001f]/g, '').trim().slice(0, 40);
+  saveP({ name: v });
+  notify();
+  return state();
+}
 function myId() { if (!mem.id) saveP({ id: crypto.randomBytes(8).toString('hex') }); return mem.id; }
 // A: запомненные компьютеры B — { id, name, hash (sha256 ключа), at, last }
 const trusted = () => (Array.isArray(mem.trusted) ? mem.trusted : []);
@@ -851,7 +858,7 @@ function state() {
       lostUntil: cli.lost ? cli.lost + grace() : 0,
       watching: wt.ws ? { name: wt.name, addr: wt.addr } : null,
       known: Object.keys(k).map((id) => ({ id, name: String(k[id].name || ''), addr: String(k[id].addr || '') })) },
-    me: myName(),
+    me: myName(), meOwn: !!String(mem.name || '').trim(), sysName: os.hostname(),
   };
 }
 function notify() { if (o.notify) try { o.notify(state()); } catch { /* окно закрывается */ } }
@@ -921,7 +928,7 @@ const watchFile = (req) => files.watch.handle(req); // окно зрителя B
 
 module.exports = {
   serveFile, fileRequest, remoteDialog, dialogDone, uploadMap, dialogPending: () => dlg.size > 0, fileStats: () => (files.cli ? files.cli.stats() : null),
-  hook, setup, shutdown, upgrade, state, hostSet, hostEvent, hostTakeBack, hostForget, connect, disconnect, sendLs, discover,
+  hook, setup, shutdown, upgrade, state, setName, hostSet, hostEvent, hostTakeBack, hostForget, connect, disconnect, sendLs, discover,
   takeShow, showPut, watchEvent, watchStop, watchFile, isWatching: () => !!wt.ws,
   isClient: () => cli.on, clientName: () => cli.name, clientLs: () => cli.ls, clientProfile: () => cli.profile,
   hostLocked: () => !!host.peer, hostOn: () => host.on, changed: () => notify(),

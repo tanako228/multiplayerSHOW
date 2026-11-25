@@ -1,27 +1,32 @@
 /* ---------- Удалённое управление (окно оператора): Настройки → «Удалённое управление» ----------
    Устройство — workplace.js (главный процесс). Здесь:
-   - этот компьютер (A): «Разрешить управление с других компьютеров», адрес и код для входа, кто управляет;
-   - другой компьютер (B): адрес и код A → «Подключиться». Окно перезагружается и работает с данными A;
-     плашка #wpBar внизу — «Управляете компьютером …» и «Отключиться»;
+   - имя этого компьютера для других (пусто — имя Windows);
+   - пузырьки подключения (Eco ниже): свой пузырёк и компьютеры в сети. Перетащили свой на другой (или другой на
+     свой) — они слипаются, появляется окошко: код (если тот компьютер нас ещё не помнит), «Управлять», «Смотреть».
+     Подключились — окно перезагружается и работает с данными A; плашка #wpBar вверху — «Отключиться»;
+   - этот компьютер (A): «Разрешить управление этим компьютером» — на своём пузырьке код, рядом прилипают зрители;
    - просьба A сохранить всё перед передачей управления (wp:flush → profFlush из profpanel.js). */
 (function () {
   const $ = (id) => document.getElementById(id);
+  // Подстановка {0} {1}; перевод делает i18n.js сам по тексту на странице (словарь — lang.js)
+  const T = (s, ...a) => s.replace(/\{(\d)\}/g, (_m, i) => a[i]);
   let st = null;
   let found = null; // последний «Найти»: [{ id, name, addr, busy, known }]
+  const manual = []; // добавлены «По адресу…»: [{ addr }]
   const tm = (t) => new Date(t).toLocaleTimeString().slice(0, 5);
   const day = (t) => new Date(t).toLocaleDateString();
 
-  // Строка списка (как закладки .bm): имя, адрес, пометка; щелчок — действие, справа — своя кнопка
-  function row(name, addr, tag, tagOk, onPick, side) {
+  // Строка списка (как закладки .bm): имя, адрес, пометка; справа — своя кнопка
+  function row(name, addr, tag, side) {
     const r = document.createElement('div');
     r.className = 'bm';
     const b = document.createElement('button');
     b.className = 'bm-ref';
+    b.tabIndex = -1;
     const n = document.createElement('span'); n.className = 'wp-n'; n.textContent = name;
     const a = document.createElement('span'); a.className = 'wp-a'; a.textContent = addr;
-    const t = document.createElement('span'); t.className = 'wp-tag' + (tagOk ? ' ok' : ''); t.textContent = tag;
+    const t = document.createElement('span'); t.className = 'wp-tag'; t.textContent = tag;
     b.append(n, a, t);
-    if (onPick) b.addEventListener('click', onPick); else b.tabIndex = -1;
     r.append(b);
     if (side) r.append(side);
     return r;
@@ -39,41 +44,20 @@
       x.textContent = 'Забыть';
       x.title = 'Забыть «' + t.name + '» — в следующий раз ему понадобится код';
       x.addEventListener('click', async () => render(await window.api.wpForget(t.id)));
-      return row(t.name, t.ip || '', 'был ' + day(t.last || t.at), false, null, x);
+      return row(t.name, t.ip || '', 'был ' + day(t.last || t.at), x);
     }));
   }
 
-  // B: найденные в сети и знакомые (входят без кода)
-  function renderFound(c) {
-    const box = $('wpFound');
-    if (!box) return;
-    const items = (found || []).map((f) => ({ ...f }));
-    for (const k of c.known || []) if (!items.some((f) => f.id === k.id)) items.push({ ...k, known: true, away: !!found });
-    box.hidden = !items.length && !found;
-    if (!items.length) { const e = document.createElement('div'); e.className = 'bm-empty'; e.textContent = 'Никого не нашлось. Включите на том компьютере «Разрешить управление…» или введите его адрес.'; box.replaceChildren(e); return; }
-    box.replaceChildren(...items.map((f) => row(f.name, f.addr,
-      f.busy ? 'им уже управляют' : f.away ? 'сейчас не отвечает' : f.known ? 'без кода' : 'нужен код', f.known && !f.busy && !f.away,
-      () => pick(f))));
-  }
-  // Адрес в поле — знакомый компьютер? Тогда «Смотреть» без кода
-  function knownId() {
-    const a = $('wpAddrIn').value.trim();
-    const k = st && (st.client.known || []).find((x) => x.addr === a || x.addr === a + ':8090');
-    return k && !$('wpCodeIn').value.trim() ? k.id : undefined;
-  }
-  function pick(f) {
-    $('wpAddrIn').value = f.addr;
-    $('wpErr').textContent = '';
-    if (f.known) connect(f.id); else { $('wpCodeIn').value = ''; $('wpCodeIn').focus(); }
-  }
+  const sameAddr = (a, b) => !!a && !!b && (a === b || a === b + ':8090' || a + ':8090' === b);
   async function find() {
     const b = $('wpFind');
-    b.disabled = true;
-    b.textContent = 'Ищу…';
-    try { found = await window.api.wpFind(); } catch { found = []; }
-    b.disabled = false;
-    b.textContent = 'Найти';
-    if (st) renderFound(st.client);
+    if (find.busy) return;
+    find.busy = true;
+    if (b) { b.disabled = true; b.textContent = 'Ищу…'; }
+    try { found = await window.api.wpFind(); } catch { found = found || []; }
+    find.busy = false;
+    if (b) { b.disabled = false; b.textContent = 'Найти'; }
+    Eco.sync();
   }
 
   const addrs = (h) => (h.port ? (h.ips.length ? h.ips : ['127.0.0.1']).map((ip) => ip + ':' + h.port) : []);
@@ -87,35 +71,26 @@
     const on = $('wpHostOn');
     if (on) {
       on.checked = !!h.on;
-      on.disabled = c.on;
+      on.disabled = c.on || !!c.watching;
       $('wpHostBox').hidden = !h.on;
       const list = addrs(h);
       $('wpAddr').textContent = list.length ? list.join(', ') : 'сервер запускается…';
       $('wpCode').textContent = fmtCode(h.code);
       $('wpHostState').textContent = h.peer ? (h.peer.lostUntil ? 'Связь с «' + h.peer.name + '» прервалась — жду переподключения до ' + tm(h.peer.lostUntil) : 'Сейчас управляет: «' + h.peer.name + '» (' + h.peer.ip + ')') : h.taking ? 'Передаю управление…' : 'Никто не подключён. Код одноразовый: после входа появится новый.';
-      $('wpMe').textContent = st.me;
       renderTrust(h);
       const ws = h.watchers || [];
       $('wpWatchers').hidden = !ws.length;
       $('wpWatchers').textContent = ws.length ? 'Смотрят без управления: ' + ws.map((w) => '«' + w.name + '»').join(', ') : '';
-    }
-    const form = $('wpCliForm');
-    if (form) {
-      form.hidden = c.on;
-      $('wpCliOn').hidden = !c.on;
-      $('wpCliState').textContent = !c.on ? '' : c.lostUntil ? 'Связь с компьютером «' + c.name + '» прервалась — переподключаюсь (до ' + tm(c.lostUntil) + '). Экраны на нём показывают как прежде.' : 'Это окно управляет компьютером «' + c.name + '» (' + c.addr + '). Экраны, библиотека и настройки — его.';
-      $('wpGo').disabled = c.connecting;
-      $('wpGo').textContent = c.connecting ? 'Подключаюсь…' : 'Подключиться';
       // Этот компьютер сам разрешает управлять собой — управлять другим нельзя (workplace.js: connect)
-      $('wpCliFields').hidden = h.on;
-      $('wpGoHint').hidden = !h.on;
-      const a = $('wpAddrIn');
-      if (a && !a.value && c.addr) a.value = c.addr;
-      if (!c.on) renderFound(c);
-      // R5: смотрим экран другого компьютера
-      $('wpWatchOn').hidden = !c.watching;
-      if (c.watching) $('wpWatchState').textContent = 'Окно «Экран компьютера «' + c.watching.name + '»» показывает, что на его экране. Управление — у него.';
-      $('wpWatchGo').disabled = c.connecting;
+      $('wpFind').disabled = !!find.busy || h.on || c.on;
+      $('wpAddrBtn').disabled = h.on || c.on;
+      if (h.on || c.on) $('wpAddrRow').hidden = true;
+    }
+    const nm = $('wpNameIn');
+    if (nm) {
+      nm.placeholder = st.sysName || '';
+      if (document.activeElement !== nm) nm.value = st.meOwn ? st.me : '';
+      nm.disabled = c.on; // окно управляет другим компьютером — его имя меняют там
     }
     const bar = $('wpBar');
     if (bar) {
@@ -124,27 +99,29 @@
       $('wpBarName').textContent = c.lostUntil ? 'переподключаюсь…' : c.name;
     }
     document.body.classList.toggle('wp-client', !!c.on);
+    Eco.sync();
   }
 
-  // id — найденный знакомый компьютер: без кода, ключом; watch — только смотреть (R5)
-  async function connect(id, watch) {
-    const addr = $('wpAddrIn').value.trim();
+  // p — компьютер (адрес; id — знакомый, без кода); watch — только смотреть (R5)
+  async function connect(p, watch) {
     const code = $('wpCodeIn').value.replace(/\D/g, '');
     $('wpErr').textContent = '';
-    if (!addr) { $('wpErr').textContent = 'Укажите адрес компьютера A (он виден у него в этом же разделе).'; return; }
-    const known = typeof id === 'string' || (st && (st.client.known || []).some((k) => k.addr === addr || k.addr === addr + ':8090'));
-    if (code.length !== 6 && !(known && !code)) { $('wpErr').textContent = 'Код — 6 цифр, его показывает компьютер A.'; return; }
+    if (!p || !p.addr) { Eco.say('У этого компьютера нет адреса — добавьте его «По адресу…»', true); return; }
+    const known = !!p.known;
+    if (code.length !== 6 && !(known && !code)) { Eco.say('Код — 6 цифр, он виден на пузырьке того компьютера.', true); $('wpCodeIn').focus(); return; }
+    Eco.phase(watch ? 'watching' : 'connecting');
     if (!watch) {
       flashStatus('Сохраняю…');
       try { if (typeof profFlush === 'function') await profFlush(); } catch { /* дальше всё равно */ }
     }
-    const r = await window.api.wpConnect({ addr, code, id: typeof id === 'string' ? id : '', watch: !!watch }).catch((e) => ({ ok: false, error: String(e && e.message || e) }));
+    const r = await window.api.wpConnect({ addr: p.addr, code, id: known && !code ? (p.id || '') : '', watch: !!watch }).catch((e) => ({ ok: false, error: String(e && e.message || e) }));
     if (!r || !r.ok) {
       if (typeof repoClosing !== 'undefined') repoClosing = false;
-      $('wpErr').textContent = 'Не подключилось: ' + ((r && r.error) || 'нет ответа');
-      if (r && r.needCode) { $('wpCodeIn').focus(); render(await window.api.wpState()); }
+      Eco.phase('ask');
+      Eco.say('Не подключилось: ' + ((r && r.error) || 'нет ответа'), true);
+      if (r && r.needCode) { Eco.needCode(); render(await window.api.wpState()); }
     } else if (watch) { $('wpCodeIn').value = ''; render(await window.api.wpState()); }
-    // Удалось — окно само перезагрузится с данными A
+    // Удалось управлять — окно само перезагрузится с данными A
   }
 
   async function disconnect() {
@@ -154,17 +131,457 @@
     await window.api.wpDisconnect().catch(() => {});
   }
 
+  /* ----- Пузырьки (Eco) -----
+     Два слоя с одинаковыми координатами: круги .wp-blob под SVG-фильтром #wpGoo (размытие + резкий порог
+     прозрачности — близкие круги сливаются перемычкой, как капли) и надписи .wp-bub сверху. У каждого пузырька —
+     «дом» (куда его тянет пружина) и лёгкое покачивание вокруг него; соседи расталкиваются; слипшиеся пары
+     прижаты друг к другу (расстояние меньше суммы радиусов — перемычка видна). Кадры идут, только пока поле видно. */
+  const Eco = (() => {
+    const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const bubs = new Map(); // ключ → пузырёк
+    let link = null;        // { key, phase: 'ask' | 'connecting' | 'watching' | 'on' | 'watch' }
+    let drag = null;
+    let hot = null;         // к кому сейчас прилипнет перетаскиваемый
+    let W = 600, H = 340, vis = false, raf = 0, last = 0, t0 = performance.now();
+    let timer = 0;
+    const field = () => $('wpEco');
+
+    function make(key, kind) {
+      const blob = document.createElement('div');
+      blob.className = 'wp-blob' + (kind === 'me' ? ' me' : '');
+      const lab = document.createElement('div');
+      lab.className = 'wp-bub' + (kind === 'me' ? ' me' : '');
+      lab.setAttribute('role', 'listitem');
+      lab.tabIndex = 0;
+      lab.dataset.key = key;
+      $('wpEcoGoo').append(blob);
+      $('wpEcoTop').append(lab);
+      const b = { key, kind, blob, lab, r: 48, x: W * 0.7, y: H * 0.5, vx: 0, vy: 0, hx: W * 0.7, hy: H * 0.5, s: 0, sv: 0, st: 1, ph: Math.random() * 6.28, p: null, html: '' };
+      if (kind === 'me') { b.x = b.hx = W * 0.32; b.y = b.hy = H * 0.48; }
+      else { const m = bubs.get('me'); if (m) { b.x = m.x + 30; b.y = m.y; } } // новый «выдувается» из своего
+      lab.addEventListener('pointerdown', (e) => down(e, b));
+      lab.addEventListener('keydown', (e) => {
+        if ((e.key === 'Enter' || e.key === ' ') && b.kind === 'peer') { e.preventDefault(); stick(b.key); }
+      });
+      bubs.set(key, b);
+      return b;
+    }
+    function drop(b) { b.st = 0; b.gone = true; b.lab.style.pointerEvents = 'none'; }
+
+    // Кто сейчас в сети и знаком: найденные «Найти», запомненные ключами, добавленные по адресу
+    function peers() {
+      const c = st.client, h = st.host;
+      const out = [];
+      const add = (p) => {
+        const same = out.find((q) => (p.id && q.id === p.id) || sameAddr(q.addr, p.addr));
+        if (same) { Object.assign(same, { ...p, known: same.known || p.known, away: same.away && p.away }); return; }
+        out.push(p);
+      };
+      if (h.on) { for (const w of h.watchers || []) add({ key: 'w:' + w.ip + w.name, name: w.name, addr: w.ip, watcher: true }); return out; }
+      if (c.on) { add({ key: 'cur', name: c.name, addr: c.addr, cur: true, lost: !!c.lostUntil }); return out; }
+      for (const f of found || []) add({ key: 'id:' + f.id, id: f.id, name: f.name, addr: f.addr, busy: !!f.busy, known: !!f.known });
+      for (const k of c.known || []) add({ key: 'id:' + k.id, id: k.id, name: k.name, addr: k.addr, known: true, away: !!found });
+      for (const m of manual) add({ key: 'a:' + m.addr, name: m.addr, addr: m.addr, manual: true });
+      if (c.watching) {
+        const w = out.find((p) => sameAddr(p.addr, c.watching.addr) || p.name === c.watching.name);
+        if (w) w.watched = true; else add({ key: 'watch', name: c.watching.name, addr: c.watching.addr, watched: true });
+      }
+      for (const p of out) {
+        if (!p.key) p.key = 'a:' + p.addr;
+        if (p.id && !p.key.startsWith('id:')) p.key = 'id:' + p.id;
+        // У знакомого компьютера есть ключ — по адресу из поиска он тоже входит без кода
+        if (!p.known && (c.known || []).some((k) => k.id === p.id || sameAddr(k.addr, p.addr))) p.known = true;
+      }
+      return out;
+    }
+
+    const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
+    function label(b) {
+      const h = st.host, c = st.client, p = b.p || {};
+      let cls = '', html = '', title = '';
+      if (b.kind === 'me') {
+        html = '<span class="wb-cap">' + esc(T('Этот компьютер')) + '</span><span class="wb-n" data-noi18n>' + esc(st.me) + '</span>';
+        if (h.on && h.code && !h.peer) html += '<span class="wb-code" data-noi18n title="' + esc(T('Код для входа')) + '">' + esc(fmtCode(h.code)) + '</span>';
+        if (h.on) cls += ' pulse';
+        title = h.on ? T('Ждёт, когда к нему подключатся. Код — для первого входа') : T('Перетащите на компьютер, которым хотите управлять');
+      } else {
+        const sub = p.cur ? (p.lost ? T('переподключаюсь…') : T('управляете им'))
+          : p.watcher ? T('смотрит экран') : p.watched ? T('смотрите экран')
+          : p.busy ? T('им уже управляют') : p.away ? T('сейчас не отвечает')
+          : p.known ? T('без кода') : T('нужен код');
+        html = '<span class="wb-n" data-noi18n>' + esc(p.name || p.addr) + '</span><span class="wb-s">' + esc(sub) + '</span>';
+        if (p.addr && !p.manual && !p.watcher) html += '<span class="wb-s">' + esc(p.addr) + '</span>';
+        if (p.busy || p.away) cls += ' dim';
+        if (p.lost || (link && link.key === b.key && (link.phase === 'connecting' || link.phase === 'watching'))) cls += ' pulse';
+        title = p.busy ? T('Им уже управляет другой компьютер') : p.cur || p.watcher || p.watched ? '' : T('Перетащите свой пузырёк сюда — или щёлкните');
+      }
+      if (hot === b || (drag && drag.b === b && hot)) cls += ' hot';
+      if (drag && drag.b === b) cls += ' drag';
+      if (html !== b.html) { b.lab.innerHTML = html; b.html = html; }
+      b.lab.className = 'wp-bub' + (b.kind === 'me' ? ' me' : '') + cls;
+      b.lab.title = title;
+      b.lab.setAttribute('aria-label', (b.kind === 'me' ? T('Этот компьютер') + ': ' : '') + b.lab.textContent);
+      b.blob.className = 'wp-blob' + (b.kind === 'me' ? ' me' : p.cur || p.watched || p.watcher ? ' on' : p.busy || p.away ? ' dim' : p.known ? ' known' : '');
+    }
+
+    // Куда тянет каждый пузырёк: свой — слева (или в центре пары), остальные — дугой справа
+    function layout() {
+      const k = Math.max(0.72, Math.min(1, W / 620));
+      const me = bubs.get('me');
+      if (!me) return;
+      me.r = 62 * k;
+      const live = [...bubs.values()].filter((b) => b.kind === 'peer' && !b.gone);
+      for (const b of live) b.r = 52 * k;
+      const popOn = !$('wpPop').hidden;
+      const linked = live.filter((b) => link && link.key === b.key || b.p.cur || b.p.watcher || b.p.watched);
+      const free = live.filter((b) => !linked.includes(b));
+      let cx = W * 0.32, cy = H * 0.48;
+      if (linked.length === 1) {
+        const o = linked[0];
+        const d = (me.r + o.r) * 0.86; // прижаты: перемычка видна, надписи не наезжают
+        // Окошко открыто: широкое поле — пара слева, окошко справа; узкое — пара сверху, окошко под ней
+        const side = popOn && W >= 470;
+        const pcx = side ? Math.max(me.r + 12 + d * o.r / (me.r + o.r), (W - 262) / 2) : W * 0.5;
+        const pcy = popOn && !side ? me.r + 18 : H * 0.44;
+        me.hx = pcx - d * o.r / (me.r + o.r); me.hy = pcy;
+        o.hx = me.hx + d; o.hy = pcy;
+        cx = pcx; cy = pcy;
+      } else if (linked.length > 1) { // зрители вокруг своего
+        cx = W * 0.4; cy = H * 0.46;
+        me.hx = cx; me.hy = cy;
+        linked.forEach((o, i) => { // веером справа от своего
+          const ang = -Math.PI * 0.42 + i * (Math.PI * 0.84 / (linked.length - 1));
+          const d = (me.r + o.r) * 0.76;
+          o.hx = cx + Math.cos(ang) * d; o.hy = cy + Math.sin(ang) * d;
+        });
+      } else { me.hx = cx; me.hy = cy; }
+      // Свободные — дугой справа от своего (при слипшейся паре — подальше, по краю)
+      const n = free.length;
+      const R = linked.length ? Math.min(W, H) * 0.62 : Math.max(me.r + 48 * k + 40, Math.min(W * 0.46, H * 0.62));
+      free.forEach((b, i) => {
+        const span = Math.min(Math.PI * 1.15, 0.62 * Math.max(1, n - 1));
+        const ang = n === 1 ? 0 : -span / 2 + i * (span / (n - 1));
+        b.hx = cx + Math.cos(ang) * R; b.hy = cy + Math.sin(ang) * R * 0.92;
+      });
+      for (const b of bubs.values()) {
+        b.hx = Math.max(b.r + 6, Math.min(W - b.r - 6, b.hx));
+        b.hy = Math.max(b.r + 6, Math.min(H - b.r - 6, b.hy));
+      }
+      placePop();
+    }
+
+    // Широкое поле — окошко справа от пары; узкое — под парой, поле вытягивается, чтобы окошко не закрыло пузырьки
+    function placePop() {
+      const pop = $('wpPop'), f = field();
+      if (pop.hidden || !link) { if (f.style.height) { f.style.height = ''; } return; }
+      const me = bubs.get('me'), o = bubs.get(link.key);
+      if (!me || !o) return;
+      const pw = pop.offsetWidth || 250, ph = pop.offsetHeight || 170;
+      if (W >= 470) {
+        if (f.style.height) f.style.height = '';
+        pop.style.left = (W - pw - 12) + 'px';
+        pop.style.top = Math.max(8, (H - ph) / 2 - 10) + 'px';
+        return;
+      }
+      const top = Math.max(me.hy + me.r, o.hy + o.r) + 14;
+      const need = Math.ceil(top + ph + 12);
+      if (need > 340 && f.style.height !== need + 'px') f.style.height = need + 'px';
+      pop.style.left = Math.max(8, (W - pw) / 2) + 'px';
+      pop.style.top = top + 'px';
+    }
+
+    function hint() {
+      const el = $('wpEcoHint');
+      if (!el || !st) return;
+      const h = st.host, c = st.client;
+      const live = [...bubs.values()].filter((b) => b.kind === 'peer' && !b.gone);
+      let s = '';
+      if (c.on) s = c.lostUntil ? T('Связь с «{0}» прервалась — переподключаюсь (до {1}). Экраны на нём показывают как прежде.', c.name, tm(c.lostUntil)) : T('Это окно управляет компьютером «{0}». Экраны, библиотека и настройки — его.', c.name);
+      else if (h.on) s = h.peer ? T('Сейчас управляет: «{0}»', h.peer.name) : T('Ждём: на другом компьютере перетащите свой пузырёк на «{0}» и введите код.', st.me);
+      else if (link && link.phase !== 'watch') s = '';
+      else if (c.watching) s = T('Окно «Экран компьютера «{0}»» показывает, что на его экране. Управление — у него.', c.watching.name);
+      else if (!live.length) s = found ? T('Никого не нашлось. Включите на том компьютере «Разрешить управление…» или добавьте его по адресу.') : T('Ищу компьютеры в этой сети…');
+      else s = T('Перетащите свой пузырёк на компьютер — они слипнутся и соединятся.');
+      el.textContent = s;
+      el.hidden = !$('wpPop').hidden && !!link;
+    }
+
+    // Окошко под слипшейся парой: код, «Управлять», «Смотреть» — или «Отключиться» / «Не смотреть»
+    function pop() {
+      const box = $('wpPop');
+      const c = st.client, h = st.host;
+      const b = link && bubs.get(link.key);
+      const show = !!b && !h.on;
+      box.hidden = !show;
+      if (!show) return;
+      const p = b.p;
+      $('wpPopT').textContent = p.name || p.addr;
+      const on = !!p.cur, watching = !!p.watched;
+      const busy = link.phase === 'connecting' || link.phase === 'watching';
+      $('wpCodeIn').hidden = on || watching || !!p.known;
+      $('wpGo').hidden = on || watching;
+      $('wpWatchGo').hidden = on || watching;
+      $('wpStop').hidden = !on;
+      $('wpWatchStop').hidden = !watching;
+      $('wpPopX').hidden = on || watching;
+      $('wpGo').disabled = busy || c.connecting;
+      $('wpWatchGo').disabled = busy || c.connecting;
+      $('wpGo').textContent = link.phase === 'connecting' ? T('Подключаюсь…') : T('Управлять');
+      const ht = $('wpPopHint');
+      if (!ht.classList.contains('wp-err')) {
+        ht.textContent = on ? T('Это окно управляет им: экраны, библиотека и настройки — его.')
+          : watching ? T('Его экран — в отдельном окне. Управление — у него.')
+          : p.known ? T('Этот компьютер вас помнит — код не нужен.')
+          : T('Введите код — он на пузырьке того компьютера.');
+      }
+    }
+
+    function sync() {
+      if (!st || !field()) return;
+      if (!bubs.has('me')) make('me', 'me');
+      const list = peers();
+      const keys = new Set(list.map((p) => p.key));
+      for (const b of bubs.values()) if (b.kind === 'peer' && !keys.has(b.key) && !b.gone) drop(b);
+      for (const p of list) {
+        let b = bubs.get(p.key);
+        if (!b || b.gone) { if (b) { b.blob.remove(); b.lab.remove(); } b = make(p.key, 'peer'); }
+        b.p = p;
+      }
+      // Состояние связи — из главного процесса: управляем / смотрим — пара слипшаяся сама
+      const cur = list.find((p) => p.cur) || list.find((p) => p.watched);
+      if (cur) link = { key: cur.key, phase: cur.cur ? 'on' : 'watch' };
+      else if (link && (link.phase === 'on' || link.phase === 'watch')) link = null;
+      else if (link && !keys.has(link.key)) link = null;
+      if (st.host.on && link && !list.find((p) => p.key === link.key && p.watcher)) link = null;
+      for (const b of bubs.values()) label(b);
+      pop();
+      layout();
+      hint();
+      kick();
+    }
+
+    // Прилипнуть: свой и выбранный прижимаются, под ними — окошко
+    function stick(key) {
+      const b = bubs.get(key);
+      if (!b || b.gone || !b.p || st.host.on || st.client.on) return;
+      if (b.p.busy) { shake(b); say(T('Им уже управляет другой компьютер'), true); return; }
+      if (b.p.watched) { link = { key, phase: 'watch' }; sync(); return; }
+      link = { key, phase: 'ask' };
+      $('wpCodeIn').value = '';
+      $('wpErr').textContent = '';
+      $('wpPopHint').classList.remove('wp-err');
+      sync();
+      requestAnimationFrame(() => { placePop(); (b.p.known ? $('wpGo') : $('wpCodeIn')).focus(); });
+    }
+    function unstick() {
+      if (!link || link.phase === 'on') return;
+      const b = bubs.get(link.key);
+      link = null;
+      if (b) { b.vx += 260; b.vy -= 60; } // отскок
+      sync();
+    }
+    function shake(b) { b.vx += 380; setTimeout(() => { b.vx -= 520; }, 90); }
+    function say(text, bad) {
+      const ht = $('wpPopHint');
+      if (link && !$('wpPop').hidden) { ht.textContent = text; ht.classList.toggle('wp-err', !!bad); }
+      else $('wpErr').textContent = bad ? text : '';
+    }
+
+    /* ----- Перетаскивание ----- */
+    function down(e, b) {
+      if (e.button !== 0 || b.gone || !st) return;
+      if (e.target.closest('.wb-code')) return; // код можно выделить и скопировать
+      const fixed = st.client.on || st.host.on || (b.p && (b.p.busy || b.p.cur || b.p.watcher));
+      const r = field().getBoundingClientRect();
+      drag = { b, dx: e.clientX - r.left - b.x, dy: e.clientY - r.top - b.y, sx: e.clientX, sy: e.clientY, moved: false, fixed, lx: b.x, ly: b.y, lt: performance.now() };
+      if (!fixed) b.lab.setPointerCapture(e.pointerId);
+      e.preventDefault();
+    }
+    function move(e) {
+      if (!drag) return;
+      if (!drag.moved && Math.hypot(e.clientX - drag.sx, e.clientY - drag.sy) < 4) return;
+      drag.moved = true;
+      if (drag.fixed) return;
+      const b = drag.b;
+      const r = field().getBoundingClientRect();
+      const nx = Math.max(b.r * 0.6, Math.min(W - b.r * 0.6, e.clientX - r.left - drag.dx));
+      const ny = Math.max(b.r * 0.6, Math.min(H - b.r * 0.6, e.clientY - r.top - drag.dy));
+      const now = performance.now(), dt = Math.max(1, now - drag.lt) / 1000;
+      b.vx = (nx - drag.lx) / dt * 0.6; b.vy = (ny - drag.ly) / dt * 0.6;
+      b.x = nx; b.y = ny; drag.lx = nx; drag.ly = ny; drag.lt = now;
+      // К кому прилипнет: свой — к любому доступному; чужой — только к своему
+      let best = null, bd = Infinity;
+      for (const o of bubs.values()) {
+        if (o === b || o.gone) continue;
+        if (b.kind === 'peer' && o.kind !== 'me') continue;
+        const cand = b.kind === 'me' ? o : b;
+        if (!cand.p || cand.p.busy || cand.p.away && !cand.p.known) continue;
+        const d = Math.hypot(o.x - b.x, o.y - b.y);
+        if (d < b.r + o.r + 34 && d < bd) { bd = d; best = o; }
+      }
+      if (best !== hot) { const was = hot; hot = best; if (was) label(was); if (hot) label(hot); label(b); }
+    }
+    function up() {
+      if (!drag) return;
+      const { b, moved, fixed } = drag;
+      const target = hot;
+      drag = null; hot = null;
+      for (const o of bubs.values()) label(o);
+      if (fixed) { if (!moved && b.kind === 'peer' && b.p && b.p.busy) { shake(b); say(T('Им уже управляет другой компьютер'), true); } return; }
+      if (moved && target) stick(b.kind === 'me' ? target.key : b.key);
+      else if (!moved && b.kind === 'peer') stick(b.key);
+      else if (!moved && b.kind === 'me') $('wpNameIn').focus();
+      else if (moved && link && b.key === link.key) { /* оторвали от своего — отпустить */ if (Math.hypot(b.x - bubs.get('me').x, b.y - bubs.get('me').y) > b.r + bubs.get('me').r + 40) unstick(); }
+    }
+
+    /* ----- Кадры ----- */
+    function frame(dt, t) {
+      const list = [...bubs.values()];
+      const me = bubs.get('me');
+      for (const b of list) {
+        // появление / исчезание — своя пружина
+        b.sv += (-170 * (b.s - b.st) - 20 * b.sv) * dt; b.s += b.sv * dt;
+        if (drag && drag.b === b && !drag.fixed) continue;
+        const wob = reduce ? 0 : 1;
+        const tx = b.hx + Math.sin(t * 0.55 + b.ph) * 7 * wob;
+        const ty = b.hy + Math.cos(t * 0.43 + b.ph * 1.3) * 6 * wob;
+        let ax = 34 * (tx - b.x) - 7 * b.vx, ay = 34 * (ty - b.y) - 7 * b.vy;
+        // магнит: кандидат тянется к перетаскиваемому
+        if (drag && hot === b) { ax += 60 * (drag.b.x - b.x); ay += 60 * (drag.b.y - b.y); }
+        b.vx += ax * dt; b.vy += ay * dt;
+      }
+      // соседи расталкиваются (кроме слипшейся пары)
+      for (let i = 0; i < list.length; i++) for (let j = i + 1; j < list.length; j++) {
+        const a = list[i], c = list[j];
+        if (a.gone || c.gone) continue;
+        const pair = (a === me || c === me) && link && (a.key === link.key || c.key === link.key);
+        const watcherPair = (a === me || c === me) && ((a.p && (a.p.watcher || a.p.cur || a.p.watched)) || (c.p && (c.p.watcher || c.p.cur || c.p.watched)));
+        if (pair || watcherPair) continue;
+        if (drag && (hot === a || hot === c) && (drag.b === a || drag.b === c)) continue;
+        let dx = c.x - a.x, dy = c.y - a.y;
+        if (Math.abs(dx) + Math.abs(dy) < 0.5) { dx = 1; dy = 0.3; } // совпали — разводим в сторону, не делим на ноль
+        const d = Math.max(4, Math.hypot(dx, dy));
+        const min = a.r + c.r + 14;
+        if (d < min) {
+          const f = (min - d) * 26 * dt / d;
+          if (!(drag && drag.b === a)) { a.vx -= dx * f; a.vy -= dy * f; }
+          if (!(drag && drag.b === c)) { c.vx += dx * f; c.vy += dy * f; }
+        }
+      }
+      for (const b of list) {
+        if (drag && drag.b === b && !drag.fixed) continue;
+        const sp = Math.hypot(b.vx, b.vy);
+        if (sp > 2400) { b.vx *= 2400 / sp; b.vy *= 2400 / sp; } // не разгоняться
+        b.x += b.vx * dt; b.y += b.vy * dt;
+        // Улетел (или NaN) — обратно домой; держать в поле
+        if (!Number.isFinite(b.x) || !Number.isFinite(b.y)) { b.x = b.hx; b.y = b.hy; b.vx = b.vy = 0; }
+        b.x = Math.max(b.r * 0.5, Math.min(W - b.r * 0.5, b.x));
+        b.y = Math.max(b.r * 0.5, Math.min(H - b.r * 0.5, b.y));
+      }
+    }
+    function paint() {
+      for (const b of [...bubs.values()]) {
+        if (b.gone && b.s < 0.02) { b.blob.remove(); b.lab.remove(); bubs.delete(b.key); continue; }
+        const s = Math.max(0, b.s);
+        const sp = Math.hypot(b.vx, b.vy);
+        const q = reduce ? 0 : Math.min(0.14, sp / 2600); // растягивается по ходу движения
+        const ang = Math.atan2(b.vy, b.vx);
+        const d = b.r * 2;
+        b.blob.style.width = b.blob.style.height = d + 'px';
+        b.blob.style.transform = `translate(${b.x - b.r}px, ${b.y - b.r}px) rotate(${ang}rad) scale(${s * (1 + q)}, ${s * (1 - q)}) rotate(${-ang}rad)`;
+        b.lab.style.width = b.lab.style.height = d + 'px';
+        b.lab.style.transform = `translate(${b.x - b.r}px, ${b.y - b.r}px) scale(${s})`;
+        b.lab.style.opacity = Math.min(1, s * 1.4);
+      }
+    }
+    function loop(now) {
+      raf = 0;
+      if (!vis) return;
+      const dt = Math.min((now - last) / 1000, 1 / 30); last = now;
+      const t = (now - t0) / 1000;
+      for (let i = 0; i < 4; i++) frame(dt / 4, t);
+      paint();
+      raf = requestAnimationFrame(loop);
+    }
+    function kick() { if (vis && !raf) { last = performance.now(); raf = requestAnimationFrame(loop); } }
+
+    function measure() {
+      const f = field();
+      if (!f) return;
+      // Размер разметки, а не на экране: окно настроек раскрывается с масштабом — getBoundingClientRect врёт
+      if (f.offsetWidth > 120 && f.offsetHeight > 120) { W = f.offsetWidth; H = f.offsetHeight; layout(); }
+    }
+
+    // Видно поле — кадры и поиск в сети каждые 8 с; не видно — тишина
+    function visible(v) {
+      vis = v;
+      clearInterval(timer); timer = 0;
+      if (!v) return;
+      measure();
+      const scan = () => { if (st && !st.host.on && !st.client.on && !document.hidden) find(); };
+      scan();
+      timer = setInterval(scan, 8000);
+      kick();
+    }
+
+    function wire() {
+      const f = field();
+      if (!f) return;
+      new ResizeObserver(measure).observe(f);
+      new IntersectionObserver((es) => visible(es.some((x) => x.isIntersecting))).observe(f);
+      addEventListener('pointermove', move);
+      addEventListener('pointerup', up);
+      addEventListener('pointercancel', up);
+      $('wpPopX').addEventListener('click', unstick);
+      $('wpPop').addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.stopPropagation(); unstick(); } });
+      $('wpGo').addEventListener('click', () => { const b = link && bubs.get(link.key); if (b) connect(b.p, false); });
+      $('wpWatchGo').addEventListener('click', () => { const b = link && bubs.get(link.key); if (b) connect(b.p, true); });
+      $('wpCodeIn').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('wpGo').click(); });
+      $('wpCodeIn').addEventListener('input', (e) => {
+        const v = e.target.value.replace(/\D/g, '').slice(0, 6);
+        e.target.value = v.length > 3 ? v.slice(0, 3) + ' ' + v.slice(3) : v;
+        $('wpPopHint').classList.remove('wp-err');
+        pop();
+      });
+    }
+
+    return {
+      wire, sync, stick, say,
+      phase(p) { if (link) { link.phase = p; sync(); } },
+      needCode() { const b = link && bubs.get(link.key); if (b && b.p) b.p.known = false; $('wpCodeIn').hidden = false; $('wpCodeIn').focus(); },
+    };
+  })();
+
   function wire() {
     const on = $('wpHostOn');
     if (on) on.addEventListener('change', async () => render(await window.api.wpHost(on.checked)));
-    if ($('wpGo')) $('wpGo').addEventListener('click', () => connect());
     if ($('wpFind')) $('wpFind').addEventListener('click', find);
-    if ($('wpWatchGo')) $('wpWatchGo').addEventListener('click', () => connect(knownId(), true));
     if ($('wpWatchStop')) $('wpWatchStop').addEventListener('click', async () => render(await window.api.wpWatchStop()));
-    if ($('wpCodeIn')) $('wpCodeIn').addEventListener('keydown', (e) => { if (e.key === 'Enter') connect(); });
     if ($('wpStop')) $('wpStop').addEventListener('click', disconnect);
     if ($('wpBarStop')) $('wpBarStop').addEventListener('click', disconnect);
     if ($('wpBarOpen')) $('wpBarOpen').addEventListener('click', () => openSettings('wp'));
+    const nm = $('wpNameIn');
+    if (nm) {
+      const save = async () => { if (st && nm.value.trim() !== (st.meOwn ? st.me : '')) render(await window.api.wpSetName(nm.value)); };
+      nm.addEventListener('change', save);
+      nm.addEventListener('keydown', (e) => { if (e.key === 'Enter') nm.blur(); if (e.key === 'Escape') { nm.value = st && st.meOwn ? st.me : ''; nm.blur(); } });
+    }
+    // «По адресу…»: компьютер не нашёлся сам — его пузырёк появляется по адресу
+    if ($('wpAddrBtn')) $('wpAddrBtn').addEventListener('click', () => { const r = $('wpAddrRow'); r.hidden = !r.hidden; if (!r.hidden) $('wpAddrIn').focus(); });
+    const addAddr = () => {
+      const a = $('wpAddrIn').value.trim();
+      if (!a) return;
+      const full = /:\d+$/.test(a) ? a : a + ':8090';
+      if (!manual.some((m) => sameAddr(m.addr, full))) manual.push({ addr: full });
+      $('wpAddrIn').value = '';
+      $('wpAddrRow').hidden = true;
+      Eco.sync();
+      const p = st && [...((found || [])), ...(st.client.known || [])].find((x) => sameAddr(x.addr, full));
+      Eco.stick(p && p.id ? 'id:' + p.id : 'a:' + full);
+    };
+    if ($('wpAddrAdd')) $('wpAddrAdd').addEventListener('click', addAddr);
+    if ($('wpAddrIn')) $('wpAddrIn').addEventListener('keydown', (e) => { if (e.key === 'Enter') addAddr(); if (e.key === 'Escape') $('wpAddrRow').hidden = true; });
+    Eco.wire();
   }
 
   window.wpHostName = () => (st && st.client.on ? st.client.name : ''); // имя компьютера A — окну обзора (wpbrowse.js)
