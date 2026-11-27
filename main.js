@@ -809,7 +809,7 @@ function openFloatWin({ id, name }) {
   const k = Math.min(640 / W, 480 / H, 1);
   const win = new BrowserWindow({
     width: Math.round(W * k), height: Math.round(H * k), useContentSize: true, alwaysOnTop: true, icon: APP_ICON,
-    title: `${name || s.name || 'Экран'} — ${SHORT_NAME}`, autoHideMenuBar: true, backgroundColor: '#000000', webPreferences,
+    title: `${name || s.name || uiT('Экран')} — ${SHORT_NAME}`, autoHideMenuBar: true, backgroundColor: '#000000', webPreferences,
   });
   win.setMenuBarVisibility(false);
   win.webContents.setAudioMuted(true);
@@ -853,7 +853,7 @@ function syncScreens() {
   for (const x of screenWins.values()) {
     if (x.kind === 'window' && !x.win.isDestroyed()) {
       const s = screensCfg.screens.find((z) => z.id === x.screen);
-      if (s) x.win.setTitle(`${s.name || 'Экран'} — ${SHORT_NAME}`);
+      if (s) x.win.setTitle(`${s.name || uiT('Экран')} — ${SHORT_NAME}`);
     }
   }
   sendScreensState();
@@ -921,7 +921,7 @@ function openScreenWin({ key, s, o }) {
     const H = Number(s.h) || 1080;
     const k = Math.min(960 / W, 720 / H, 1);
     win = new BrowserWindow({
-      width: Math.round(W * k), height: Math.round(H * k), useContentSize: true, title: `${s.name || 'Экран'} — ${SHORT_NAME}`, icon: APP_ICON,
+      width: Math.round(W * k), height: Math.round(H * k), useContentSize: true, title: `${s.name || uiT('Экран')} — ${SHORT_NAME}`, icon: APP_ICON,
       frame: false, transparent: true, resizable: false, hasShadow: false, backgroundColor: '#00000000', webPreferences,
     });
     query.win = '1';
@@ -932,7 +932,7 @@ function openScreenWin({ key, s, o }) {
     const H = Number(s.h) || 1080;
     const k = Math.min(960 / W, 720 / H, 1);
     win = new BrowserWindow({
-      width: Math.round(W * k), height: Math.round(H * k), useContentSize: true, title: `${s.name || 'Экран'} — ${SHORT_NAME}`, icon: APP_ICON,
+      width: Math.round(W * k), height: Math.round(H * k), useContentSize: true, title: `${s.name || uiT('Экран')} — ${SHORT_NAME}`, icon: APP_ICON,
       autoHideMenuBar: true, backgroundColor: '#000000', webPreferences,
     });
     query.win = '1';
@@ -1188,7 +1188,7 @@ function openEditor(payload) {
     width: 1400, height: 880, minWidth: 1000, minHeight: 640,
     backgroundColor: '#051822',
     autoHideMenuBar: true,
-    title: 'Картинка — ' + SHORT_NAME,
+    title: uiT('Картинка') + ' — ' + SHORT_NAME,
     icon: APP_ICON,
     webPreferences,
   });
@@ -2713,6 +2713,7 @@ app.whenReady().then(() => {
   /* ---------- Облако (cloudsrv.js, окно — cloud.js): синхронизация открытого профиля через Google Диск или папку ---------- */
   require('./cloudsrv.js').setup(ipcMain, {
     devName: () => devName(),
+    t: (s) => uiT(s),
     app, ud: () => app.getPath('userData'),
     profile: () => { const id = profiles.active(); const p = (profiles.state().list || []).find((x) => x.id === id); return { id, name: p && p.name }; },
     libView, saveLib: (o) => { profiles.save(o); team.libSaved(o); },
@@ -3060,7 +3061,7 @@ function wpWatchOpen({ name, replay }) {
   if (wpWatch.win && !wpWatch.win.isDestroyed()) wpWatch.win.destroy();
   const ses = session.fromPartition('wpwatch');
   if (!ses.__wp) { ses.__wp = true; ses.protocol.handle('file', (req) => wp.watchFile(req)); }
-  const win = new BrowserWindow({ width: 960, height: 540 + 32, minWidth: 320, minHeight: 200, backgroundColor: '#000000', title: 'Экран компьютера «' + name + '»', autoHideMenuBar: true, webPreferences: { ...webPreferences, partition: 'wpwatch' } });
+  const win = new BrowserWindow({ width: 960, height: 540 + 32, minWidth: 320, minHeight: 200, backgroundColor: '#000000', title: uiT('Экран компьютера «' + name + '»'), autoHideMenuBar: true, webPreferences: { ...webPreferences, partition: 'wpwatch' } });
   wpWatch.win = win; wpWatch.ready = false; wpWatch.queue = (replay || []).slice();
   win.setMenuBarVisibility(false);
   win.webContents.setAudioMuted(true);

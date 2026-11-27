@@ -5,8 +5,10 @@
 (() => {
   const $ = (id) => document.getElementById(id);
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
-  const gb = (b) => (b / 1024 ** 3).toFixed(b >= 10 * 1024 ** 3 ? 0 : 1) + ' ГБ';
-  const mbs = (mb) => (mb >= 1024 ? (mb / 1024).toFixed(1) + ' ГБ' : mb + ' МБ');
+  // Единицы и значения в <dd data-noi18n> переводим сами (там названия устройств — их переводчик не трогает)
+  const tr = (s) => (typeof I18n !== 'undefined' ? I18n.t(s) : s);
+  const gb = (b) => tr((b / 1024 ** 3).toFixed(b >= 10 * 1024 ** 3 ? 0 : 1) + ' ГБ');
+  const mbs = (mb) => tr(mb >= 1024 ? (mb / 1024).toFixed(1) + ' ГБ' : mb + ' МБ');
   let last = null, timer = 0;
 
   function setLite(on) {
@@ -48,7 +50,7 @@
     ];
     const other = (g.list || []).filter((d) => d !== a && !(a && d.name === a.name));
     if (other.length) rows.push(['Ещё видеокарты', other.map((d) => d.name + (d.vram ? ' · ' + gb(d.vram) : '')).join('; ')]);
-    $('pfSum').innerHTML = rows.map(([k, v]) => `<dt>${esc(k)}</dt><dd data-noi18n>${esc(v)}</dd>`).join('');
+    $('pfSum').innerHTML = rows.map(([k, v]) => `<dt>${esc(k)}</dt><dd data-noi18n>${esc(tr(v))}</dd>`).join('');
     const used = Math.max(0, Math.min(1, 1 - x.ramFree / x.ram));
     $('pfRamBar').style.width = (used * 100).toFixed(0) + '%';
     const warn = [];
@@ -56,9 +58,13 @@
     if (!g.accel) warn.push('Ускорение видеокарты не работает — всё рисует процессор, отсюда лаги. Обновите драйвер видеокарты с сайта NVIDIA / AMD / Intel.');
     if (used > 0.9) warn.push('Оперативная память почти занята (' + Math.round(used * 100) + ' %). Закройте лишние программы — браузер, OBS, мессенджеры.');
     const hot = x.parts.filter((p) => p.cpu > 50 && p.type !== 'GPU');
-    if (hot.length) warn.push('Сильно занят процессор: ' + hot.map((p) => partName(p) + ' — ' + p.cpu + ' %').join('; ') + '.');
-    $('pfWarn').textContent = warn.join('\n\n');
-    $('pfWarn').style.whiteSpace = 'pre-line';
+    if (hot.length) warn.push('Сильно занят процессор: ' + hot.map((p) => tr(partName(p)) + ' — ' + p.cpu + ' %').join('; ') + '.');
+    // Каждое предупреждение — свой абзац: так переводчик (i18n.js) находит каждое в словаре целиком
+    const wk = warn.join('\n');
+    if ($('pfWarn').dataset.k !== wk) {
+      $('pfWarn').dataset.k = wk;
+      $('pfWarn').replaceChildren(...warn.map((w) => Object.assign(document.createElement('span'), { textContent: w, style: 'display:block;margin:0 0 8px' })));
+    }
     const total = x.parts.reduce((s, p) => s + p.mb, 0);
     $('pfRows').innerHTML = '<div class="pf-row pf-head"><span>Часть программы</span><span>Память</span><span>Процессор</span></div>'
       + x.parts.filter((p) => p.mb >= 5 || p.cpu >= 1).map((p) => `<div class="pf-row${p.cpu > 50 ? ' pf-hot' : ''}"><span class="pf-n" title="${esc(partName(p))}">${esc(partName(p))}</span><span data-noi18n>${esc(mbs(p.mb))}</span><span data-noi18n>${p.cpu.toFixed(0)} %</span></div>`).join('');
@@ -90,7 +96,7 @@
       'MP Show — производительность',
       'Режим: ' + x.mode + (x.lite ? ' (лёгкий вид)' : ' (полный вид)'),
       ...[...$('pfSum').querySelectorAll('dt')].map((dt) => dt.textContent + ': ' + dt.nextElementSibling.textContent),
-      $('pfWarn').textContent ? 'Предупреждения: ' + $('pfWarn').textContent.replace(/\n+/g, ' ') : '',
+      $('pfWarn').children.length ? 'Предупреждения: ' + [...$('pfWarn').children].map((p) => p.textContent).join(' ') : '',
       '',
       ...x.parts.map((p) => partName(p) + ' — ' + mbs(p.mb) + ', процессор ' + p.cpu.toFixed(0) + ' %'),
       $('pfTotal').textContent,

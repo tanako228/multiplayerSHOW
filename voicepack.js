@@ -171,7 +171,7 @@ async function vpOpen() {
 setInterval(() => { const d = document.getElementById('vpDialog'); if (d && d.open && (vpBusy || vcGetting)) vpPaint(); }, 500);
 
 async function vpModelGet(m) {
-  if (!confirm(`Скачать модель распознавания «${m.name}»${m.mb ? ` (${m.mb} МБ)` : ''}?\n\n${m.url}`)) return;
+  if (!(await askYes(`Скачать модель распознавания «${m.name}»${m.mb ? ` (${m.mb} МБ)` : ''}?\n\n${m.url}`, 'Скачать'))) return;
   vpBusy = m.id;
   vpPaint();
   const r = await window.api.voiceGet(m.id);
@@ -217,7 +217,7 @@ function vpPaint() {
     }
     if (m.own || m.have) {
       const x = svBtn(m.own ? 'Убрать' : 'Удалить модель', async () => {
-        if (!confirm(m.own ? `Убрать язык «${m.name}» и его модель?` : `Удалить скачанную модель «${m.name}»? Потом её можно скачать снова.`)) return;
+        if (!(await askYes(m.own ? `Убрать язык «${m.name}» и его модель?` : `Удалить скачанную модель «${m.name}»? Потом её можно скачать снова.`, m.own ? 'Убрать' : 'Удалить', true))) return;
         const r = await window.api.voiceRemove(m.id);
         if (r && r.ok) vcModels = r.state;
         if (vcCfg().lang === m.id && m.own) { vcCfg().lang = 'ru'; saveSettings(); }
@@ -256,7 +256,7 @@ function vpPaint() {
     nm.append(svEl('small', '', `${p.lang || '—'} · книг ${new Set((p.books || []).map((b) => b.canon)).size} · чисел ${Object.keys(p.numbers || {}).length + Object.keys(p.ordinals || {}).length}`));
     row.append(svCheckbox('', p.on !== false, (v) => { p.on = v; saveSettings(); vpReset(); }), nm,
       svBtn('Сохранить…', () => vpSave(p)),
-      svBtn('Удалить', () => { if (!confirm(`Удалить пакет «${p.name}»?`)) return; L.splice(i, 1); saveSettings(); vpReset(); vpPaint(); }));
+      svBtn('Удалить', async () => { if (!(await askYes(`Удалить пакет «${p.name}»?`, 'Удалить', true))) return; L.splice(i, 1); saveSettings(); vpReset(); vpPaint(); }));
     box.append(row);
   }
   if (!L.length) box.append(svEl('p', 'hint', 'Своих пакетов нет.'));

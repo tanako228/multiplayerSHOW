@@ -25,6 +25,7 @@ class NeedSignIn extends Error {
 
 /* cfg: { clientId, clientSecret?, tokens: { load(): obj|null, save(obj|null) }, fetch?, sleep?, now? } */
 function gdriveProvider(cfg) {
+  const tr = (s) => (cfg.t ? cfg.t(s) : s); // язык интерфейса — для страницы «Готово» в браузере после входа
   const f = cfg.fetch || globalThis.fetch;
   const sleep = cfg.sleep || ((ms) => new Promise((r) => setTimeout(r, ms)));
   const now = cfg.now || Date.now;
@@ -54,7 +55,7 @@ function gdriveProvider(cfg) {
         const err = u.searchParams.get('error');
         if (u.searchParams.get('state') !== state || (!code && !err)) { res.writeHead(404); res.end(); return; }
         res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-        res.end(`<meta charset="utf-8"><body style="font:16px sans-serif;text-align:center;margin-top:20vh">${err ? 'Вход отменён.' : 'Готово! Можно закрыть эту вкладку и вернуться в программу.'}</body>`);
+        res.end(`<meta charset="utf-8"><body style="font:16px sans-serif;text-align:center;margin-top:20vh">${tr(err ? 'Вход отменён.' : 'Готово! Можно закрыть эту вкладку и вернуться в программу.')}</body>`);
         if (err) reject(new Error('Вход отменён: ' + err)); else resolve(code);
       });
       server.on('error', reject);

@@ -51,7 +51,7 @@ function setup(ipcMain, d) {
     if (!gdCache.has(key)) {
       const tf = () => path.join(profDir(), 'google-token.txt');
       gdCache.set(key, gdriveProvider({
-        clientId: c.clientId, clientSecret: c.clientSecret,
+        clientId: c.clientId, clientSecret: c.clientSecret, t: d.t,
         tokens: {
           load: () => { try { return JSON.parse(d.unseal(fs.readFileSync(tf(), 'utf8'))); } catch { return null; } },
           save: (t) => { if (!t) fs.rmSync(tf(), { force: true }); else { fs.mkdirSync(path.dirname(tf()), { recursive: true }); fs.writeFileSync(tf(), d.seal(JSON.stringify(t))); } },
